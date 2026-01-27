@@ -179,9 +179,6 @@ export default function Vendedores() {
             <button className="btn primary" onClick={openCreate} disabled={busy}>
               + Nuevo
             </button>
-            <button className="btn danger" onClick={logout}>
-              Salir
-            </button>
           </div>
         </header>
 
