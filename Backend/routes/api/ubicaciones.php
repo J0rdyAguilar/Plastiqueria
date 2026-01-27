@@ -9,3 +9,4 @@ Route::prefix('v1')
         Route::get('ubicaciones', [UbicacionController::class, 'index']);
         Route::get('ubicaciones/{id}', [UbicacionController::class, 'show']);
     });
+// GET /api/v1/caja/actual?ubicacion_id=1

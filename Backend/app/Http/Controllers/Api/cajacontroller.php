@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class CajaController extends Controller
-{
+{   // GET /api/v1/caja/actual?ubicacion_id=1
     // GET /api/v1/caja/actual?ubicacion_id=1
     public function actual(Request $request)
     {

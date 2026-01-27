@@ -103,3 +103,4 @@ export default function Layout({ children }) {
     </div>
   );
 }
+// GET /api/v1/caja/actual?ubicacion_id=1

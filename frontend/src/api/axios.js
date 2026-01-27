@@ -28,3 +28,4 @@ api.interceptors.response.use(
 );
 
 export default api;
+// GET /api/v1/caja/actual?ubicacion_id=1

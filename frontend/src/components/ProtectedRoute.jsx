@@ -7,3 +7,4 @@ export default function ProtectedRoute({ children }) {
   if (!token) return <Navigate to="/login" replace />;
   return children;
 }
+// GET /api/v1/caja/actual?ubicacion_id=1

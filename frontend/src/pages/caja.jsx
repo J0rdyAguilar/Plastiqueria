@@ -102,7 +102,7 @@ export default function Caja() {
     } finally {
       setBusy(false);
     }
-  }
+  }// GET /api/v1/caja/actual?ubicacion_id=1
 
   async function cerrarCaja(e) {
     e.preventDefault();

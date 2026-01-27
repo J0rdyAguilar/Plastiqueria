@@ -9,3 +9,4 @@ export const logoutApi = async () => {
   const res = await api.post("/logout");
   return res.data;
 };
+// GET /api/v1/caja/actual?ubicacion_id=1

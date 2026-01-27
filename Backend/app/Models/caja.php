@@ -3,7 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-
+// GET /api/v1/caja/actual?ubicacion_id=1
 class Caja extends Model
 {
     protected $table = 'cajas';

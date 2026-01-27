@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Ubicacion;
-
+// GET /api/v1/caja/actual?ubicacion_id=1
 class UbicacionController extends Controller
 {
     public function index()

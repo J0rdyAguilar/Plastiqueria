@@ -40,3 +40,4 @@ export default function App() {
     </BrowserRouter>
   );
 }
+// GET /api/v1/caja/actual?ubicacion_id=1

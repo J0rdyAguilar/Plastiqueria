@@ -11,3 +11,4 @@ Route::prefix('v1')
       Route::post('caja/abrir', [CajaController::class, 'abrir']);
       Route::post('caja/cerrar', [CajaController::class, 'cerrar']);
   });
+// GET /api/v1/caja/actual?ubicacion_id=1
