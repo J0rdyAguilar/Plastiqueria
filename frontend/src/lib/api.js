@@ -74,12 +74,27 @@ export const api = {
   vendedoresAsignarRutas: (id, payload) =>
     request(`/vendedores/${id}/rutas`, { method: "POST", body: payload }),
 
-
-    // Rutas
+    // Rutas CRUD
     rutasList: (params = {}) => {
       const qs = new URLSearchParams(params).toString();
       return request(`/rutas${qs ? `?${qs}` : ""}`);
     },
+    rutasCreate: (payload) => request(`/rutas`, { method: "POST", body: payload }),
+    rutasUpdate: (id, payload) => request(`/rutas/${id}`, { method: "PUT", body: payload }),
+    rutasDelete: (id) => request(`/rutas/${id}`, { method: "DELETE" }),
+    
+    zonasList: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return request(`/zonas${qs ? `?${qs}` : ""}`);
+    },
+
+    zonasList: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return request(`/zonas${qs ? `?${qs}` : ""}`);
+    },
+    zonasCreate: (payload) => request(`/zonas`, { method: "POST", body: payload }),
+    zonasUpdate: (id, payload) => request(`/zonas/${id}`, { method: "PUT", body: payload }),
+    zonasDelete: (id) => request(`/zonas/${id}`, { method: "DELETE" }),
 
 };
 

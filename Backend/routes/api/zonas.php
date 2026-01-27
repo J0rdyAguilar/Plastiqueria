@@ -1,10 +1,10 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\RutaController;
+use App\Http\Controllers\Api\ZonaController;
 
 Route::prefix('v1')
     ->middleware('auth:sanctum')
     ->group(function () {
-        Route::apiResource('rutas', RutaController::class);
+        Route::apiResource('zonas', ZonaController::class);
     });

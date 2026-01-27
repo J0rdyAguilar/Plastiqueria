@@ -4,6 +4,8 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Usuarios from "./pages/Usuarios";
 import Vendedores from "./pages/Vendedores";
+import Rutas from "./pages/Rutas";
+import Zonas from "./pages/Zonas";
 import { isLoggedIn } from "./lib/auth";
 
 function Private({ children }) {
@@ -34,7 +36,8 @@ export default function App() {
             </Private>
           }
         />
-
+        <Route path="/zonas" element={<Private><Zonas/></Private>} />
+        <Route path="/rutas" element={<Private><Rutas/></Private>} />
         <Route path="*" element={<Navigate to="/usuarios" replace />} />
       </Routes>
     </BrowserRouter>

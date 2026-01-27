@@ -55,7 +55,7 @@ export default function Vendedores() {
     setLoading(true);
     try {
       const data = await api.vendedoresList({ per_page: 100 });
-      setItems(Array.isArray(data) ? data : (data?.data || []));
+      setItems(Array.isArray(data) ? data : data?.data || []);
     } catch (err) {
       setError(formatBackendError(err));
       if (err?.status === 401) nav("/login", { replace: true });
@@ -68,7 +68,7 @@ export default function Vendedores() {
     setLoadingUsuarios(true);
     try {
       const data = await api.usuariosList();
-      const list = Array.isArray(data) ? data : (data?.data || []);
+      const list = Array.isArray(data) ? data : data?.data || [];
       const vend = list.filter((u) => u.rol === "vendedor" && !!u.activo);
       setUsuariosVend(vend);
     } catch (err) {
@@ -81,32 +81,35 @@ export default function Vendedores() {
   async function abrirAsignarRutas(v) {
     setError("");
     setVendedorRutas(v);
-    setRutaIds([]); // luego lo llenamos con el show
+    setRutaIds([]);
     setOpenRutas(true);
 
     // cargar catálogo rutas
     setLoadingRutas(true);
     try {
-      const data = await rutasApi.list();
-      setRutas(Array.isArray(data) ? data : (data?.data || []));
+      const data = await rutasApi.list({ per_page: 500 });
+      setRutas(Array.isArray(data) ? data : data?.data || []);
     } catch (err) {
       setError(formatBackendError(err));
     } finally {
       setLoadingRutas(false);
     }
 
-    // cargar rutas ya asignadas (usa show)
+    // cargar rutas asignadas
     try {
-      const full = await api.vendedoresShow(v.id); // lo agregamos en api.js
+      // requiere api.vendedoresShow en api.js (o usar vendedoresApi.show si lo tenés)
+      const full = await api.vendedoresShow(v.id);
       const ids = (full?.rutas || []).map((r) => r.id);
       setRutaIds(ids);
     } catch {
-      // si no existe show o falla, no bloquea
+      // no bloquea
     }
   }
 
   function toggleRuta(id) {
-    setRutaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setRutaIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   }
 
   async function guardarRutas() {
@@ -182,7 +185,8 @@ export default function Vendedores() {
           usuario_id: Number(form.usuario_id),
           codigo: form.codigo.trim() ? form.codigo.trim() : null,
         };
-        if (!payload.usuario_id) throw new Error("Debes seleccionar un usuario vendedor.");
+        if (!payload.usuario_id)
+          throw new Error("Debes seleccionar un usuario vendedor.");
         await vendedoresApi.create(payload);
       }
 
@@ -197,7 +201,9 @@ export default function Vendedores() {
 
   async function del(v) {
     const u = v.usuario || {};
-    const ok = confirm(`¿Eliminar vendedor de "${u.usuario || u.nombre || "ID " + v.id}"?`);
+    const ok = confirm(
+      `¿Eliminar vendedor de "${u.usuario || u.nombre || "ID " + v.id}"?`
+    );
     if (!ok) return;
 
     setBusy(true);
@@ -248,7 +254,10 @@ export default function Vendedores() {
           </div>
 
           {error ? (
-            <div className="alert" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
+            <div
+              className="alert"
+              style={{ marginTop: 12, whiteSpace: "pre-wrap" }}
+            >
               {error}
             </div>
           ) : null}
@@ -300,13 +309,25 @@ export default function Vendedores() {
                           )}
                         </td>
                         <td className="right">
-                          <button className="btn sm" onClick={() => abrirAsignarRutas(v)} disabled={busy}>
+                          <button
+                            className="btn sm"
+                            onClick={() => abrirAsignarRutas(v)}
+                            disabled={busy}
+                          >
                             Rutas
                           </button>
-                          <button className="btn sm" onClick={() => openEdit(v)} disabled={busy}>
+                          <button
+                            className="btn sm"
+                            onClick={() => openEdit(v)}
+                            disabled={busy}
+                          >
                             Editar
                           </button>
-                          <button className="btn sm danger" onClick={() => del(v)} disabled={busy}>
+                          <button
+                            className="btn sm danger"
+                            onClick={() => del(v)}
+                            disabled={busy}
+                          >
                             Eliminar
                           </button>
                         </td>
@@ -321,7 +342,10 @@ export default function Vendedores() {
 
         {/* MODAL CREAR/EDITAR */}
         {open ? (
-          <div className="modal-backdrop" onMouseDown={() => !busy && setOpen(false)}>
+          <div
+            className="modal-backdrop"
+            onMouseDown={() => !busy && setOpen(false)}
+          >
             <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
               <div className="modal-head">
                 <div>
@@ -332,7 +356,10 @@ export default function Vendedores() {
                       : "Crea un vendedor vinculado a un usuario con rol vendedor."}
                   </p>
                 </div>
-                <button className="iconbtn" onClick={() => !busy && setOpen(false)}>
+                <button
+                  className="iconbtn"
+                  onClick={() => !busy && setOpen(false)}
+                >
                   ✕
                 </button>
               </div>
@@ -350,7 +377,9 @@ export default function Vendedores() {
 
                     <select
                       value={form.usuario_id}
-                      onChange={(e) => setForm({ ...form, usuario_id: e.target.value })}
+                      onChange={(e) =>
+                        setForm({ ...form, usuario_id: e.target.value })
+                      }
                       disabled={loadingUsuarios}
                     >
                       <option value="">
@@ -381,7 +410,11 @@ export default function Vendedores() {
                 </div>
 
                 <div className="modal-actions">
-                  <button type="button" className="btn" onClick={() => !busy && setOpen(false)}>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => !busy && setOpen(false)}
+                  >
                     Cancelar
                   </button>
                   <button className="btn primary" disabled={busy}>
@@ -395,7 +428,10 @@ export default function Vendedores() {
 
         {/* MODAL ASIGNAR RUTAS */}
         {openRutas ? (
-          <div className="modal-backdrop" onMouseDown={() => !busy && setOpenRutas(false)}>
+          <div
+            className="modal-backdrop"
+            onMouseDown={() => !busy && setOpenRutas(false)}
+          >
             <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
               <div className="modal-head">
                 <div>
@@ -409,7 +445,10 @@ export default function Vendedores() {
                     </b>
                   </p>
                 </div>
-                <button className="iconbtn" onClick={() => !busy && setOpenRutas(false)}>
+                <button
+                  className="iconbtn"
+                  onClick={() => !busy && setOpenRutas(false)}
+                >
                   ✕
                 </button>
               </div>
@@ -426,20 +465,20 @@ export default function Vendedores() {
                 ) : rutas.length === 0 ? (
                   <div className="muted">No hay rutas creadas.</div>
                 ) : (
-                  <div className="grid" style={{ gap: 8 }}>
+                  <div className="routes-list">
                     {rutas.map((r) => (
-                      <label
-                        key={r.id}
-                        className="row"
-                        style={{ alignItems: "center", gap: 10 }}
-                      >
+                      <label key={r.id} className="route-item">
                         <input
                           type="checkbox"
+                          className="route-check"
                           checked={rutaIds.includes(r.id)}
                           onChange={() => toggleRuta(r.id)}
                           disabled={busy}
                         />
-                        <span>{r.nombre}</span>
+                        <span className="route-name">{r.nombre}</span>
+                        {r.zona?.nombre ? (
+                          <span className="route-zone">{r.zona.nombre}</span>
+                        ) : null}
                       </label>
                     ))}
                   </div>
@@ -447,10 +486,18 @@ export default function Vendedores() {
               </div>
 
               <div className="modal-actions">
-                <button type="button" className="btn" onClick={() => !busy && setOpenRutas(false)}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => !busy && setOpenRutas(false)}
+                >
                   Cancelar
                 </button>
-                <button className="btn primary" onClick={guardarRutas} disabled={busy || loadingRutas}>
+                <button
+                  className="btn primary"
+                  onClick={guardarRutas}
+                  disabled={busy || loadingRutas}
+                >
                   {busy ? "Guardando..." : "Guardar rutas"}
                 </button>
               </div>

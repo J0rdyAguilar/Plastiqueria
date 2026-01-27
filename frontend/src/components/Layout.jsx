@@ -46,7 +46,13 @@ export default function Layout({ children }) {
                 Vendedores
               </Link>
             )}
+              <Link className={`navlink ${loc.pathname.startsWith("/rutas") ? "active" : ""}`} to="/rutas">
+                Rutas
+              </Link>
           </nav>
+              <Link className={`navlink ${loc.pathname.startsWith("/zonas") ? "active" : ""}`} to="/zonas">
+                Zonas
+              </Link>
 
           <div className="hdr-right">
             {logged ? (
@@ -77,7 +83,7 @@ export default function Layout({ children }) {
       <footer className="app-footer">
         <div className="app-footer-inner">
           <span>© {new Date().getFullYear()} Plastiquería</span>
-          <span className="muted">Sistema interno</span>
+          <span className="muted">Grupo Cresth by Joserweb</span>
         </div>
       </footer>
     </div>
