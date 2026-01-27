@@ -1,8 +1,9 @@
 // src/pages/Vendedores.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { vendedoresApi } from "../lib/vendedores";
+import { rutasApi } from "../lib/rutas";
 import { api } from "../lib/api";
-import { clearSession, getSession } from "../lib/auth";
+import { getSession } from "../lib/auth";
 import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
 
@@ -33,13 +34,21 @@ export default function Vendedores() {
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
 
+  // modal vendedor (crear/editar)
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
-  // ✅ SELECT de usuarios rol=vendedor (activos)
+  // SELECT usuarios rol=vendedor (activos)
   const [usuariosVend, setUsuariosVend] = useState([]);
   const [loadingUsuarios, setLoadingUsuarios] = useState(false);
+
+  // modal rutas
+  const [openRutas, setOpenRutas] = useState(false);
+  const [vendedorRutas, setVendedorRutas] = useState(null);
+  const [rutas, setRutas] = useState([]);
+  const [rutaIds, setRutaIds] = useState([]);
+  const [loadingRutas, setLoadingRutas] = useState(false);
 
   async function load() {
     setError("");
@@ -66,6 +75,57 @@ export default function Vendedores() {
       setError(formatBackendError(err));
     } finally {
       setLoadingUsuarios(false);
+    }
+  }
+
+  async function abrirAsignarRutas(v) {
+    setError("");
+    setVendedorRutas(v);
+    setRutaIds([]); // luego lo llenamos con el show
+    setOpenRutas(true);
+
+    // cargar catálogo rutas
+    setLoadingRutas(true);
+    try {
+      const data = await rutasApi.list();
+      setRutas(Array.isArray(data) ? data : (data?.data || []));
+    } catch (err) {
+      setError(formatBackendError(err));
+    } finally {
+      setLoadingRutas(false);
+    }
+
+    // cargar rutas ya asignadas (usa show)
+    try {
+      const full = await api.vendedoresShow(v.id); // lo agregamos en api.js
+      const ids = (full?.rutas || []).map((r) => r.id);
+      setRutaIds(ids);
+    } catch {
+      // si no existe show o falla, no bloquea
+    }
+  }
+
+  function toggleRuta(id) {
+    setRutaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  async function guardarRutas() {
+    if (!vendedorRutas?.id) return;
+    if (rutaIds.length === 0) {
+      setError("Selecciona al menos 1 ruta.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      await vendedoresApi.asignarRutas(vendedorRutas.id, rutaIds, "sync");
+      setOpenRutas(false);
+      await load();
+    } catch (err) {
+      setError(formatBackendError(err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -113,13 +173,11 @@ export default function Vendedores() {
 
     try {
       if (editing?.id) {
-        // ✅ Editar: solo código
         const payload = {
           codigo: form.codigo.trim() ? form.codigo.trim() : null,
         };
         await vendedoresApi.update(editing.id, payload);
       } else {
-        // ✅ Crear: usuario_id + código (SIN activo)
         const payload = {
           usuario_id: Number(form.usuario_id),
           codigo: form.codigo.trim() ? form.codigo.trim() : null,
@@ -139,9 +197,7 @@ export default function Vendedores() {
 
   async function del(v) {
     const u = v.usuario || {};
-    const ok = confirm(
-      `¿Eliminar vendedor de "${u.usuario || u.nombre || "ID " + v.id}"?`
-    );
+    const ok = confirm(`¿Eliminar vendedor de "${u.usuario || u.nombre || "ID " + v.id}"?`);
     if (!ok) return;
 
     setBusy(true);
@@ -154,11 +210,6 @@ export default function Vendedores() {
     } finally {
       setBusy(false);
     }
-  }
-
-  function logout() {
-    clearSession();
-    nav("/login", { replace: true });
   }
 
   return (
@@ -249,18 +300,13 @@ export default function Vendedores() {
                           )}
                         </td>
                         <td className="right">
-                          <button
-                            className="btn sm"
-                            onClick={() => openEdit(v)}
-                            disabled={busy}
-                          >
+                          <button className="btn sm" onClick={() => abrirAsignarRutas(v)} disabled={busy}>
+                            Rutas
+                          </button>
+                          <button className="btn sm" onClick={() => openEdit(v)} disabled={busy}>
                             Editar
                           </button>
-                          <button
-                            className="btn sm danger"
-                            onClick={() => del(v)}
-                            disabled={busy}
-                          >
+                          <button className="btn sm danger" onClick={() => del(v)} disabled={busy}>
                             Eliminar
                           </button>
                         </td>
@@ -273,6 +319,7 @@ export default function Vendedores() {
           </div>
         </div>
 
+        {/* MODAL CREAR/EDITAR */}
         {open ? (
           <div className="modal-backdrop" onMouseDown={() => !busy && setOpen(false)}>
             <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -334,11 +381,7 @@ export default function Vendedores() {
                 </div>
 
                 <div className="modal-actions">
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => !busy && setOpen(false)}
-                  >
+                  <button type="button" className="btn" onClick={() => !busy && setOpen(false)}>
                     Cancelar
                   </button>
                   <button className="btn primary" disabled={busy}>
@@ -346,6 +389,71 @@ export default function Vendedores() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        ) : null}
+
+        {/* MODAL ASIGNAR RUTAS */}
+        {openRutas ? (
+          <div className="modal-backdrop" onMouseDown={() => !busy && setOpenRutas(false)}>
+            <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="modal-head">
+                <div>
+                  <h3>Asignar rutas</h3>
+                  <p className="muted small">
+                    Vendedor:{" "}
+                    <b>
+                      {vendedorRutas?.usuario?.nombre ||
+                        vendedorRutas?.usuario?.usuario ||
+                        "—"}
+                    </b>
+                  </p>
+                </div>
+                <button className="iconbtn" onClick={() => !busy && setOpenRutas(false)}>
+                  ✕
+                </button>
+              </div>
+
+              {error ? (
+                <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
+                  {error}
+                </div>
+              ) : null}
+
+              <div className="card pad" style={{ marginTop: 10 }}>
+                {loadingRutas ? (
+                  <div className="muted">Cargando rutas…</div>
+                ) : rutas.length === 0 ? (
+                  <div className="muted">No hay rutas creadas.</div>
+                ) : (
+                  <div className="grid" style={{ gap: 8 }}>
+                    {rutas.map((r) => (
+                      <label
+                        key={r.id}
+                        className="row"
+                        style={{ alignItems: "center", gap: 10 }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={rutaIds.includes(r.id)}
+                          onChange={() => toggleRuta(r.id)}
+                          disabled={busy}
+                        />
+                        <span>{r.nombre}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn" onClick={() => !busy && setOpenRutas(false)}>
+                  Cancelar
+                </button>
+                <button className="btn primary" onClick={guardarRutas} disabled={busy || loadingRutas}>
+                  {busy ? "Guardando..." : "Guardar rutas"}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}

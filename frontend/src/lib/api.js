@@ -70,4 +70,16 @@ export const api = {
     request(`/vendedores/${id}`, { method: "PUT", body: payload }),
   vendedoresDelete: (id) =>
     request(`/vendedores/${id}`, { method: "DELETE" }),
+    // Vendedores: asignaciones
+  vendedoresAsignarRutas: (id, payload) =>
+    request(`/vendedores/${id}/rutas`, { method: "POST", body: payload }),
+
+
+    // Rutas
+    rutasList: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return request(`/rutas${qs ? `?${qs}` : ""}`);
+    },
+
 };
+
