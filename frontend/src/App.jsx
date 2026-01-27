@@ -1,7 +1,30 @@
-export default function App(){
+// src/App.jsx
+import React from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import Login from "./pages/Login";
+import Usuarios from "./pages/Usuarios";
+import { isLoggedIn } from "./lib/auth";
+
+function Private({ children }) {
+  return isLoggedIn() ? children : <Navigate to="/login" replace />;
+}
+
+export default function App() {
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Frontend listo ✅</h1>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/usuarios" replace />} />
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/usuarios"
+          element={
+            <Private>
+              <Usuarios />
+            </Private>
+          }
+        />
+        <Route path="*" element={<Navigate to="/usuarios" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
