@@ -21,7 +21,7 @@ class UpdateUsuarioRequest extends FormRequest
             'usuario'  => ['sometimes', 'required', 'string', 'max:120', Rule::unique('usuarios', 'usuario')->ignore($id)],
             'telefono' => ['sometimes', 'nullable', 'string', 'max:50'],
             'password' => ['sometimes', 'nullable', 'string', 'min:6', 'max:255'], // opcional
-            'rol'      => ['sometimes', 'required', Rule::in(['super_admin', 'admin', 'vendedor', 'cajero'])],
+            'rol'      => ['sometimes', 'required', Rule::in(['super_admin', 'admin', 'vendedor', 'caja'])],
             'activo'   => ['sometimes', 'nullable', 'boolean'],
         ];
     }

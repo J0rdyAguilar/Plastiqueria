@@ -15,13 +15,20 @@ export default function Layout({ children }) {
 
   const logged = isLoggedIn();
   const rol = me?.rol || "";
+
+  const canSeeUsuarios = logged && (rol === "admin" || rol === "super_admin");
   const canSeeVendedores = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeCaja =
+    logged && (rol === "admin" || rol === "super_admin" || rol === "caja" || rol === "cajero");
+
+  // a dónde manda el logo
+  const homeLink = canSeeUsuarios ? "/usuarios" : (canSeeCaja ? "/caja" : "/login");
 
   return (
     <div className="app-shell">
       <header className="app-header">
         <div className="app-header-inner">
-          <Link to="/usuarios" className="brand">
+          <Link to={homeLink} className="brand">
             <span className="brand-logo">P</span>
             <span className="brand-text">
               <b>Plastiquería</b>
@@ -30,20 +37,33 @@ export default function Layout({ children }) {
           </Link>
 
           <nav className="nav">
-            <Link
-              className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}
-              to="/usuarios"
-            >
-              Usuarios
-            </Link>
+            {/* ✅ Usuarios solo admin/super_admin */}
+            {canSeeUsuarios && (
+              <Link
+                className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}
+                to="/usuarios"
+              >
+                Usuarios
+              </Link>
+            )}
 
-            {/* Solo admin/super_admin */}
+            {/* ✅ Vendedores solo admin/super_admin */}
             {canSeeVendedores && (
               <Link
                 className={`navlink ${loc.pathname.startsWith("/vendedores") ? "active" : ""}`}
                 to="/vendedores"
               >
                 Vendedores
+              </Link>
+            )}
+
+            {/* ✅ Caja */}
+            {canSeeCaja && (
+              <Link
+                className={`navlink ${loc.pathname.startsWith("/caja") ? "active" : ""}`}
+                to="/caja"
+              >
+                Caja
               </Link>
             )}
           </nav>

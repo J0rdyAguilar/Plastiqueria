@@ -54,8 +54,9 @@ export default function Vendedores() {
     setError("");
     setLoading(true);
     try {
-      const data = await api.vendedoresList({ per_page: 100 });
-      setItems(Array.isArray(data) ? data : (data?.data || []));
+      const res = await vendedoresApi.list({ per_page: 100 });
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      setItems(list);
     } catch (err) {
       setError(formatBackendError(err));
       if (err?.status === 401) nav("/login", { replace: true });
@@ -67,8 +68,8 @@ export default function Vendedores() {
   async function loadUsuariosVendedor() {
     setLoadingUsuarios(true);
     try {
-      const data = await api.usuariosList();
-      const list = Array.isArray(data) ? data : (data?.data || []);
+      const res = await api.usuariosList();
+      const list = Array.isArray(res) ? res : (res?.data || []);
       const vend = list.filter((u) => u.rol === "vendedor" && !!u.activo);
       setUsuariosVend(vend);
     } catch (err) {
@@ -81,27 +82,27 @@ export default function Vendedores() {
   async function abrirAsignarRutas(v) {
     setError("");
     setVendedorRutas(v);
-    setRutaIds([]); // luego lo llenamos con el show
+    setRutaIds([]);
     setOpenRutas(true);
 
-    // cargar catálogo rutas
+    // catálogo rutas
     setLoadingRutas(true);
     try {
-      const data = await rutasApi.list();
-      setRutas(Array.isArray(data) ? data : (data?.data || []));
+      const res = await rutasApi.list({ per_page: 200 });
+      setRutas(Array.isArray(res) ? res : (res?.data || []));
     } catch (err) {
       setError(formatBackendError(err));
     } finally {
       setLoadingRutas(false);
     }
 
-    // cargar rutas ya asignadas (usa show)
+    // rutas ya asignadas (si tu backend lo soporta)
     try {
-      const full = await api.vendedoresShow(v.id); // lo agregamos en api.js
+      const full = await api.vendedoresShow(v.id);
       const ids = (full?.rutas || []).map((r) => r.id);
       setRutaIds(ids);
     } catch {
-      // si no existe show o falla, no bloquea
+      // no bloquea si todavía no existe el endpoint
     }
   }
 
@@ -141,9 +142,9 @@ export default function Vendedores() {
     return items.filter((v) => {
       const u = v.usuario || {};
       const activoUsuario = !!u.activo;
-      const a = `${u.nombre || ""} ${u.usuario || ""} ${u.telefono || ""} ${
-        v.codigo || ""
-      } ${activoUsuario ? "activo" : "inactivo"}`.toLowerCase();
+      const a = `${u.nombre || ""} ${u.usuario || ""} ${u.telefono || ""} ${v.codigo || ""} ${
+        activoUsuario ? "activo" : "inactivo"
+      }`.toLowerCase();
       return a.includes(s);
     });
   }, [items, q]);
@@ -173,9 +174,7 @@ export default function Vendedores() {
 
     try {
       if (editing?.id) {
-        const payload = {
-          codigo: form.codigo.trim() ? form.codigo.trim() : null,
-        };
+        const payload = { codigo: form.codigo.trim() ? form.codigo.trim() : null };
         await vendedoresApi.update(editing.id, payload);
       } else {
         const payload = {
@@ -354,9 +353,7 @@ export default function Vendedores() {
                       disabled={loadingUsuarios}
                     >
                       <option value="">
-                        {loadingUsuarios
-                          ? "Cargando usuarios..."
-                          : "Seleccione un usuario vendedor..."}
+                        {loadingUsuarios ? "Cargando usuarios..." : "Seleccione un usuario vendedor..."}
                       </option>
                       {usuariosVend.map((u) => (
                         <option key={u.id} value={u.id}>
@@ -403,9 +400,7 @@ export default function Vendedores() {
                   <p className="muted small">
                     Vendedor:{" "}
                     <b>
-                      {vendedorRutas?.usuario?.nombre ||
-                        vendedorRutas?.usuario?.usuario ||
-                        "—"}
+                      {vendedorRutas?.usuario?.nombre || vendedorRutas?.usuario?.usuario || "—"}
                     </b>
                   </p>
                 </div>
@@ -428,11 +423,7 @@ export default function Vendedores() {
                 ) : (
                   <div className="grid" style={{ gap: 8 }}>
                     {rutas.map((r) => (
-                      <label
-                        key={r.id}
-                        className="row"
-                        style={{ alignItems: "center", gap: 10 }}
-                      >
+                      <label key={r.id} className="row" style={{ alignItems: "center", gap: 10 }}>
                         <input
                           type="checkbox"
                           checked={rutaIds.includes(r.id)}

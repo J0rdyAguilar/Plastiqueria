@@ -45,7 +45,9 @@ export default function Usuarios() {
     setLoading(true);
     try {
       const res = await api.usuariosList();
-      setItems(res?.data || []);
+      // soporta: {data:[...]} o [...]
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      setItems(list);
     } catch (err) {
       setError(formatBackendError(err));
       if (err?.status === 401) nav("/login", { replace: true });
@@ -54,7 +56,10 @@ export default function Usuarios() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -96,7 +101,7 @@ export default function Usuarios() {
         nombre: form.nombre.trim(),
         usuario: form.usuario.trim(),
         telefono: form.telefono.trim() ? form.telefono.trim() : null,
-        rol: form.rol, // super_admin|admin|vendedor|cajero
+        rol: form.rol, // super_admin|admin|vendedor|caja
         activo: form.activo ? 1 : 0,
       };
 
@@ -269,11 +274,8 @@ export default function Usuarios() {
                     <option value="super_admin">super_admin</option>
                     <option value="admin">admin</option>
                     <option value="vendedor">vendedor</option>
-                    <option value="cajero">caja</option>
+                    <option value="caja">caja</option>
                   </select>
-                  <p className="hint" style={{ marginTop: 6 }}>
-                    Nota: en BD el valor es <b>cajero</b>, pero lo mostramos como “caja”.
-                  </p>
                 </div>
 
                 <div className="field">
@@ -298,6 +300,10 @@ export default function Usuarios() {
                   </button>
                 </div>
               </form>
+
+              <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                <button className="btn" onClick={logout}>Salir</button>
+              </div>
             </div>
           </div>
         ) : null}

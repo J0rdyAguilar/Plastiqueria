@@ -20,7 +20,7 @@ class StoreUsuarioRequest extends FormRequest
             'usuario'  => ['required', 'string', 'max:120', 'unique:usuarios,usuario'],
             'telefono' => ['nullable', 'string', 'max:50'],
             'password' => ['required', 'string', 'min:6', 'max:255'],
-            'rol'      => ['required', Rule::in(['super_admin', 'admin', 'vendedor', 'cajero'])],
+            'rol'      => ['required', Rule::in(['super_admin', 'admin', 'vendedor', 'caja   '])],
             'activo'   => ['nullable', 'boolean'],
         ];
     }
