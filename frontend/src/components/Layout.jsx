@@ -13,6 +13,10 @@ export default function Layout({ children }) {
     nav("/login", { replace: true });
   }
 
+  const logged = isLoggedIn();
+  const rol = me?.rol || "";
+  const canSeeVendedores = logged && (rol === "admin" || rol === "super_admin");
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -26,13 +30,26 @@ export default function Layout({ children }) {
           </Link>
 
           <nav className="nav">
-            <Link className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`} to="/usuarios">
+            <Link
+              className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}
+              to="/usuarios"
+            >
               Usuarios
             </Link>
+
+            {/* Solo admin/super_admin */}
+            {canSeeVendedores && (
+              <Link
+                className={`navlink ${loc.pathname.startsWith("/vendedores") ? "active" : ""}`}
+                to="/vendedores"
+              >
+                Vendedores
+              </Link>
+            )}
           </nav>
 
           <div className="hdr-right">
-            {isLoggedIn() ? (
+            {logged ? (
               <>
                 <div className="me">
                   <div className="me-dot" />
@@ -55,9 +72,7 @@ export default function Layout({ children }) {
         </div>
       </header>
 
-      <main className="app-main">
-        {children}
-      </main>
+      <main className="app-main">{children}</main>
 
       <footer className="app-footer">
         <div className="app-footer-inner">
