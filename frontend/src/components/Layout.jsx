@@ -3,26 +3,33 @@ import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 
+function normalizeRole(r) {
+  const x = (r || "").toString().trim().toLowerCase();
+  // si en algún momento llega "cajero", lo tratamos como caja
+  if (x === "cajero") return "caja";
+  return x;
+}
+
 export default function Layout({ children }) {
   const nav = useNavigate();
   const loc = useLocation();
+  const logged = isLoggedIn();
   const me = getSession()?.user;
+
+  const rol = normalizeRole(me?.rol);
+
+  const canSeeUsuarios = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeVendedores = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeZonas = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeCaja = logged && (rol === "admin" || rol === "super_admin" || rol === "caja");
+
+  // a dónde manda el logo
+  const homeLink = canSeeUsuarios ? "/usuarios" : (canSeeCaja ? "/caja" : "/login");
 
   function logout() {
     clearSession();
     nav("/login", { replace: true });
   }
-
-  const logged = isLoggedIn();
-  const rol = me?.rol || "";
-
-  const canSeeUsuarios = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeVendedores = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeCaja =
-    logged && (rol === "admin" || rol === "super_admin" || rol === "caja" || rol === "cajero");
-
-  // a dónde manda el logo
-  const homeLink = canSeeUsuarios ? "/usuarios" : (canSeeCaja ? "/caja" : "/login");
 
   return (
     <div className="app-shell">
@@ -37,7 +44,6 @@ export default function Layout({ children }) {
           </Link>
 
           <nav className="nav">
-            {/* ✅ Usuarios solo admin/super_admin */}
             {canSeeUsuarios && (
               <Link
                 className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}
@@ -47,7 +53,6 @@ export default function Layout({ children }) {
               </Link>
             )}
 
-            {/* ✅ Vendedores solo admin/super_admin */}
             {canSeeVendedores && (
               <Link
                 className={`navlink ${loc.pathname.startsWith("/vendedores") ? "active" : ""}`}
@@ -57,7 +62,6 @@ export default function Layout({ children }) {
               </Link>
             )}
 
-            {/* ✅ Caja */}
             {canSeeCaja && (
               <Link
                 className={`navlink ${loc.pathname.startsWith("/caja") ? "active" : ""}`}
@@ -66,10 +70,16 @@ export default function Layout({ children }) {
                 Caja
               </Link>
             )}
-          </nav>
-              <Link className={`navlink ${loc.pathname.startsWith("/zonas") ? "active" : ""}`} to="/zonas">
+
+            {canSeeZonas && (
+              <Link
+                className={`navlink ${loc.pathname.startsWith("/zonas") ? "active" : ""}`}
+                to="/zonas"
+              >
                 Zonas
               </Link>
+            )}
+          </nav>
 
           <div className="hdr-right">
             {logged ? (
@@ -78,7 +88,7 @@ export default function Layout({ children }) {
                   <div className="me-dot" />
                   <div className="me-text">
                     <b>{me?.nombre || me?.usuario || "Usuario"}</b>
-                    <small>{me?.rol || "—"}</small>
+                    <small>{rol || "—"}</small>
                   </div>
                 </div>
 
@@ -106,4 +116,3 @@ export default function Layout({ children }) {
     </div>
   );
 }
-// GET /api/v1/caja/actual?ubicacion_id=1

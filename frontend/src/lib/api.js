@@ -70,30 +70,71 @@ export const api = {
     request(`/vendedores/${id}`, { method: "PUT", body: payload }),
   vendedoresDelete: (id) =>
     request(`/vendedores/${id}`, { method: "DELETE" }),
-    // Vendedores: asignaciones
+
+  // asignar rutas a vendedor
   vendedoresAsignarRutas: (id, payload) =>
-    request(`/vendedores/${id}/rutas`, { method: "POST", body: payload }),
+    request(`/vendedores/${id}/rutas`, {
+      method: "POST",
+      body: payload,
+    }),
 
-    // Rutas CRUD
-    rutasList: (params = {}) => {
-      const qs = new URLSearchParams(params).toString();
-      return request(`/rutas${qs ? `?${qs}` : ""}`);
-    },
-    rutasCreate: (payload) => request(`/rutas`, { method: "POST", body: payload }),
-    rutasUpdate: (id, payload) => request(`/rutas/${id}`, { method: "PUT", body: payload }),
-    rutasDelete: (id) => request(`/rutas/${id}`, { method: "DELETE" }),
-    
-    zonasList: (params = {}) => {
-      const qs = new URLSearchParams(params).toString();
-      return request(`/zonas${qs ? `?${qs}` : ""}`);
-    },
+  /* ======================
+     RUTAS
+  ====================== */
+  rutasList: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/rutas${qs ? `?${qs}` : ""}`);
+  },
+  rutasCreate: (payload) =>
+    request("/rutas", { method: "POST", body: payload }),
+  rutasUpdate: (id, payload) =>
+    request(`/rutas/${id}`, { method: "PUT", body: payload }),
+  rutasDelete: (id) =>
+    request(`/rutas/${id}`, { method: "DELETE" }),
 
-    zonasList: (params = {}) => {
-      const qs = new URLSearchParams(params).toString();
-      return request(`/zonas${qs ? `?${qs}` : ""}`);
-    },
-    zonasCreate: (payload) => request(`/zonas`, { method: "POST", body: payload }),
-    zonasUpdate: (id, payload) => request(`/zonas/${id}`, { method: "PUT", body: payload }),
-    zonasDelete: (id) => request(`/zonas/${id}`, { method: "DELETE" }),
+  /* ======================
+     ZONAS
+  ====================== */
+  zonasList: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/zonas${qs ? `?${qs}` : ""}`);
+  },
+  zonasCreate: (payload) =>
+    request("/zonas", { method: "POST", body: payload }),
+  zonasUpdate: (id, payload) =>
+    request(`/zonas/${id}`, { method: "PUT", body: payload }),
+  zonasDelete: (id) =>
+    request(`/zonas/${id}`, { method: "DELETE" }),
 
+  /* ======================
+     CAJA ✅ (ESTO ARREGLA tu error)
+  ====================== */
+
+  // Caja actual por ubicación
+  // GET /caja/actual?ubicacion_id=1
+  cajaActual: ({ ubicacion_id }) => {
+    const qs = new URLSearchParams({
+      ubicacion_id: String(ubicacion_id),
+    }).toString();
+    return request(`/caja/actual?${qs}`);
+  },
+
+  // Historial de caja
+  // GET /caja/historial?ubicacion_id=1
+  cajaHistorial: ({ ubicacion_id }) => {
+    const qs = new URLSearchParams({
+      ubicacion_id: String(ubicacion_id),
+    }).toString();
+    return request(`/caja/historial?${qs}`);
+  },
+
+  // Abrir caja
+  // POST /caja/abrir
+  cajaAbrir: (payload) =>
+    request("/caja/abrir", { method: "POST", body: payload }),
+
+  // Cerrar caja
+  // POST /caja/cerrar
+  cajaCerrar: (payload) =>
+    request("/caja/cerrar", { method: "POST", body: payload }),
 };
