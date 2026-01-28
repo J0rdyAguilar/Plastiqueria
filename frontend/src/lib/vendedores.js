@@ -8,6 +8,7 @@ export const vendedoresApi = {
   remove: (id) => api.vendedoresDelete(id),
 
   // ✅ asignar rutas
-  asignarRutas: (id, ruta_ids, modo = "sync") =>
-    api.vendedoresAsignarRutas(id, { ruta_ids, modo }),
+    asignarRutas: (id, ruta_ids, modo="sync") =>
+    request(`/vendedores/${id}/rutas`, { method:"POST", body:{ ruta_ids, modo } }),
+
 };

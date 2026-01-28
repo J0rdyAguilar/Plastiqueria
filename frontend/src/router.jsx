@@ -6,7 +6,8 @@ import Login from "./pages/Login";
 import Usuarios from "./pages/Usuarios";
 import Vendedores from "./pages/Vendedores";
 import Caja from "./pages/Caja";
-import Zonas from "./pages/Zonas"; // ✅ IMPORTA ZONAS
+import Zonas from "./pages/Zonas";
+import Rutas from "./pages/Rutas"; // ✅ IMPORTA RUTAS
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 
@@ -38,6 +39,15 @@ export const router = createBrowserRouter([
     element: (
       <ProtectedRoute roles={["admin", "super_admin"]}>
         <Zonas />
+      </ProtectedRoute>
+    ),
+  },
+
+  {
+    path: "/rutas",
+    element: (
+      <ProtectedRoute roles={["admin", "super_admin"]}>
+        <Rutas />
       </ProtectedRoute>
     ),
   },

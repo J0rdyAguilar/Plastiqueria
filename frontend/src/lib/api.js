@@ -77,6 +77,10 @@ export const api = {
       method: "POST",
       body: payload,
     }),
+    // Vendedores
+    vendedoresList: (params) => request(`/vendedores${params ? "?" + new URLSearchParams(params) : ""}`),
+    vendedoresShow: (id) => request(`/vendedores/${id}`),
+
 
   /* ======================
      RUTAS

@@ -42,44 +42,28 @@ export default function Layout({ children }) {
               <small>Panel</small>
             </span>
           </Link>
-
-          <nav className="nav">
-            {canSeeUsuarios && (
-              <Link
-                className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}
-                to="/usuarios"
-              >
+            <nav className="nav">
+              <Link to="/usuarios" className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}>
                 Usuarios
               </Link>
-            )}
 
-            {canSeeVendedores && (
-              <Link
-                className={`navlink ${loc.pathname.startsWith("/vendedores") ? "active" : ""}`}
-                to="/vendedores"
-              >
+              <Link to="/vendedores" className={`navlink ${loc.pathname.startsWith("/vendedores") ? "active" : ""}`}>
                 Vendedores
               </Link>
-            )}
 
-            {canSeeCaja && (
-              <Link
-                className={`navlink ${loc.pathname.startsWith("/caja") ? "active" : ""}`}
-                to="/caja"
-              >
-                Caja
-              </Link>
-            )}
-
-            {canSeeZonas && (
-              <Link
-                className={`navlink ${loc.pathname.startsWith("/zonas") ? "active" : ""}`}
-                to="/zonas"
-              >
+              <Link to="/zonas" className={`navlink ${loc.pathname.startsWith("/zonas") ? "active" : ""}`}>
                 Zonas
               </Link>
-            )}
-          </nav>
+
+              <Link to="/rutas" className={`navlink ${loc.pathname.startsWith("/rutas") ? "active" : ""}`}>
+                Rutas
+              </Link>
+              
+              <Link to="/caja" className={`navlink ${loc.pathname.startsWith("/caja") ? "active" : ""}`}>
+                Caja
+              </Link>
+            </nav>
+
 
           <div className="hdr-right">
             {logged ? (

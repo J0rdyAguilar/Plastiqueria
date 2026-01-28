@@ -19,14 +19,24 @@ class VendedorController extends Controller
         $perPage = max(1, min($perPage, 100));
 
         $vendedores = Vendedor::query()
-            ->with(['usuario:id,nombre,usuario,telefono,rol,activo'])
+            ->with([
+                'usuario:id,nombre,usuario,telefono,rol,activo',
+                // ✅ para que en el listado ya venga lo asignado
+                'rutas' => function ($qq) {
+                    $qq->select('rutas.id', 'rutas.nombre');
+                },
+            ])
             ->when($q, function ($query) use ($q) {
                 $query->where('codigo', 'like', "%$q%")
-                      ->orWhereHas('usuario', function ($u) use ($q) {
-                          $u->where('nombre', 'like', "%$q%")
-                            ->orWhere('usuario', 'like', "%$q%")
-                            ->orWhere('telefono', 'like', "%$q%");
-                      });
+                    ->orWhereHas('usuario', function ($u) use ($q) {
+                        $u->where('nombre', 'like', "%$q%")
+                          ->orWhere('usuario', 'like', "%$q%")
+                          ->orWhere('telefono', 'like', "%$q%");
+                    })
+                    ->orWhereHas('rutas', function ($r) use ($q) {
+                        // buscar también por nombre de ruta
+                        $r->where('rutas.nombre', 'like', "%$q%");
+                    });
             })
             ->when($activo !== null && $activo !== '', function ($query) use ($activo) {
                 $query->whereHas('usuario', function ($u) use ($activo) {
@@ -43,8 +53,8 @@ class VendedorController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'usuario_id' => ['required','integer', Rule::exists('usuarios','id')],
-            'codigo'     => ['nullable','string','max:50', Rule::unique('vendedores','codigo')],
+            'usuario_id' => ['required', 'integer', Rule::exists('usuarios', 'id')],
+            'codigo'     => ['nullable', 'string', 'max:50', Rule::unique('vendedores', 'codigo')],
         ]);
 
         // Evitar que un usuario tenga 2 vendedores
@@ -69,13 +79,20 @@ class VendedorController extends Controller
     // GET /api/v1/vendedores/{vendedor}
     public function show(Vendedor $vendedor)
     {
-        return response()->json(
-            $vendedor->load([
-                'usuario:id,nombre,usuario,telefono,rol,activo',
-                'rutas:id,nombre',
-                'clientes:id,nombre',
-            ])
-        );
+        $vendedor->load([
+            'usuario:id,nombre,usuario,telefono,rol,activo',
+
+            // ✅ IMPORTANTE: calificar columnas para evitar "id ambiguous"
+            'rutas' => function ($q) {
+                $q->select('rutas.id', 'rutas.nombre');
+            },
+
+            'clientes' => function ($q) {
+                $q->select('clientes.id', 'clientes.nombre');
+            },
+        ]);
+
+        return response()->json($vendedor);
     }
 
     // PUT/PATCH /api/v1/vendedores/{vendedor}
@@ -83,8 +100,8 @@ class VendedorController extends Controller
     {
         $data = $request->validate([
             'codigo' => [
-                'nullable','string','max:50',
-                Rule::unique('vendedores','codigo')->ignore($vendedor->id),
+                'nullable', 'string', 'max:50',
+                Rule::unique('vendedores', 'codigo')->ignore($vendedor->id),
             ],
         ]);
 
@@ -105,13 +122,14 @@ class VendedorController extends Controller
         return response()->json(['message' => 'Vendedor eliminado']);
     }
 
-    // POST /api/v1/vendedores/{vendedor}/rutas  body: { "ruta_ids":[1,2,3] }
+    // POST /api/v1/vendedores/{vendedor}/rutas
+    // body: { "ruta_ids":[1,2,3], "modo":"sync|attach" }
     public function asignarRutas(Request $request, Vendedor $vendedor)
     {
         $data = $request->validate([
-            'ruta_ids'   => ['required','array','min:1'],
-            'ruta_ids.*' => ['integer', Rule::exists('rutas','id')],
-            'modo'       => ['nullable', Rule::in(['sync','attach'])],
+            'ruta_ids'   => ['required', 'array', 'min:1'],
+            'ruta_ids.*' => ['integer', Rule::exists('rutas', 'id')],
+            'modo'       => ['nullable', Rule::in(['sync', 'attach'])],
         ]);
 
         $modo = $data['modo'] ?? 'sync';
@@ -124,17 +142,21 @@ class VendedorController extends Controller
 
         return response()->json([
             'message' => 'Rutas asignadas',
-            'rutas'   => $vendedor->rutas()->select('id','nombre')->get(),
+            // ✅ calificado para evitar "id ambiguous" si el pivote tiene id
+            'rutas' => $vendedor->rutas()
+                ->select('rutas.id', 'rutas.nombre')
+                ->get(),
         ]);
     }
 
-    // POST /api/v1/vendedores/{vendedor}/clientes body: { "cliente_ids":[1,2] }
+    // POST /api/v1/vendedores/{vendedor}/clientes
+    // body: { "cliente_ids":[1,2], "modo":"sync|attach" }
     public function asignarClientes(Request $request, Vendedor $vendedor)
     {
         $data = $request->validate([
-            'cliente_ids'   => ['required','array','min:1'],
-            'cliente_ids.*' => ['integer', Rule::exists('clientes','id')],
-            'modo'          => ['nullable', Rule::in(['sync','attach'])],
+            'cliente_ids'   => ['required', 'array', 'min:1'],
+            'cliente_ids.*' => ['integer', Rule::exists('clientes', 'id')],
+            'modo'          => ['nullable', Rule::in(['sync', 'attach'])],
         ]);
 
         $modo = $data['modo'] ?? 'sync';
@@ -147,7 +169,10 @@ class VendedorController extends Controller
 
         return response()->json([
             'message'  => 'Clientes asignados',
-            'clientes' => $vendedor->clientes()->select('id','nombre')->get(),
+            // ✅ calificado para evitar "id ambiguous" si el pivote tiene id
+            'clientes' => $vendedor->clientes()
+                ->select('clientes.id', 'clientes.nombre')
+                ->get(),
         ]);
     }
 }
