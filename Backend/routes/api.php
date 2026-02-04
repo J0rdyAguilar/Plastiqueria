@@ -9,3 +9,20 @@ require __DIR__.'/api/rutas.php';
 require __DIR__.'/api/caja.php';
 require __DIR__.'/api/ubicaciones.php'; // ✅ NUEVO
 require __DIR__ . '/api/zonas.php';
+
+
+Route::prefix('productos')
+    ->middleware('auth:sanctum')
+    ->group(base_path('routes/api/producto.php'));
+
+Route::prefix('producto-unidades')
+  ->middleware('auth:sanctum')
+  ->group(base_path('routes/api/producto_unidades.php'));
+
+  Route::prefix('producto-precios')
+  ->middleware('auth:sanctum')
+  ->group(base_path('routes/api/producto_precios.php'));
+
+  Route::prefix('producto-imagenes')
+  ->middleware('auth:sanctum')
+  ->group(base_path('routes/api/producto_imagenes.php'));

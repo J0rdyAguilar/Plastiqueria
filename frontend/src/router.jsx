@@ -5,15 +5,15 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Usuarios from "./pages/Usuarios";
 import Vendedores from "./pages/Vendedores";
-import Caja from "./pages/Caja";
 import Zonas from "./pages/Zonas";
-import Rutas from "./pages/Rutas"; // ✅ IMPORTA RUTAS
+import Rutas from "./pages/Rutas";
+import Caja from "./pages/Caja";
+import Productos from "./pages/Productos"; // <-- default import OK
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 
 export const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/login" replace /> },
-
   { path: "/login", element: <Login /> },
 
   {
@@ -48,6 +48,15 @@ export const router = createBrowserRouter([
     element: (
       <ProtectedRoute roles={["admin", "super_admin"]}>
         <Rutas />
+      </ProtectedRoute>
+    ),
+  },
+
+  {
+    path: "/productos",
+    element: (
+      <ProtectedRoute roles={["admin", "super_admin"]}>
+        <Productos />
       </ProtectedRoute>
     ),
   },

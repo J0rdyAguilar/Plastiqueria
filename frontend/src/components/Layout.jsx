@@ -1,4 +1,3 @@
-// src/components/Layout.jsx
 import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { clearSession, getSession, isLoggedIn } from "../lib/auth";
@@ -18,13 +17,22 @@ export default function Layout({ children }) {
 
   const rol = normalizeRole(me?.rol);
 
-  const canSeeUsuarios = logged && (rol === "admin" || rol === "super_admin");
+  // PERMISOS
+  const canSeeUsuarios   = logged && (rol === "admin" || rol === "super_admin");
   const canSeeVendedores = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeZonas = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeCaja = logged && (rol === "admin" || rol === "super_admin" || rol === "caja");
+  const canSeeZonas      = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeRutas      = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeProductos  = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeCaja       = logged && (rol === "admin" || rol === "super_admin" || rol === "caja");
 
   // a dónde manda el logo
-  const homeLink = canSeeUsuarios ? "/usuarios" : (canSeeCaja ? "/caja" : "/login");
+  const homeLink = canSeeProductos
+    ? "/productos"
+    : canSeeUsuarios
+      ? "/usuarios"
+      : canSeeCaja
+        ? "/caja"
+        : "/login";
 
   function logout() {
     clearSession();
@@ -42,28 +50,62 @@ export default function Layout({ children }) {
               <small>Panel</small>
             </span>
           </Link>
-            <nav className="nav">
-              <Link to="/usuarios" className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}>
+
+          <nav className="nav">
+            {canSeeUsuarios && (
+              <Link
+                to="/usuarios"
+                className={`navlink ${loc.pathname.startsWith("/usuarios") ? "active" : ""}`}
+              >
                 Usuarios
               </Link>
+            )}
 
-              <Link to="/vendedores" className={`navlink ${loc.pathname.startsWith("/vendedores") ? "active" : ""}`}>
+            {canSeeVendedores && (
+              <Link
+                to="/vendedores"
+                className={`navlink ${loc.pathname.startsWith("/vendedores") ? "active" : ""}`}
+              >
                 Vendedores
               </Link>
+            )}
 
-              <Link to="/zonas" className={`navlink ${loc.pathname.startsWith("/zonas") ? "active" : ""}`}>
+            {canSeeZonas && (
+              <Link
+                to="/zonas"
+                className={`navlink ${loc.pathname.startsWith("/zonas") ? "active" : ""}`}
+              >
                 Zonas
               </Link>
+            )}
 
-              <Link to="/rutas" className={`navlink ${loc.pathname.startsWith("/rutas") ? "active" : ""}`}>
+            {canSeeRutas && (
+              <Link
+                to="/rutas"
+                className={`navlink ${loc.pathname.startsWith("/rutas") ? "active" : ""}`}
+              >
                 Rutas
               </Link>
-              
-              <Link to="/caja" className={`navlink ${loc.pathname.startsWith("/caja") ? "active" : ""}`}>
+            )}
+
+            {canSeeProductos && (
+              <Link
+                to="/productos"
+                className={`navlink ${loc.pathname.startsWith("/productos") ? "active" : ""}`}
+              >
+                Productos
+              </Link>
+            )}
+
+            {canSeeCaja && (
+              <Link
+                to="/caja"
+                className={`navlink ${loc.pathname.startsWith("/caja") ? "active" : ""}`}
+              >
                 Caja
               </Link>
-            </nav>
-
+            )}
+          </nav>
 
           <div className="hdr-right">
             {logged ? (
