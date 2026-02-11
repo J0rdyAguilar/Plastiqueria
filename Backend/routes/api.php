@@ -9,6 +9,8 @@ require __DIR__.'/api/rutas.php';
 require __DIR__.'/api/caja.php';
 require __DIR__.'/api/ubicaciones.php'; // ✅ NUEVO
 require __DIR__ . '/api/zonas.php';
+require __DIR__ . '/api/stock.php';
+require __DIR__ . '/api/movimientos_stock.php';
 
 
 Route::prefix('productos')

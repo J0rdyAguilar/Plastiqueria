@@ -1,17 +1,25 @@
 <?php
 
 namespace App\Models;
-// GET /api/v1/caja/actual?ubicacion_id=1
+
 use Illuminate\Database\Eloquent\Model;
 
 class Ubicacion extends Model
 {
     protected $table = 'ubicaciones';
 
+    // Tus columnas de timestamps no son created_at/updated_at
+    const CREATED_AT = 'creado_en';
+    const UPDATED_AT = 'actualizado_en';
+
     protected $fillable = [
         'nombre',
-        'activo',
+        'tipo',
+        'direccion',
+        'activa',
     ];
 
-    public $timestamps = false;
+    protected $casts = [
+        'activa' => 'boolean',
+    ];
 }

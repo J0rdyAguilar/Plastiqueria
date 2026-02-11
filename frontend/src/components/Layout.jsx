@@ -17,13 +17,21 @@ export default function Layout({ children }) {
 
   const rol = normalizeRole(me?.rol);
 
+  // =========================
   // PERMISOS
-  const canSeeUsuarios   = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeVendedores = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeZonas      = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeRutas      = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeProductos  = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeCaja       = logged && (rol === "admin" || rol === "super_admin" || rol === "caja");
+  // =========================
+  const canSeeUsuarios    = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeVendedores  = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeZonas       = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeRutas       = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeProductos   = logged && (rol === "admin" || rol === "super_admin");
+
+  // 📦 INVENTARIO
+  const canSeeStock       = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeMovimientos = logged && (rol === "admin" || rol === "super_admin");
+
+  // 💰 CAJA / POS
+  const canSeeCaja        = logged && (rol === "admin" || rol === "super_admin" || rol === "caja");
 
   // a dónde manda el logo
   const homeLink = canSeeProductos
@@ -97,6 +105,30 @@ export default function Layout({ children }) {
               </Link>
             )}
 
+            {/* =========================
+                📦 INVENTARIO
+               ========================= */}
+            {canSeeStock && (
+              <Link
+                to="/stock"
+                className={`navlink ${loc.pathname.startsWith("/stock") ? "active" : ""}`}
+              >
+                Inventario
+              </Link>
+            )}
+
+            {canSeeMovimientos && (
+              <Link
+                to="/movimientos-stock"
+                className={`navlink ${loc.pathname.startsWith("/movimientos-stock") ? "active" : ""}`}
+              >
+                Movimientos
+              </Link>
+            )}
+
+            {/* =========================
+                💰 CAJA / POS
+               ========================= */}
             {canSeeCaja && (
               <Link
                 to="/caja"

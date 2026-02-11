@@ -8,12 +8,17 @@ import Vendedores from "./pages/Vendedores";
 import Zonas from "./pages/Zonas";
 import Rutas from "./pages/Rutas";
 import Caja from "./pages/Caja";
-import Productos from "./pages/Productos"; // <-- default import OK
+import Productos from "./pages/Productos";
+
+// 👉 NUEVOS
+import Stock from "./pages/Stock";
+import MovimientosStock from "./pages/MovimientosStock";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 
 export const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/login" replace /> },
+
   { path: "/login", element: <Login /> },
 
   {
@@ -61,6 +66,30 @@ export const router = createBrowserRouter([
     ),
   },
 
+  // =========================
+  // 📦 INVENTARIO / STOCK
+  // =========================
+  {
+    path: "/stock",
+    element: (
+      <ProtectedRoute roles={["admin", "super_admin"]}>
+        <Stock />
+      </ProtectedRoute>
+    ),
+  },
+
+  {
+    path: "/movimientos-stock",
+    element: (
+      <ProtectedRoute roles={["admin", "super_admin"]}>
+        <MovimientosStock />
+      </ProtectedRoute>
+    ),
+  },
+
+  // =========================
+  // 💰 CAJA / POS
+  // =========================
   {
     path: "/caja",
     element: (
