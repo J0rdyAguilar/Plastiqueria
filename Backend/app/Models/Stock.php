@@ -8,7 +8,7 @@ class Stock extends Model
 {
     protected $table = 'stock';
 
-    // Solo tienes actualizado_en (no creado_en)
+    // Tu tabla solo tiene actualizado_en (no creado_en)
     const CREATED_AT = null;
     const UPDATED_AT = 'actualizado_en';
 
@@ -21,6 +21,17 @@ class Stock extends Model
     ];
 
     protected $casts = [
-        'cantidad_base' => 'integer',
+        'cantidad_base' => 'int',
+        'actualizado_en' => 'datetime',
     ];
+
+    public function producto()
+    {
+        return $this->belongsTo(Producto::class, 'producto_id');
+    }
+
+    public function ubicacion()
+    {
+        return $this->belongsTo(Ubicacion::class, 'ubicacion_id');
+    }
 }

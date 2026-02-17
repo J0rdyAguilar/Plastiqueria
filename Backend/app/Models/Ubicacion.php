@@ -22,4 +22,9 @@ class Ubicacion extends Model
     protected $casts = [
         'activa' => 'boolean',
     ];
+
+    public function stocks()
+    {
+        return $this->hasMany(Stock::class, 'ubicacion_id', 'id');
+    }
 }

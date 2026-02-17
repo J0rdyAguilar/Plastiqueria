@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Producto;
+use App\Models\Stock;
+use App\Models\Ubicacion;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ProductoController extends Controller
 {
@@ -46,12 +49,39 @@ class ProductoController extends Controller
             'activo'        => 'boolean',
         ]);
 
-        $producto = Producto::create($data);
+        return DB::transaction(function () use ($data) {
 
-        // ✅ devolver con imagenPrincipal cargada (aunque aún esté null)
-        $producto->load(['imagenPrincipal']);
+            // 1) Crear producto (tu modelo NO usa timestamps normales)
+            $producto = Producto::create([
+                'sku'          => $data['sku'] ?? null,
+                'nombre'       => $data['nombre'],
+                'descripcion'  => $data['descripcion'] ?? null,
+                'unidad_base'  => $data['unidad_base'],
+                'alerta_stock' => $data['alerta_stock'] ?? 0,
+                'activo'       => $data['activo'] ?? true,
+                'creado_en'    => now(),
+            ]);
 
-        return response()->json($producto, 201);
+            // 2) Crear stock en 0 para TODAS las ubicaciones
+            $ubicaciones = Ubicacion::query()->pluck('id');
+
+            foreach ($ubicaciones as $ubicacionId) {
+                Stock::query()->firstOrCreate(
+                    [
+                        'producto_id'  => $producto->id,
+                        'ubicacion_id' => $ubicacionId,
+                    ],
+                    [
+                        'cantidad_base' => 0,
+                    ]
+                );
+            }
+
+            // 3) devolver con imagenPrincipal cargada (aunque aún esté null)
+            $producto->load(['imagenPrincipal']);
+
+            return response()->json($producto, 201);
+        });
     }
 
     public function show(Producto $producto)
@@ -70,6 +100,8 @@ class ProductoController extends Controller
             'alerta_stock'  => 'nullable|integer|min:0',
             'activo'        => 'boolean',
         ]);
+
+        $data['actualizado_en'] = now();
 
         $producto->update($data);
 
