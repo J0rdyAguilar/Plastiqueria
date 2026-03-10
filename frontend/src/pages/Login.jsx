@@ -60,7 +60,7 @@ export default function Login() {
   }
 
   return (
-    <Layout>
+    
       <div className="auth-wrap">
         <div className="auth-bg" />
 
@@ -104,6 +104,6 @@ export default function Login() {
           </p>
         </form>
       </div>
-    </Layout>
+   
   );
 }

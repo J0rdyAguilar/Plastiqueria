@@ -228,7 +228,7 @@ export default function Vendedores() {
   }
 
   return (
-    <Layout>
+   
       <div className="page">
         <header className="topbar">
           <div>
@@ -469,6 +469,6 @@ export default function Vendedores() {
           </div>
         ) : null}
       </div>
-    </Layout>
+    
   );
 }

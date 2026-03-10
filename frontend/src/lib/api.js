@@ -9,6 +9,7 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
 
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
+    credentials: "omit", // ✅ IMPORTANTE: no mandar cookies
     headers: {
       Accept: "application/json",
       ...(body ? { "Content-Type": "application/json" } : {}),
@@ -40,105 +41,48 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
 }
 
 export const api = {
-  /* ======================
-     AUTH
-  ====================== */
-  login: (payload) =>
-    request("/login", { method: "POST", body: payload }),
+  login: (payload) => request("/login", { method: "POST", body: payload }),
 
-  /* ======================
-     USUARIOS
-  ====================== */
   usuariosList: () => request("/usuarios"),
-  usuariosCreate: (payload) =>
-    request("/usuarios", { method: "POST", body: payload }),
-  usuariosUpdate: (id, payload) =>
-    request(`/usuarios/${id}`, { method: "PUT", body: payload }),
-  usuariosDelete: (id) =>
-    request(`/usuarios/${id}`, { method: "DELETE" }),
+  usuariosCreate: (payload) => request("/usuarios", { method: "POST", body: payload }),
+  usuariosUpdate: (id, payload) => request(`/usuarios/${id}`, { method: "PUT", body: payload }),
+  usuariosDelete: (id) => request(`/usuarios/${id}`, { method: "DELETE" }),
 
-  /* ======================
-     VENDEDORES
-  ====================== */
   vendedoresList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/vendedores${qs ? `?${qs}` : ""}`);
   },
-  vendedoresCreate: (payload) =>
-    request("/vendedores", { method: "POST", body: payload }),
-  vendedoresUpdate: (id, payload) =>
-    request(`/vendedores/${id}`, { method: "PUT", body: payload }),
-  vendedoresDelete: (id) =>
-    request(`/vendedores/${id}`, { method: "DELETE" }),
-
-  // asignar rutas a vendedor
+  vendedoresCreate: (payload) => request("/vendedores", { method: "POST", body: payload }),
+  vendedoresUpdate: (id, payload) => request(`/vendedores/${id}`, { method: "PUT", body: payload }),
+  vendedoresDelete: (id) => request(`/vendedores/${id}`, { method: "DELETE" }),
   vendedoresAsignarRutas: (id, payload) =>
-    request(`/vendedores/${id}/rutas`, {
-      method: "POST",
-      body: payload,
-    }),
-    // Vendedores
-    vendedoresList: (params) => request(`/vendedores${params ? "?" + new URLSearchParams(params) : ""}`),
-    vendedoresShow: (id) => request(`/vendedores/${id}`),
+    request(`/vendedores/${id}/rutas`, { method: "POST", body: payload }),
+  vendedoresShow: (id) => request(`/vendedores/${id}`),
 
-
-  /* ======================
-     RUTAS
-  ====================== */
   rutasList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/rutas${qs ? `?${qs}` : ""}`);
   },
-  rutasCreate: (payload) =>
-    request("/rutas", { method: "POST", body: payload }),
-  rutasUpdate: (id, payload) =>
-    request(`/rutas/${id}`, { method: "PUT", body: payload }),
-  rutasDelete: (id) =>
-    request(`/rutas/${id}`, { method: "DELETE" }),
+  rutasCreate: (payload) => request("/rutas", { method: "POST", body: payload }),
+  rutasUpdate: (id, payload) => request(`/rutas/${id}`, { method: "PUT", body: payload }),
+  rutasDelete: (id) => request(`/rutas/${id}`, { method: "DELETE" }),
 
-  /* ======================
-     ZONAS
-  ====================== */
   zonasList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/zonas${qs ? `?${qs}` : ""}`);
   },
-  zonasCreate: (payload) =>
-    request("/zonas", { method: "POST", body: payload }),
-  zonasUpdate: (id, payload) =>
-    request(`/zonas/${id}`, { method: "PUT", body: payload }),
-  zonasDelete: (id) =>
-    request(`/zonas/${id}`, { method: "DELETE" }),
+  zonasCreate: (payload) => request("/zonas", { method: "POST", body: payload }),
+  zonasUpdate: (id, payload) => request(`/zonas/${id}`, { method: "PUT", body: payload }),
+  zonasDelete: (id) => request(`/zonas/${id}`, { method: "DELETE" }),
 
-  /* ======================
-     CAJA ✅ (ESTO ARREGLA tu error)
-  ====================== */
-
-  // Caja actual por ubicación
-  // GET /caja/actual?ubicacion_id=1
   cajaActual: ({ ubicacion_id }) => {
-    const qs = new URLSearchParams({
-      ubicacion_id: String(ubicacion_id),
-    }).toString();
+    const qs = new URLSearchParams({ ubicacion_id: String(ubicacion_id) }).toString();
     return request(`/caja/actual?${qs}`);
   },
-
-  // Historial de caja
-  // GET /caja/historial?ubicacion_id=1
   cajaHistorial: ({ ubicacion_id }) => {
-    const qs = new URLSearchParams({
-      ubicacion_id: String(ubicacion_id),
-    }).toString();
+    const qs = new URLSearchParams({ ubicacion_id: String(ubicacion_id) }).toString();
     return request(`/caja/historial?${qs}`);
   },
-
-  // Abrir caja
-  // POST /caja/abrir
-  cajaAbrir: (payload) =>
-    request("/caja/abrir", { method: "POST", body: payload }),
-
-  // Cerrar caja
-  // POST /caja/cerrar
-  cajaCerrar: (payload) =>
-    request("/caja/cerrar", { method: "POST", body: payload }),
+  cajaAbrir: (payload) => request("/caja/abrir", { method: "POST", body: payload }),
+  cajaCerrar: (payload) => request("/caja/cerrar", { method: "POST", body: payload }),
 };

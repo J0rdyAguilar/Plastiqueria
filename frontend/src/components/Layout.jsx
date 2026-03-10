@@ -1,10 +1,9 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 
 function normalizeRole(r) {
   const x = (r || "").toString().trim().toLowerCase();
-  // si en algún momento llega "cajero", lo tratamos como caja
   if (x === "cajero") return "caja";
   return x;
 }
@@ -12,35 +11,32 @@ function normalizeRole(r) {
 export default function Layout({ children }) {
   const nav = useNavigate();
   const loc = useLocation();
+
   const logged = isLoggedIn();
   const me = getSession()?.user;
-
   const rol = normalizeRole(me?.rol);
 
-  // =========================
-  // PERMISOS
-  // =========================
-  const canSeeUsuarios    = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeVendedores  = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeZonas       = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeRutas       = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeProductos   = logged && (rol === "admin" || rol === "super_admin");
+  const isAdmin = logged && (rol === "admin" || rol === "super_admin");
 
-  // 📦 INVENTARIO
-  const canSeeStock       = logged && (rol === "admin" || rol === "super_admin");
-  const canSeeMovimientos = logged && (rol === "admin" || rol === "super_admin");
+  const canSeeUsuarios = isAdmin;
+  const canSeeVendedores = isAdmin;
+  const canSeeZonas = isAdmin;
+  const canSeeRutas = isAdmin;
+  const canSeeProductos = isAdmin;
+  const canSeeStock = isAdmin;
+  const canSeeMovimientos = isAdmin;
 
-  // 💰 CAJA / POS
-  const canSeeCaja        = logged && (rol === "admin" || rol === "super_admin" || rol === "caja");
+  // ✅ Caja SOLO admin + caja/cajero
+  const canSeeCaja = logged && (isAdmin || rol === "caja");
 
-  // a dónde manda el logo
-  const homeLink = canSeeProductos
-    ? "/productos"
-    : canSeeUsuarios
-      ? "/usuarios"
-      : canSeeCaja
-        ? "/caja"
-        : "/login";
+  // ✅ Home por rol (para el logo)
+  const homeLink = useMemo(() => {
+    if (!logged) return "/login";
+    if (isAdmin) return "/usuarios";
+    if (rol === "caja") return "/caja";
+    if (rol === "vendedor") return "/pedidos";
+    return "/login";
+  }, [logged, isAdmin, rol]);
 
   function logout() {
     clearSession();
@@ -105,9 +101,6 @@ export default function Layout({ children }) {
               </Link>
             )}
 
-            {/* =========================
-                📦 INVENTARIO
-               ========================= */}
             {canSeeStock && (
               <Link
                 to="/stock"
@@ -126,15 +119,22 @@ export default function Layout({ children }) {
               </Link>
             )}
 
-            {/* =========================
-                💰 CAJA / POS
-               ========================= */}
             {canSeeCaja && (
               <Link
                 to="/caja"
                 className={`navlink ${loc.pathname.startsWith("/caja") ? "active" : ""}`}
               >
                 Caja
+              </Link>
+            )}
+
+            {/* ✅ Menú vendedor */}
+            {logged && rol === "vendedor" && (
+              <Link
+                to="/pedidos"
+                className={`navlink ${loc.pathname.startsWith("/pedidos") ? "active" : ""}`}
+              >
+                Pedidos
               </Link>
             )}
           </nav>

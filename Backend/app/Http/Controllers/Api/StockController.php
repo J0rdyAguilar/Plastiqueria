@@ -8,35 +8,45 @@ use Illuminate\Http\Request;
 
 class StockController extends Controller
 {
-    // GET /api/stock?ubicacion_id=&q=&page=&per_page=
     public function index(Request $request)
     {
+        $q = trim((string) $request->query('q', ''));
         $ubicacionId = $request->query('ubicacion_id');
-        $q = trim((string)$request->query('q', ''));
+        $perPage = (int) $request->query('per_page', 10);
 
-        $query = Stock::query()
-            ->join('productos', 'productos.id', '=', 'stock.producto_id')
-            ->select([
-                'stock.id',
-                'stock.ubicacion_id',
-                'stock.producto_id',
-                'stock.cantidad_base',
-                'stock.actualizado_en',
-                'productos.nombre as producto_nombre',
-            ]);
+        $query = Stock::query()->with([
+            'producto:id,sku,nombre',
+            'ubicacion:id,nombre,tipo',
+        ]);
 
         if ($ubicacionId) {
-            $query->where('stock.ubicacion_id', (int)$ubicacionId);
+            $query->where('ubicacion_id', $ubicacionId);
         }
 
         if ($q !== '') {
-            $query->where('productos.nombre', 'like', "%{$q}%");
+            $query->whereHas('producto', function ($sub) use ($q) {
+                $sub->where('nombre', 'like', "%{$q}%")
+                    ->orWhere('sku', 'like', "%{$q}%");
+
+                if (is_numeric($q)) {
+                    $sub->orWhere('id', (int) $q);
+                }
+            });
         }
 
-        $items = $query
-            ->orderBy('productos.nombre')
-            ->paginate((int)$request->query('per_page', 10));
-
-        return response()->json($items);
+        return $query
+            ->orderBy('producto_id')
+            ->paginate($perPage)
+            ->through(function ($s) {
+                return [
+                    'id' => $s->id,
+                    'ubicacion_id' => $s->ubicacion_id,
+                    'producto_id' => $s->producto_id,
+                    'producto_nombre' => $s->producto?->nombre,
+                    'producto_sku' => $s->producto?->sku,
+                    'cantidad_base' => $s->cantidad_base,
+                    'actualizado_en' => $s->actualizado_en?->format('Y-m-d H:i:s'),
+                ];
+            });
     }
 }

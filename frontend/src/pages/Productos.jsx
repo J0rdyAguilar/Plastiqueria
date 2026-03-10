@@ -69,7 +69,7 @@ export default function Productos() {
   }
 
   return (
-    <Layout>
+   
       <div className="page">
         <div className="page-header">
           <div>
@@ -199,7 +199,7 @@ export default function Productos() {
 
         <style>{styles}</style>
       </div>
-    </Layout>
+  
   );
 }
 

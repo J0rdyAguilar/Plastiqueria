@@ -157,7 +157,7 @@ export default function Rutas() {
   }
 
   return (
-    <Layout>
+    
       <div className="page">
         <header className="topbar">
           <div>
@@ -293,6 +293,6 @@ export default function Rutas() {
           </div>
         ) : null}
       </div>
-    </Layout>
+    
   );
 }

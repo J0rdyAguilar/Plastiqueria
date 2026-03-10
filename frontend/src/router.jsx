@@ -2,6 +2,8 @@
 import React from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
+import Layout from "./components/Layout";
+
 import Login from "./pages/Login";
 import Usuarios from "./pages/Usuarios";
 import Vendedores from "./pages/Vendedores";
@@ -9,95 +11,129 @@ import Zonas from "./pages/Zonas";
 import Rutas from "./pages/Rutas";
 import Caja from "./pages/Caja";
 import Productos from "./pages/Productos";
-
-// 👉 NUEVOS
 import Stock from "./pages/Stock";
 import MovimientosStock from "./pages/MovimientosStock";
+import Pedidos from "./pages/Pedidos";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
+import { isLoggedIn, getSession } from "./lib/auth";
+
+function normalizeRole(r) {
+  const x = (r || "").toString().trim().toLowerCase();
+  if (x === "cajero") return "caja";
+  return x;
+}
+
+function roleHome() {
+  if (!isLoggedIn()) return "/login";
+  const rol = normalizeRole(getSession()?.user?.rol);
+
+  if (rol === "admin" || rol === "super_admin") return "/usuarios";
+  if (rol === "caja") return "/caja";
+  if (rol === "vendedor") return "/pedidos";
+
+  return "/login";
+}
+
+function HomeRedirect() {
+  return <Navigate to={roleHome()} replace />;
+}
+
+function Wrap({ roles, children }) {
+  return (
+    <ProtectedRoute roles={roles} fallback={roleHome()}>
+      <Layout>{children}</Layout>
+    </ProtectedRoute>
+  );
+}
 
 export const router = createBrowserRouter([
-  { path: "/", element: <Navigate to="/login" replace /> },
-
+  { path: "/", element: <HomeRedirect /> },
   { path: "/login", element: <Login /> },
 
+  // =========================
+  // 👑 ADMIN
+  // =========================
   {
     path: "/usuarios",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin"]}>
+      <Wrap roles={["admin", "super_admin"]}>
         <Usuarios />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
-
   {
     path: "/vendedores",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin"]}>
+      <Wrap roles={["admin", "super_admin"]}>
         <Vendedores />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
-
   {
     path: "/zonas",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin"]}>
+      <Wrap roles={["admin", "super_admin"]}>
         <Zonas />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
-
   {
     path: "/rutas",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin"]}>
+      <Wrap roles={["admin", "super_admin"]}>
         <Rutas />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
-
   {
     path: "/productos",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin"]}>
+      <Wrap roles={["admin", "super_admin"]}>
         <Productos />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
-
-  // =========================
-  // 📦 INVENTARIO / STOCK
-  // =========================
   {
     path: "/stock",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin"]}>
+      <Wrap roles={["admin", "super_admin"]}>
         <Stock />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
-
   {
     path: "/movimientos-stock",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin"]}>
+      <Wrap roles={["admin", "super_admin"]}>
         <MovimientosStock />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
 
   // =========================
-  // 💰 CAJA / POS
+  // 🧑‍💼 VENDEDOR
+  // =========================
+  {
+    path: "/pedidos",
+    element: (
+      <Wrap roles={["vendedor", "admin", "super_admin"]}>
+        <Pedidos />
+      </Wrap>
+    ),
+  },
+
+  // =========================
+  // 💰 CAJA / CAJERO
   // =========================
   {
     path: "/caja",
     element: (
-      <ProtectedRoute roles={["admin", "super_admin", "caja", "cajero"]}>
+      <Wrap roles={["admin", "super_admin", "caja", "cajero"]}>
         <Caja />
-      </ProtectedRoute>
+      </Wrap>
     ),
   },
 
-  { path: "*", element: <Navigate to="/login" replace /> },
+  { path: "*", element: <HomeRedirect /> },
 ]);

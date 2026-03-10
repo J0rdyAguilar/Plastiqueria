@@ -11,32 +11,46 @@ use Illuminate\Support\Facades\DB;
 
 class ProductoController extends Controller
 {
-    public function index()
-    {
-        // ✅ Cargar imagen principal para que el frontend tenga row.imagen_principal.url
-        return Producto::with([
-                'imagenPrincipal:id,producto_id,url,es_principal,orden'
-            ])
-            ->orderBy('nombre')
-            ->paginate(10)
-            ->through(function ($p) {
-                return [
-                    'id' => $p->id,
-                    'sku' => $p->sku,
-                    'nombre' => $p->nombre,
-                    'descripcion' => $p->descripcion,
-                    'unidad_base' => $p->unidad_base,
-                    'alerta_stock' => $p->alerta_stock,
-                    'activo' => (bool) $p->activo,
 
-                    // 👇 esto es lo que tu JSX espera: row.imagen_principal.url
-                    'imagen_principal' => $p->imagenPrincipal ? [
-                        'id' => $p->imagenPrincipal->id,
-                        'url' => $p->imagenPrincipal->url,
-                    ] : null,
-                ];
-            });
+public function index(Request $request)
+{
+    $q = trim((string) $request->query('q', ''));
+    $perPage = (int) $request->query('per_page', 10);
+
+    $query = Producto::with([
+        'imagenPrincipal:id,producto_id,url,es_principal,orden'
+    ]);
+
+    if ($q !== '') {
+        $query->where(function ($sub) use ($q) {
+            $sub->where('sku', 'like', "%{$q}%")
+                ->orWhere('nombre', 'like', "%{$q}%");
+
+            if (is_numeric($q)) {
+                $sub->orWhere('id', (int) $q);
+            }
+        });
     }
+
+    return $query
+        ->orderBy('nombre')
+        ->paginate($perPage)
+        ->through(function ($p) {
+            return [
+                'id' => $p->id,
+                'sku' => $p->sku,
+                'nombre' => $p->nombre,
+                'descripcion' => $p->descripcion,
+                'unidad_base' => $p->unidad_base,
+                'alerta_stock' => $p->alerta_stock,
+                'activo' => (bool) $p->activo,
+                'imagen_principal' => $p->imagenPrincipal ? [
+                    'id' => $p->imagenPrincipal->id,
+                    'url' => $p->imagenPrincipal->url,
+                ] : null,
+            ];
+        });
+}
 
     public function store(Request $request)
     {

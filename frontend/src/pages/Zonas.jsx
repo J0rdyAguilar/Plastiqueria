@@ -130,7 +130,7 @@ export default function Zonas() {
   }
 
   return (
-    <Layout>
+    
       <div className="page">
         <header className="topbar">
           <div>
@@ -266,6 +266,6 @@ export default function Zonas() {
           </div>
         ) : null}
       </div>
-    </Layout>
+    
   );
 }

@@ -4,13 +4,12 @@ import { Navigate, useLocation } from "react-router-dom";
 import { getSession, isLoggedIn } from "../../lib/auth";
 
 function normalizeRole(r) {
-  const x = (r || "").toLowerCase();
-  // tu sistema a veces usa cajero pero en UI dices caja
+  const x = (r || "").toString().trim().toLowerCase();
   if (x === "cajero") return "caja";
   return x;
 }
 
-export default function ProtectedRoute({ roles = [], children }) {
+export default function ProtectedRoute({ roles = [], fallback = "/", children }) {
   const loc = useLocation();
 
   if (!isLoggedIn()) {
@@ -23,9 +22,7 @@ export default function ProtectedRoute({ roles = [], children }) {
   if (Array.isArray(roles) && roles.length > 0) {
     const allowed = roles.map(normalizeRole);
     if (!allowed.includes(userRole)) {
-      // si está logueado pero no tiene rol, lo mandamos a su home
-      const home = userRole === "caja" ? "/caja" : "/usuarios";
-      return <Navigate to={home} replace />;
+      return <Navigate to={fallback} replace />;
     }
   }
 
