@@ -1,4 +1,3 @@
-// src/lib/ubicaciones.js
 import { http } from "./http";
 
 export const ubicacionesApi = {
@@ -6,7 +5,9 @@ export const ubicacionesApi = {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (tipo) params.set("tipo", tipo);
-    if (activa !== "" && activa !== null && activa !== undefined) params.set("activa", String(activa));
+    if (activa !== "" && activa !== null && activa !== undefined) {
+      params.set("activa", String(activa));
+    }
     params.set("page", String(page));
     params.set("per_page", String(per_page));
 
