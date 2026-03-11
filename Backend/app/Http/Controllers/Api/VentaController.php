@@ -33,7 +33,7 @@ class VentaController extends Controller
             'detalles.*.es_monto_variable' => ['nullable', 'boolean'],
         ]);
 
-        return DB::transaction(function () use ($data, $request) {
+        return DB::transaction(function () use ($data) {
             $vendedor = Vendedor::findOrFail($data['vendedor_id']);
             $cliente = Cliente::findOrFail($data['cliente_id']);
 
@@ -71,7 +71,7 @@ class VentaController extends Controller
             $venta = Venta::create([
                 'caja_id' => null,
                 'ubicacion_id' => $data['ubicacion_id'],
-                'usuario_id' => $request->user()?->id,
+                'usuario_id' => null,
                 'vendedor_id' => $data['vendedor_id'],
                 'cliente_id' => $data['cliente_id'],
                 'ruta_id' => $data['ruta_id'],
