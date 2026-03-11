@@ -1,7 +1,6 @@
 import axios from "axios";
 import { getSession } from "./auth";
 
-// baseURL apunta a tu backend laravel (/api)
 const baseURL =
   import.meta.env.VITE_API_BASE_URL
     ? `${import.meta.env.VITE_API_BASE_URL}/api`
@@ -14,7 +13,6 @@ export const http = axios.create({
   },
 });
 
-// Mete el token automáticamente
 http.interceptors.request.use((config) => {
   const token = getSession()?.token;
   if (token) config.headers.Authorization = `Bearer ${token}`;
