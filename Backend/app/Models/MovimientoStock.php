@@ -29,5 +29,26 @@ class MovimientoStock extends Model
         'cantidad_base' => 'integer',
         'referencia_id' => 'integer',
         'creado_por' => 'integer',
+        'creado_en' => 'datetime',
     ];
+
+    public function producto()
+    {
+        return $this->belongsTo(Producto::class, 'producto_id', 'id');
+    }
+
+    public function ubicacionOrigen()
+    {
+        return $this->belongsTo(Ubicacion::class, 'ubicacion_origen_id', 'id');
+    }
+
+    public function ubicacionDestino()
+    {
+        return $this->belongsTo(Ubicacion::class, 'ubicacion_destino_id', 'id');
+    }
+
+    public function usuarioCreador()
+    {
+        return $this->belongsTo(Usuario::class, 'creado_por', 'id');
+    }
 }

@@ -1,4 +1,3 @@
-// src/pages/MovimientosStock.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { movimientosStockApi } from "../lib/stock";
 import { ubicacionesApi } from "../lib/ubicaciones";
@@ -6,6 +5,13 @@ import { productosApi } from "../lib/productos";
 
 const TIPOS = [
   { value: "", label: "Todos" },
+  { value: "entrada", label: "Entrada" },
+  { value: "salida", label: "Salida" },
+  { value: "traslado", label: "Traslado" },
+  { value: "ajuste", label: "Ajuste" },
+];
+
+const TIPOS_FORM = [
   { value: "entrada", label: "Entrada" },
   { value: "salida", label: "Salida" },
   { value: "traslado", label: "Traslado" },
@@ -69,6 +75,7 @@ export default function MovimientosStock() {
   async function load(p = page) {
     setLoading(true);
     setError("");
+
     try {
       const res = await movimientosStockApi.list({
         tipo,
@@ -85,7 +92,11 @@ export default function MovimientosStock() {
         total: res.total,
       });
     } catch (e) {
-      setError(e?.response?.data?.message || e?.message || "Error cargando movimientos");
+      setError(
+        e?.response?.data?.message ||
+          e?.message ||
+          "Error cargando movimientos"
+      );
     } finally {
       setLoading(false);
     }
@@ -132,6 +143,41 @@ export default function MovimientosStock() {
     return () => clearTimeout(t);
   }, [productoSearch]);
 
+  useEffect(() => {
+    // limpiar campos según el tipo para evitar payloads raros
+    setForm((s) => {
+      const next = { ...s };
+
+      if (s.tipo === "entrada") {
+        next.ubicacion_origen_id = "";
+      }
+
+      if (s.tipo === "salida") {
+        next.ubicacion_destino_id = "";
+      }
+
+      if (s.tipo === "ajuste") {
+        // dejamos origen, pero limpiamos destino por simplicidad
+        next.ubicacion_destino_id = "";
+      }
+
+      return next;
+    });
+  }, [form.tipo]);
+
+  function getErrorMessage(e) {
+    const data = e?.response?.data;
+
+    if (data?.errors) {
+      const firstKey = Object.keys(data.errors)[0];
+      if (firstKey && data.errors[firstKey]?.length) {
+        return data.errors[firstKey][0];
+      }
+    }
+
+    return data?.message || e?.message || "Error al crear movimiento";
+  }
+
   async function onCreate(e) {
     e.preventDefault();
     setSaving(true);
@@ -139,21 +185,59 @@ export default function MovimientosStock() {
     setError("");
 
     try {
+      const cantidad = Number(form.cantidad_base);
+
+      if (!form.producto_id) {
+        throw new Error("Selecciona un producto.");
+      }
+
+      if (!Number.isFinite(cantidad) || cantidad === 0) {
+        throw new Error("La cantidad debe ser válida y distinta de 0.");
+      }
+
+      if (needsOrigen && !form.ubicacion_origen_id) {
+        throw new Error("Selecciona la ubicación origen.");
+      }
+
+      if (needsDestino && !form.ubicacion_destino_id) {
+        throw new Error("Selecciona la ubicación destino.");
+      }
+
+      if (
+        form.tipo === "traslado" &&
+        String(form.ubicacion_origen_id) === String(form.ubicacion_destino_id)
+      ) {
+        throw new Error("En traslado, origen y destino no pueden ser iguales.");
+      }
+
       const payload = {
-        tipo: form.tipo,
+        tipo: String(form.tipo).toLowerCase().trim(),
         producto_id: Number(form.producto_id),
-        cantidad_base: Number(form.cantidad_base),
-        motivo: form.motivo || undefined,
-        ubicacion_origen_id: needsOrigen ? Number(form.ubicacion_origen_id) : undefined,
-        ubicacion_destino_id: needsDestino ? Number(form.ubicacion_destino_id) : undefined,
+        cantidad_base: cantidad,
+        motivo: form.motivo?.trim() || undefined,
+        ubicacion_origen_id: needsOrigen
+          ? Number(form.ubicacion_origen_id)
+          : undefined,
+        ubicacion_destino_id: needsDestino
+          ? Number(form.ubicacion_destino_id)
+          : undefined,
       };
 
-      Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+      Object.keys(payload).forEach((k) => {
+        if (
+          payload[k] === undefined ||
+          payload[k] === null ||
+          payload[k] === ""
+        ) {
+          delete payload[k];
+        }
+      });
 
       await movimientosStockApi.create(payload);
 
       setMsg("Movimiento aplicado correctamente.");
       setOpen(false);
+
       setForm({
         tipo: "entrada",
         producto_id: "",
@@ -162,13 +246,15 @@ export default function MovimientosStock() {
         ubicacion_destino_id: "",
         motivo: "",
       });
+
       setProductoSearch("");
       setProductoOptions([]);
       setSelectedProducto(null);
+
+      setPage(1);
       load(1);
     } catch (e) {
-      const m = e?.response?.data?.message || e?.message || "Error al crear movimiento";
-      setError(m);
+      setError(getErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -194,7 +280,14 @@ export default function MovimientosStock() {
           <h2>Movimientos de Stock</h2>
           <div className="muted">Entradas, salidas, traslados y ajustes</div>
         </div>
-        <button className="btn primary" onClick={() => setOpen(true)}>
+        <button
+          className="btn primary"
+          onClick={() => {
+            setMsg("");
+            setError("");
+            setOpen(true);
+          }}
+        >
           + Nuevo movimiento
         </button>
       </div>
@@ -251,7 +344,7 @@ export default function MovimientosStock() {
                 <th>Fecha</th>
                 <th>Tipo</th>
                 <th>Producto</th>
-                <th className="right">Cantidad</th>
+                <th className="right">Cantidad base</th>
                 <th>Origen</th>
                 <th>Destino</th>
                 <th>Motivo</th>
@@ -265,18 +358,49 @@ export default function MovimientosStock() {
                   </td>
                 </tr>
               )}
-              {items.map((m) => (
-                <tr key={m.id}>
-                  <td className="muted">{m.creado_en}</td>
-                  <td>{m.tipo}</td>
-                  <td>{m.producto_id}</td>
-                  <td className="right">{m.cantidad_base}</td>
-                  <td className="muted">{m.ubicacion_origen_id || "-"}</td>
-                  <td className="muted">{m.ubicacion_destino_id || "-"}</td>
-                  <td className="muted">{m.motivo || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
+                {items.map((m) => (
+                  <tr key={m.id}>
+                    <td className="muted">
+                      {m.creado_en
+                        ? new Date(m.creado_en).toLocaleString()
+                        : "-"}
+                    </td>
+
+                    <td style={{ textTransform: "capitalize" }}>
+                      {m.tipo || "-"}
+                    </td>
+
+                    <td>
+                      {m.producto ? (
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{m.producto.nombre}</div>
+                          <div className="muted" style={{ fontSize: 13 }}>
+                            {m.producto.sku || "-"}
+                          </div>
+                        </div>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+
+                    <td className="right">{m.cantidad_base}</td>
+
+                    <td className="muted">
+                      {m.ubicacion_origen
+                        ? `${m.ubicacion_origen.nombre} (${m.ubicacion_origen.tipo})`
+                        : "-"}
+                    </td>
+
+                    <td className="muted">
+                      {m.ubicacion_destino
+                        ? `${m.ubicacion_destino.nombre} (${m.ubicacion_destino.tipo})`
+                        : "-"}
+                    </td>
+
+                    <td className="muted">{m.motivo || "-"}</td>
+                  </tr>
+                ))}
+                            </tbody>
           </table>
         </div>
 
@@ -285,6 +409,7 @@ export default function MovimientosStock() {
             <div className="muted">
               Página {meta.current_page} de {meta.last_page} · Total {meta.total}
             </div>
+
             <div className="row gap">
               <button
                 className="btn"
@@ -297,6 +422,7 @@ export default function MovimientosStock() {
               >
                 Anterior
               </button>
+
               <button
                 className="btn"
                 disabled={!canNext || loading}
@@ -336,10 +462,11 @@ export default function MovimientosStock() {
                       }))
                     }
                   >
-                    <option value="entrada">Entrada</option>
-                    <option value="salida">Salida</option>
-                    <option value="traslado">Traslado</option>
-                    <option value="ajuste">Ajuste</option>
+                    {TIPOS_FORM.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -359,7 +486,8 @@ export default function MovimientosStock() {
 
                   {form.producto_id && selectedProducto ? (
                     <div className="muted" style={{ marginTop: 6 }}>
-                      Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} - {selectedProducto.nombre}
+                      Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} -{" "}
+                      {selectedProducto.nombre}
                     </div>
                   ) : null}
 
@@ -395,7 +523,8 @@ export default function MovimientosStock() {
                             cursor: "pointer",
                           }}
                         >
-                          <b>{p.sku || "(sin sku)"}</b> - {p.nombre} <span className="muted">#{p.id}</span>
+                          <b>{p.sku || "(sin sku)"}</b> - {p.nombre}{" "}
+                          <span className="muted">#{p.id}</span>
                         </button>
                       ))}
                     </div>
@@ -412,8 +541,12 @@ export default function MovimientosStock() {
                   <label>{form.tipo === "ajuste" ? "Cantidad (delta +/-)" : "Cantidad"}</label>
                   <input
                     required
+                    type="number"
+                    step="1"
                     value={form.cantidad_base}
-                    onChange={(e) => setForm((s) => ({ ...s, cantidad_base: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((s) => ({ ...s, cantidad_base: e.target.value }))
+                    }
                     placeholder={form.tipo === "ajuste" ? "Ej: 5 o -3" : "Ej: 10"}
                   />
                 </div>
@@ -479,6 +612,7 @@ export default function MovimientosStock() {
                 >
                   Cancelar
                 </button>
+
                 <button className="btn primary" disabled={saving || !form.producto_id}>
                   {saving ? "Guardando..." : "Aplicar"}
                 </button>
