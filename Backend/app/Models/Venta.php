@@ -28,4 +28,19 @@ class Venta extends Model
         'nota',
         'observaciones',
     ];
+
+    public function cliente()
+    {
+        return $this->belongsTo(Cliente::class, 'cliente_id');
+    }
+
+    public function vendedor()
+    {
+        return $this->belongsTo(Vendedor::class, 'vendedor_id');
+    }
+
+    public function detalles()
+    {
+        return $this->hasMany(VentaDetalle::class, 'venta_id');
+    }
 }

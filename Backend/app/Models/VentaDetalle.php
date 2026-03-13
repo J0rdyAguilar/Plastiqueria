@@ -11,8 +11,6 @@ class VentaDetalle extends Model
     const CREATED_AT = 'creado_en';
     const UPDATED_AT = null;
 
-    public $timestamps = true;
-
     protected $fillable = [
         'venta_id',
         'producto_id',
@@ -22,4 +20,14 @@ class VentaDetalle extends Model
         'subtotal',
         'es_monto_variable',
     ];
+
+    public function producto()
+    {
+        return $this->belongsTo(Producto::class, 'producto_id');
+    }
+
+    public function venta()
+    {
+        return $this->belongsTo(Venta::class, 'venta_id');
+    }
 }

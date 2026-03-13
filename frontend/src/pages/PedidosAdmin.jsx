@@ -1,12 +1,26 @@
 import React, { useEffect, useMemo, useState } from "react";
-import Layout from "../components/Layout";
 import { pedidosAdminApi } from "../lib/pedidosAdmin";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
 }
 
-function estadoBadgeStyle(estado) {
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+const PRESENTACIONES = [
+  "unidad",
+  "docena",
+  "fardo",
+  "paquete",
+  "caja",
+  "bolsa",
+  "millar",
+];
+
+function badgeStyle(estado) {
   const base = {
     display: "inline-block",
     padding: "6px 10px",
@@ -17,47 +31,41 @@ function estadoBadgeStyle(estado) {
 
   switch (estado) {
     case "pendiente_revision":
-      return { ...base, background: "#fff3cd", color: "#856404" };
+      return { ...base, background: "#fff7ed", color: "#9a3412" };
     case "aprobado":
-      return { ...base, background: "#d1ecf1", color: "#0c5460" };
+      return { ...base, background: "#ecfeff", color: "#155e75" };
     case "preparando":
-      return { ...base, background: "#d4edda", color: "#155724" };
+      return { ...base, background: "#ecfdf5", color: "#166534" };
     case "entregado":
-      return { ...base, background: "#e2e3e5", color: "#383d41" };
+      return { ...base, background: "#f3f4f6", color: "#374151" };
     default:
-      return { ...base, background: "#f3f4f6", color: "#111827" };
+      return { ...base, background: "#eef2ff", color: "#3730a3" };
   }
 }
 
 export default function PedidosAdmin() {
-  const [loading, setLoading] = useState(true);
-  const [accionando, setAccionando] = useState(false);
-  const [error, setError] = useState("");
-
   const [q, setQ] = useState("");
-  const [estado, setEstado] = useState("");
+  const [estado, setEstado] = useState("pendiente_revision");
   const [items, setItems] = useState([]);
-  const [meta, setMeta] = useState(null);
-
   const [pedidoActivo, setPedidoActivo] = useState(null);
+  const [lineasEdit, setLineasEdit] = useState([]);
+  const [observaciones, setObservaciones] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   async function loadPedidos() {
     try {
       setLoading(true);
-      setError("");
-
       const res = await pedidosAdminApi.list({
         q,
         estado,
         page: 1,
         per_page: 50,
       });
-
       setItems(res?.data || []);
-      setMeta(res?.meta || null);
     } catch (err) {
       console.error(err);
-      setError("No se pudieron cargar los pedidos.");
+      alert("No se pudieron cargar los pedidos.");
     } finally {
       setLoading(false);
     }
@@ -67,296 +75,338 @@ export default function PedidosAdmin() {
     loadPedidos();
   }, []);
 
-  async function handleBuscar(e) {
-    e?.preventDefault?.();
-    loadPedidos();
+  function seleccionarPedido(item) {
+    setPedidoActivo(item);
+    setObservaciones(item?.observaciones || "");
+    setLineasEdit(
+      (item?.detalles || []).map((d) => ({
+        id: d.id,
+        producto_id: d.producto_id,
+        producto_nombre: d.producto_nombre,
+        presentacion: d.presentacion || "unidad",
+        cantidad_base: num(d.cantidad_base),
+        precio_unitario: num(d.precio_unitario),
+        subtotal: num(d.subtotal),
+        es_monto_variable: false,
+        sugeridos: [
+          num(d.precio_unitario),
+          num(d.precio_unitario) + 2,
+          num(d.precio_unitario) + 5,
+        ],
+      }))
+    );
   }
 
-  async function handleAprobar(id) {
+  function setLinea(id, changes) {
+    setLineasEdit((prev) =>
+      prev.map((l) => {
+        if (l.id !== id) return l;
+        const next = { ...l, ...changes };
+        next.subtotal = num(next.cantidad_base) * num(next.precio_unitario);
+        return next;
+      })
+    );
+  }
+
+  const total = useMemo(() => {
+    return lineasEdit.reduce((acc, item) => acc + num(item.subtotal), 0);
+  }, [lineasEdit]);
+
+  async function guardarCambios() {
+    if (!pedidoActivo) return;
+
     try {
-      setAccionando(true);
-      await pedidosAdminApi.aprobar(id);
+      setSaving(true);
+
+      await pedidosAdminApi.actualizar(pedidoActivo.id, {
+        observaciones,
+        detalles: lineasEdit.map((l) => ({
+          id: l.id,
+          presentacion: l.presentacion,
+          cantidad_base: l.cantidad_base,
+          precio_unitario: l.precio_unitario,
+          subtotal: l.subtotal,
+          es_monto_variable: l.es_monto_variable ? 1 : 0,
+        })),
+      });
+
       await loadPedidos();
-      if (pedidoActivo?.id === id) {
-        setPedidoActivo((prev) => ({ ...prev, estado: "aprobado" }));
-      }
+      alert("Pedido actualizado correctamente.");
+    } catch (err) {
+      console.error(err);
+      alert(err?.response?.data?.message || "No se pudo actualizar el pedido.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function aprobarPedido() {
+    if (!pedidoActivo) return;
+    await guardarCambios();
+
+    try {
+      await pedidosAdminApi.aprobar(pedidoActivo.id);
       alert("Pedido aprobado.");
+      await loadPedidos();
     } catch (err) {
       console.error(err);
-      alert(err?.response?.data?.message || "No se pudo aprobar el pedido.");
-    } finally {
-      setAccionando(false);
+      alert("No se pudo aprobar el pedido.");
     }
   }
 
-  async function handlePreparar(id) {
+  async function prepararPedido() {
+    if (!pedidoActivo) return;
     try {
-      setAccionando(true);
-      await pedidosAdminApi.preparar(id);
-      await loadPedidos();
-      if (pedidoActivo?.id === id) {
-        setPedidoActivo((prev) => ({ ...prev, estado: "preparando" }));
-      }
+      await pedidosAdminApi.preparar(pedidoActivo.id);
       alert("Pedido marcado como preparando.");
-    } catch (err) {
-      console.error(err);
-      alert(err?.response?.data?.message || "No se pudo cambiar el estado.");
-    } finally {
-      setAccionando(false);
-    }
-  }
-
-  async function handleEntregar(id) {
-    try {
-      setAccionando(true);
-      await pedidosAdminApi.entregar(id);
       await loadPedidos();
-      if (pedidoActivo?.id === id) {
-        setPedidoActivo((prev) => ({ ...prev, estado: "entregado" }));
-      }
-      alert("Pedido entregado.");
     } catch (err) {
       console.error(err);
-      alert(err?.response?.data?.message || "No se pudo marcar como entregado.");
-    } finally {
-      setAccionando(false);
+      alert("No se pudo cambiar el estado.");
     }
   }
 
-  function handleImprimir() {
+  async function entregarPedido() {
+    if (!pedidoActivo) return;
+    try {
+      await pedidosAdminApi.entregar(pedidoActivo.id);
+      alert("Pedido entregado.");
+      await loadPedidos();
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo cambiar el estado.");
+    }
+  }
+
+  function imprimir() {
     window.print();
   }
 
-  const detalles = useMemo(() => {
-    return pedidoActivo?.detalles || pedidoActivo?.items || [];
-  }, [pedidoActivo]);
-
   return (
-    
-      <div className="page">
-        <header className="topbar">
-          <div>
-            <h2>Pedidos Admin</h2>
-            <p className="muted">Revisión, aprobación y preparación de pedidos</p>
+    <div className="page">
+      <header className="topbar">
+        <div>
+          <h2>Pedidos Admin</h2>
+          <p className="muted">Revisión, aprobación y preparación de pedidos</p>
+        </div>
+      </header>
+
+      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gap: 16 }}>
+          <div className="card pad">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 240px 140px", gap: 12 }}>
+              <input
+                type="text"
+                placeholder="Buscar por cliente, vendedor"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                style={inputStyle}
+              />
+
+              <select value={estado} onChange={(e) => setEstado(e.target.value)} style={inputStyle}>
+                <option value="">Todos los estados</option>
+                <option value="pendiente_revision">Pendiente revisión</option>
+                <option value="aprobado">Aprobado</option>
+                <option value="preparando">Preparando</option>
+                <option value="entregado">Entregado</option>
+              </select>
+
+              <button onClick={loadPedidos} style={primaryBtn}>
+                Buscar
+              </button>
+            </div>
           </div>
-        </header>
 
-        {error ? (
-          <div className="card pad" style={{ marginTop: 12, border: "1px solid #f5c2c7" }}>
-            <div style={{ color: "#842029", fontWeight: 600 }}>{error}</div>
-          </div>
-        ) : null}
+          <div className="card pad">
+            <h3 style={{ marginTop: 0 }}>Listado de pedidos</h3>
 
-        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, alignItems: "start" }}>
-          <div style={{ display: "grid", gap: 16 }}>
-            <form className="card pad" onSubmit={handleBuscar}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 220px 120px", gap: 12 }}>
-                <input
-                  type="text"
-                  placeholder="Buscar por cliente, vendedor o código..."
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  style={inputStyle}
-                />
+            {loading ? (
+              <div className="muted">Cargando pedidos...</div>
+            ) : items.length === 0 ? (
+              <div className="muted">No hay pedidos.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 12 }}>
+                {items.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => seleccionarPedido(item)}
+                    style={{
+                      border: pedidoActivo?.id === item.id ? "2px solid #111827" : "1px solid #e5e7eb",
+                      borderRadius: 12,
+                      padding: 14,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>Pedido #{item.id}</div>
+                        <div className="muted">Cliente: {item.cliente_nombre || "—"}</div>
+                        <div className="muted">Vendedor: {item.vendedor_nombre || "—"}</div>
+                      </div>
 
-                <select
-                  value={estado}
-                  onChange={(e) => setEstado(e.target.value)}
-                  style={inputStyle}
-                >
-                  <option value="">Todos los estados</option>
-                  <option value="pendiente_revision">Pendiente revisión</option>
-                  <option value="aprobado">Aprobado</option>
-                  <option value="preparando">Preparando</option>
-                  <option value="entregado">Entregado</option>
-                </select>
-
-                <button type="submit" style={primaryBtn}>
-                  Buscar
-                </button>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={badgeStyle(item.estado)}>{item.estado}</div>
+                        <div style={{ marginTop: 8, fontWeight: 800 }}>{money(item.total)}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </form>
+            )}
+          </div>
+        </div>
 
-            <div className="card pad">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ margin: 0 }}>Listado de pedidos</h3>
-                <div className="muted">
-                  {meta?.total != null ? `${meta.total} registros` : ""}
+        <div style={{ display: "grid", gap: 16 }}>
+          <div className="card pad">
+            <h3 style={{ marginTop: 0 }}>Detalle del pedido</h3>
+
+            {!pedidoActivo ? (
+              <div className="muted">Selecciona un pedido para ver su detalle.</div>
+            ) : (
+              <>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div><b>Cliente:</b> {pedidoActivo.cliente_nombre}</div>
+                  <div><b>Vendedor:</b> {pedidoActivo.vendedor_nombre}</div>
+                  <div><b>Estado:</b> <span style={badgeStyle(pedidoActivo.estado)}>{pedidoActivo.estado}</span></div>
                 </div>
-              </div>
 
-              {loading ? (
-                <div className="muted">Cargando pedidos...</div>
-              ) : items.length === 0 ? (
-                <div className="muted">No hay pedidos.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 12 }}>
-                  {items.map((item) => {
-                    const id = item.id || item.pedido_id;
-                    const cliente = item.cliente_nombre || item.cliente?.nombre || "—";
-                    const vendedor = item.vendedor_nombre || item.vendedor?.nombre || item.usuario?.nombre || "—";
-                    const total = item.total || 0;
-                    const estadoActual = item.estado || "—";
+                <div style={{ marginTop: 14 }}>
+                  <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                    Observaciones
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={observaciones}
+                    onChange={(e) => setObservaciones(e.target.value)}
+                    style={{ ...inputStyle, resize: "vertical" }}
+                  />
+                </div>
 
-                    return (
+                <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+                  {lineasEdit.map((l) => (
+                    <div key={l.id} style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+                      <div style={{ fontWeight: 700 }}>{l.producto_nombre}</div>
+
                       <div
-                        key={id}
-                        onClick={() => setPedidoActivo(item)}
                         style={{
-                          border: pedidoActivo?.id === id ? "2px solid #111827" : "1px solid #e5e7eb",
-                          borderRadius: 12,
-                          padding: 14,
-                          cursor: "pointer",
+                          marginTop: 10,
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr 1fr",
+                          gap: 10,
                         }}
                       >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                          <div>
-                            <div style={{ fontWeight: 700 }}>
-                              Pedido #{id}
-                            </div>
-                            <div className="muted" style={{ fontSize: 13 }}>
-                              Cliente: {cliente}
-                            </div>
-                            <div className="muted" style={{ fontSize: 13 }}>
-                              Vendedor: {vendedor}
-                            </div>
-                          </div>
+                        <div>
+                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                            Presentación
+                          </label>
+                          <select
+                            value={l.presentacion}
+                            onChange={(e) => setLinea(l.id, { presentacion: e.target.value })}
+                            style={inputStyle}
+                          >
+                            {PRESENTACIONES.map((p) => (
+                              <option key={p} value={p}>{p}</option>
+                            ))}
+                          </select>
+                        </div>
 
-                          <div style={{ textAlign: "right" }}>
-                            <div style={estadoBadgeStyle(estadoActual)}>{estadoActual}</div>
-                            <div style={{ fontWeight: 700, marginTop: 8 }}>{money(total)}</div>
-                          </div>
+                        <div>
+                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                            Cantidad
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={l.cantidad_base}
+                            onChange={(e) => setLinea(l.id, { cantidad_base: num(e.target.value) })}
+                            style={inputStyle}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                            Precio
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={l.precio_unitario}
+                            onChange={(e) => setLinea(l.id, { precio_unitario: num(e.target.value) })}
+                            style={inputStyle}
+                          />
                         </div>
                       </div>
-                    );
-                  })}
+
+                      <div style={{ marginTop: 10 }}>
+                        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={!!l.es_monto_variable}
+                            onChange={(e) => setLinea(l.id, { es_monto_variable: e.target.checked })}
+                          />
+                          <span>Habilitar monto variable</span>
+                        </label>
+                      </div>
+
+                      <div style={{ marginTop: 10 }}>
+                        <div className="muted" style={{ marginBottom: 6 }}>Precios sugeridos</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {l.sugeridos.map((p) => (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => setLinea(l.id, { precio_unitario: p, es_monto_variable: true })}
+                              style={suggestBtn}
+                            >
+                              {money(p)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 10, fontWeight: 800 }}>
+                        Subtotal: {money(l.subtotal)}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </div>
-          </div>
 
-          <div style={{ display: "grid", gap: 16, position: "sticky", top: 12 }}>
-            <div className="card pad">
-              <h3 style={{ marginTop: 0 }}>Detalle del pedido</h3>
+                <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
 
-              {!pedidoActivo ? (
-                <div className="muted">Selecciona un pedido para ver su detalle.</div>
-              ) : (
-                <>
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <div>
-                      <div className="muted" style={{ fontSize: 13 }}>Pedido</div>
-                      <div style={{ fontWeight: 700 }}>#{pedidoActivo.id}</div>
-                    </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontSize: 18 }}>
+                  <span>Total</span>
+                  <span>{money(total)}</span>
+                </div>
 
-                    <div>
-                      <div className="muted" style={{ fontSize: 13 }}>Cliente</div>
-                      <div style={{ fontWeight: 600 }}>
-                        {pedidoActivo.cliente_nombre || pedidoActivo.cliente?.nombre || "—"}
-                      </div>
-                    </div>
+                <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                  <button onClick={guardarCambios} disabled={saving} style={primaryBtn}>
+                    Guardar cambios
+                  </button>
 
-                    <div>
-                      <div className="muted" style={{ fontSize: 13 }}>Vendedor</div>
-                      <div style={{ fontWeight: 600 }}>
-                        {pedidoActivo.vendedor_nombre || pedidoActivo.vendedor?.nombre || pedidoActivo.usuario?.nombre || "—"}
-                      </div>
-                    </div>
+                  <button onClick={aprobarPedido} style={secondaryBtn}>
+                    Aprobar pedido
+                  </button>
 
-                    <div>
-                      <div className="muted" style={{ fontSize: 13 }}>Estado</div>
-                      <div style={estadoBadgeStyle(pedidoActivo.estado)}>{pedidoActivo.estado}</div>
-                    </div>
+                  <button onClick={prepararPedido} style={secondaryBtn}>
+                    Marcar preparando
+                  </button>
 
-                    <div>
-                      <div className="muted" style={{ fontSize: 13 }}>Observaciones</div>
-                      <div style={{ fontWeight: 500 }}>
-                        {pedidoActivo.observaciones || pedidoActivo.nota || "Sin observaciones"}
-                      </div>
-                    </div>
-                  </div>
+                  <button onClick={entregarPedido} style={secondaryBtn}>
+                    Marcar entregado
+                  </button>
 
-                  <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
-
-                  <div style={{ display: "grid", gap: 10, maxHeight: 280, overflow: "auto" }}>
-                    {detalles.length === 0 ? (
-                      <div className="muted">
-                        Este endpoint aún no está devolviendo el detalle. Si quieres, te adapto el backend para que lo envíe.
-                      </div>
-                    ) : (
-                      detalles.map((d, i) => (
-                        <div
-                          key={d.id || i}
-                          style={{
-                            border: "1px solid #eee",
-                            borderRadius: 10,
-                            padding: 10,
-                          }}
-                        >
-                          <div style={{ fontWeight: 700 }}>
-                            {d.producto_nombre || d.producto?.nombre || `Producto #${d.producto_id}`}
-                          </div>
-                          <div className="muted" style={{ fontSize: 13 }}>
-                            {d.presentacion || "unidad"} · Cantidad base: {d.cantidad_base}
-                          </div>
-                          <div className="muted" style={{ fontSize: 13 }}>
-                            Precio: {money(d.precio_unitario)} · Subtotal: {money(d.subtotal)}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
-
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 800, fontSize: 18 }}>
-                    <span>Total</span>
-                    <span>{money(pedidoActivo.total || 0)}</span>
-                  </div>
-
-                  <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
-                    <button
-                      type="button"
-                      disabled={accionando}
-                      onClick={() => handleAprobar(pedidoActivo.id)}
-                      style={primaryBtn}
-                    >
-                      Aprobar
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={accionando}
-                      onClick={() => handlePreparar(pedidoActivo.id)}
-                      style={secondaryBtn}
-                    >
-                      Marcar preparando
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={accionando}
-                      onClick={() => handleEntregar(pedidoActivo.id)}
-                      style={secondaryBtn}
-                    >
-                      Marcar entregado
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleImprimir}
-                      style={printBtn}
-                    >
-                      Imprimir listado
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+                  <button onClick={imprimir} style={printBtn}>
+                    Imprimir listado
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
-  
+    </div>
   );
 }
 
@@ -374,8 +424,8 @@ const primaryBtn = {
   color: "#fff",
   borderRadius: 10,
   padding: "12px 14px",
-  cursor: "pointer",
   fontWeight: 700,
+  cursor: "pointer",
 };
 
 const secondaryBtn = {
@@ -384,8 +434,8 @@ const secondaryBtn = {
   color: "#111827",
   borderRadius: 10,
   padding: "12px 14px",
-  cursor: "pointer",
   fontWeight: 700,
+  cursor: "pointer",
 };
 
 const printBtn = {
@@ -394,6 +444,16 @@ const printBtn = {
   color: "#134e4a",
   borderRadius: 10,
   padding: "12px 14px",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const suggestBtn = {
+  border: "1px solid #d1d5db",
+  background: "#fff",
+  color: "#111827",
+  borderRadius: 8,
+  padding: "8px 10px",
   cursor: "pointer",
   fontWeight: 700,
 };

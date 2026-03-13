@@ -8,27 +8,27 @@ export const pedidosAdminApi = {
     params.set("page", String(page));
     params.set("per_page", String(per_page));
 
-    const { data } = await http.get(`/pedidos?${params.toString()}`);
+    const { data } = await http.get(`/ventas/pedidos-admin?${params.toString()}`);
     return data;
   },
 
-  aprobar: async (id, payload = {}) => {
-    const { data } = await http.post(`/pedidos/${id}/aprobar`, payload);
+  actualizar: async (id, payload) => {
+    const { data } = await http.put(`/ventas/${id}/actualizar-admin`, payload);
     return data;
   },
 
-  preparar: async (id, payload = {}) => {
-    const { data } = await http.post(`/pedidos/${id}/preparar`, payload);
+  aprobar: async (id) => {
+    const { data } = await http.post(`/ventas/${id}/aprobar`);
     return data;
   },
 
-  entregar: async (id, payload = {}) => {
-    const { data } = await http.post(`/pedidos/${id}/entregar`, payload);
+  preparar: async (id) => {
+    const { data } = await http.post(`/ventas/${id}/preparar`);
     return data;
   },
 
-  enviar: async (id, payload = {}) => {
-    const { data } = await http.post(`/pedidos/${id}/enviar`, payload);
+  entregar: async (id) => {
+    const { data } = await http.post(`/ventas/${id}/entregar`);
     return data;
   },
 };

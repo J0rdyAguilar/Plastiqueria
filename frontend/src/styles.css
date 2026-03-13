@@ -371,3 +371,244 @@ input[type="radio"]{
   .topbar{ flex-direction:column; }
   .topbar-actions{ width:100%; justify-content:flex-start; flex-wrap:wrap; }
 }
+:root {
+  --bg: #f5f7fb;
+  --card: #ffffff;
+  --line: #e5e7eb;
+  --text: #0f172a;
+  --muted: #64748b;
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.pro-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.pro-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  box-shadow: var(--shadow);
+}
+
+.pro-header-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 16px 20px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.pro-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: #fff;
+  min-width: 220px;
+}
+
+.pro-brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-weight: 800;
+  font-size: 20px;
+}
+
+.pro-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.pro-brand-text strong {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.pro-brand-text small {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.86);
+  font-weight: 600;
+}
+
+.pro-center-nav {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pro-user-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.pro-user-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.pro-user-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #22c55e;
+  display: inline-block;
+}
+
+.pro-user-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.pro-user-info strong {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.pro-user-info small {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.9;
+  text-transform: lowercase;
+}
+
+.pro-logout-btn {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  text-decoration: none;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pro-logout-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.pro-subnav-wrap {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.pro-subnav {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 10px 20px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pro-nav-btn {
+  text-decoration: none;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: 0.2s ease;
+}
+
+.pro-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.pro-nav-btn.is-active {
+  background: #fff;
+  color: var(--primary);
+  border-color: #fff;
+}
+
+.pro-main {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 20px;
+  flex: 1;
+}
+
+.pro-footer {
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+}
+
+.pro-footer-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+@media (max-width: 1100px) {
+  .pro-header-inner {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .pro-brand {
+    justify-content: center;
+  }
+
+  .pro-user-side {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .pro-center-nav {
+    justify-content: center;
+  }
+
+  .pro-subnav {
+    justify-content: center;
+  }
+
+  .pro-footer-inner {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+}

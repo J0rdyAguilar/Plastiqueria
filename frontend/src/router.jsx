@@ -1,4 +1,3 @@
-// src/router.jsx
 import React from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
@@ -14,6 +13,7 @@ import Productos from "./pages/Productos";
 import Stock from "./pages/Stock";
 import MovimientosStock from "./pages/MovimientosStock";
 import Pedidos from "./pages/Pedidos";
+import PedidosAdmin from "./pages/PedidosAdmin";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 import { isLoggedIn, getSession } from "./lib/auth";
@@ -28,7 +28,7 @@ function roleHome() {
   if (!isLoggedIn()) return "/login";
   const rol = normalizeRole(getSession()?.user?.rol);
 
-  if (rol === "admin" || rol === "super_admin") return "/usuarios";
+  if (rol === "admin" || rol === "super_admin") return "/pedidos-admin";
   if (rol === "caja") return "/caja";
   if (rol === "vendedor") return "/pedidos";
 
@@ -51,9 +51,7 @@ export const router = createBrowserRouter([
   { path: "/", element: <HomeRedirect /> },
   { path: "/login", element: <Login /> },
 
-  // =========================
-  // 👑 ADMIN
-  // =========================
+  // ADMIN
   {
     path: "/usuarios",
     element: (
@@ -67,6 +65,14 @@ export const router = createBrowserRouter([
     element: (
       <Wrap roles={["admin", "super_admin"]}>
         <Vendedores />
+      </Wrap>
+    ),
+  },
+  {
+    path: "/pedidos-admin",
+    element: (
+      <Wrap roles={["admin", "super_admin"]}>
+        <PedidosAdmin />
       </Wrap>
     ),
   },
@@ -111,21 +117,17 @@ export const router = createBrowserRouter([
     ),
   },
 
-  // =========================
-  // 🧑‍💼 VENDEDOR
-  // =========================
+  // VENDEDOR
   {
     path: "/pedidos",
     element: (
-      <Wrap roles={["vendedor", "admin", "super_admin"]}>
+      <Wrap roles={["vendedor"]}>
         <Pedidos />
       </Wrap>
     ),
   },
 
-  // =========================
-  // 💰 CAJA / CAJERO
-  // =========================
+  // CAJA
   {
     path: "/caja",
     element: (

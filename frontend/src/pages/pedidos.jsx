@@ -6,6 +6,7 @@ import { zonasApi } from "../lib/zonas";
 import { ubicacionesApi } from "../lib/ubicaciones";
 import { clientesApi } from "../lib/clientes";
 import { pedidosApi } from "../lib/pedidos";
+import { misPedidosApi } from "../lib/misPedidos";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -14,6 +15,29 @@ function money(n) {
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function estadoBadgeStyle(estado) {
+  const base = {
+    display: "inline-block",
+    padding: "6px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+  };
+
+  switch (estado) {
+    case "pendiente_revision":
+      return { ...base, background: "#fff7ed", color: "#9a3412" };
+    case "aprobado":
+      return { ...base, background: "#ecfeff", color: "#155e75" };
+    case "preparando":
+      return { ...base, background: "#ecfdf5", color: "#166534" };
+    case "entregado":
+      return { ...base, background: "#f3f4f6", color: "#374151" };
+    default:
+      return { ...base, background: "#eef2ff", color: "#3730a3" };
+  }
 }
 
 export default function Pedidos() {
@@ -49,6 +73,10 @@ export default function Pedidos() {
   const [productos, setProductos] = useState([]);
   const [lineas, setLineas] = useState({});
   const [observaciones, setObservaciones] = useState("");
+
+  const [misPedidos, setMisPedidos] = useState([]);
+  const [estadoFiltroPedidos, setEstadoFiltroPedidos] = useState("");
+  const [loadingMisPedidos, setLoadingMisPedidos] = useState(false);
 
   const vendedorId = me?.vendedor_id || me?.id || "";
 
@@ -138,6 +166,30 @@ export default function Pedidos() {
     }
   }
 
+  async function loadMisPedidos() {
+    try {
+      if (!vendedorId) {
+        setMisPedidos([]);
+        return;
+      }
+
+      setLoadingMisPedidos(true);
+
+      const res = await misPedidosApi.list({
+        vendedor_id: vendedorId,
+        estado: estadoFiltroPedidos,
+        page: 1,
+        per_page: 20,
+      });
+
+      setMisPedidos(res?.data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingMisPedidos(false);
+    }
+  }
+
   useEffect(() => {
     loadInicial();
   }, []);
@@ -145,6 +197,10 @@ export default function Pedidos() {
   useEffect(() => {
     loadProductos();
   }, [ubicacionId]);
+
+  useEffect(() => {
+    loadMisPedidos();
+  }, [vendedorId, estadoFiltroPedidos]);
 
   const clienteSeleccionado = useMemo(() => {
     return clientes.find((c) => String(c.id) === String(clienteId)) || null;
@@ -395,6 +451,7 @@ export default function Pedidos() {
       setLineas({});
       setQ("");
       await loadProductos();
+      await loadMisPedidos();
     } catch (err) {
       console.error(err);
       alert(err?.response?.data?.message || "No se pudo enviar el pedido.");
@@ -908,6 +965,112 @@ export default function Pedidos() {
           </div>
         </div>
       </form>
+
+      <div className="card pad" style={{ marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 12,
+          }}
+        >
+          <div>
+            <h3 style={{ margin: 0 }}>Mis pedidos</h3>
+            <div className="muted">Aquí puedes ver si el admin ya revisó tu pedido.</div>
+          </div>
+
+          <div style={{ minWidth: 220 }}>
+            <select
+              value={estadoFiltroPedidos}
+              onChange={(e) => setEstadoFiltroPedidos(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Todos los estados</option>
+              <option value="pendiente_revision">Pendiente revisión</option>
+              <option value="aprobado">Aprobado</option>
+              <option value="preparando">Preparando</option>
+              <option value="entregado">Entregado</option>
+            </select>
+          </div>
+        </div>
+
+        {loadingMisPedidos ? (
+          <div className="muted">Cargando pedidos...</div>
+        ) : misPedidos.length === 0 ? (
+          <div className="muted">Aún no tienes pedidos registrados.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {misPedidos.map((pedido) => (
+              <div
+                key={pedido.id}
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 12,
+                  padding: 14,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 800 }}>Pedido #{pedido.id}</div>
+                    <div className="muted">Cliente: {pedido.cliente_nombre || "—"}</div>
+                    <div className="muted">Fecha: {pedido.creado_en || "—"}</div>
+                  </div>
+
+                  <div style={{ textAlign: "right" }}>
+                    <div style={estadoBadgeStyle(pedido.estado)}>{pedido.estado}</div>
+                    <div style={{ marginTop: 8, fontWeight: 800 }}>
+                      {money(pedido.total)}
+                    </div>
+                  </div>
+                </div>
+
+                {pedido.detalles?.length ? (
+                  <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                    {pedido.detalles.map((d) => (
+                      <div
+                        key={d.id}
+                        style={{
+                          border: "1px solid #f1f5f9",
+                          background: "#fafafa",
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <div style={{ fontWeight: 700 }}>
+                          {d.producto_nombre || `Producto #${d.producto_id}`}
+                        </div>
+                        <div className="muted" style={{ fontSize: 13 }}>
+                          {d.cantidad_base} × {d.presentacion || "unidad"} × {money(d.precio_unitario)}
+                        </div>
+                        <div style={{ marginTop: 4, fontWeight: 700 }}>
+                          {money(d.subtotal)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {pedido.observaciones ? (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="muted" style={{ fontSize: 13 }}>Observaciones</div>
+                    <div>{pedido.observaciones}</div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -937,4 +1100,4 @@ const saveBtn = {
   padding: "12px 14px",
   cursor: "pointer",
   fontWeight: 700,
-};
+}; 
