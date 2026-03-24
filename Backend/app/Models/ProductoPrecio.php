@@ -7,29 +7,29 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class ProductoPrecio extends Model
 {
+    use HasFactory;
+
     protected $table = 'producto_precios';
+
+    public $timestamps = false;
 
     protected $fillable = [
         'producto_id',
-        'unidad',
-        'canal',
-        'precio_sugerido_1',
-        'precio_sugerido_2',
-        'precio_sugerido_3',
+        'presentacion',
+        'factor_base',
+        'precio',
+        'activo',
         'creado_en',
         'actualizado_en',
     ];
 
     protected $casts = [
-        'precio_sugerido_1' => 'decimal:2',
-        'precio_sugerido_2' => 'decimal:2',
-        'precio_sugerido_3' => 'decimal:2',
+        'factor_base' => 'float',
+        'precio' => 'float',
+        'activo' => 'boolean',
         'creado_en' => 'datetime',
         'actualizado_en' => 'datetime',
     ];
-
-    public $timestamps = false;
-
 
     public function producto()
     {
