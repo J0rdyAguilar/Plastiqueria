@@ -1,5 +1,23 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  LayoutDashboard,
+  Users,
+  UserCog,
+  MapPinned,
+  Route,
+  Package,
+  Boxes,
+  ArrowLeftRight,
+  Wallet,
+  LogOut,
+  Menu,
+  X,
+  ShoppingCart,
+  PlusCircle,
+  ReceiptText,
+} from "lucide-react";
 import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 
 function normalizeRole(r) {
@@ -11,6 +29,7 @@ function normalizeRole(r) {
 export default function Layout({ children }) {
   const nav = useNavigate();
   const loc = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const logged = isLoggedIn();
   const me = getSession()?.user;
@@ -20,165 +39,257 @@ export default function Layout({ children }) {
   const isVendedor = logged && rol === "vendedor";
   const isCaja = logged && rol === "caja";
 
-  const canSeeUsuarios = isAdmin;
-  const canSeeVendedores = isAdmin;
-  const canSeePedidosAdmin = isAdmin;
-  const canSeeZonas = isAdmin;
-  const canSeeRutas = isAdmin;
-  const canSeeProductos = isAdmin;
-  const canSeeStock = isAdmin;
-  const canSeeMovimientos = isAdmin;
-  const canSeeCaja = logged && (isAdmin || isCaja);
-
   const homeLink = useMemo(() => {
     if (!logged) return "/login";
-    if (isAdmin) return "/pedidos-admin";
+    if (isAdmin) return "/usuarios";
     if (isCaja) return "/caja";
-    if (isVendedor) return "/pedidos";
+    if (isVendedor) return "/pedidos#crear-pedido";
     return "/login";
   }, [logged, isAdmin, isCaja, isVendedor]);
+
+  const vendedorEnPedidos = isVendedor && loc.pathname === "/pedidos";
+  const vendedorVista = loc.hash === "#mis-pedidos" ? "mios" : "crear";
 
   function logout() {
     clearSession();
     nav("/login", { replace: true });
   }
 
-  return (
-    <div className="pro-shell">
-      <header className="pro-header">
-        <div className="pro-header-inner">
-          <Link to={homeLink} className="pro-brand">
-            <span className="pro-brand-logo">P</span>
+  const adminLinks = [
+    {
+      to: "/pedidos-admin",
+      label: "Pedidos",
+      icon: <ShoppingCart size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/pedidos-admin"),
+    },
+    {
+      to: "/usuarios",
+      label: "Usuarios",
+      icon: <Users size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/usuarios"),
+    },
+    {
+      to: "/vendedores",
+      label: "Vendedores",
+      icon: <UserCog size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/vendedores"),
+    },
+    {
+      to: "/zonas",
+      label: "Zonas",
+      icon: <MapPinned size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/zonas"),
+    },
+    {
+      to: "/rutas",
+      label: "Rutas",
+      icon: <Route size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/rutas"),
+    },
+    {
+      to: "/productos",
+      label: "Productos",
+      icon: <Package size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/productos"),
+    },
+    {
+      to: "/stock",
+      label: "Inventario",
+      icon: <Boxes size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/stock"),
+    },
+    {
+      to: "/movimientos-stock",
+      label: "Movimientos",
+      icon: <ArrowLeftRight size={16} />,
+      show: isAdmin,
+      active: loc.pathname.startsWith("/movimientos-stock"),
+    },
+    {
+      to: "/caja",
+      label: "Caja",
+      icon: <Wallet size={16} />,
+      show: logged && (isAdmin || isCaja),
+      active: loc.pathname.startsWith("/caja"),
+    },
+  ].filter((item) => item.show);
 
-            <span className="pro-brand-text">
+  return (
+    <div className="lux-shell">
+      <header className="lux-header">
+        <div className="lux-header-row">
+          <Link to={homeLink} className="lux-brand">
+            <div className="lux-brand-logo">P</div>
+
+            <div className="lux-brand-copy">
               <strong>Plastiquería</strong>
-              <small>Panel administrativo</small>
-            </span>
+              <span>Panel administrativo</span>
+            </div>
           </Link>
 
-          <div className="pro-center-nav">
-            {isVendedor && loc.pathname === "/pedidos" && (
-              <>
-                <a href="#nuevo-pedido" className="pro-nav-btn is-active">
-                  Crear nuevo pedido
-                </a>
-                <a href="#mis-pedidos" className="pro-nav-btn">
+          <div className="lux-top-actions">
+            {vendedorEnPedidos && (
+              <div className="lux-segmented desktop-only">
+                <Link
+                  to="/pedidos#crear-pedido"
+                  className={`lux-chip ${vendedorVista === "crear" ? "is-active" : ""}`}
+                >
+                  <PlusCircle size={15} />
+                  Crear pedido
+                </Link>
+
+                <Link
+                  to="/pedidos#mis-pedidos"
+                  className={`lux-chip ${vendedorVista === "mios" ? "is-active" : ""}`}
+                >
+                  <ReceiptText size={15} />
                   Mis pedidos
-                </a>
-              </>
+                </Link>
+              </div>
             )}
 
-            {isCaja && !isAdmin && (
-              <NavItem to="/caja" active={loc.pathname.startsWith("/caja")}>
-                Caja
-              </NavItem>
-            )}
-          </div>
-
-          <div className="pro-user-side">
             {logged ? (
-              <>
-                <div className="pro-user-card">
-                  <span className="pro-user-dot" />
-                  <div className="pro-user-info">
-                    <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
-                    <small>{rol || "—"}</small>
-                  </div>
+              <div className="lux-user-box desktop-only">
+                <div className="lux-avatar">
+                  {(me?.nombre || me?.usuario || "U").charAt(0).toUpperCase()}
                 </div>
 
-                <button className="pro-logout-btn" onClick={logout}>
+                <div className="lux-user-copy">
+                  <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
+                  <span>{rol || "—"}</span>
+                </div>
+
+                <button type="button" className="lux-logout" onClick={logout}>
+                  <LogOut size={16} />
                   Salir
                 </button>
-              </>
+              </div>
             ) : (
-              <Link className="pro-logout-btn" to="/login">
+              <Link className="lux-login-link desktop-only" to="/login">
                 Iniciar sesión
               </Link>
             )}
+
+            <button
+              type="button"
+              className="lux-mobile-toggle"
+              onClick={() => setMobileOpen((v) => !v)}
+              aria-label="Abrir menú"
+            >
+              {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
           </div>
         </div>
 
         {isAdmin && (
-          <div className="pro-subnav-wrap">
-            <div className="pro-subnav">
-              {canSeePedidosAdmin && (
-                <NavItem
-                  to="/pedidos-admin"
-                  active={loc.pathname.startsWith("/pedidos-admin")}
-                >
-                  Pedidos
-                </NavItem>
-              )}
-
-              {canSeeUsuarios && (
-                <NavItem
-                  to="/usuarios"
-                  active={loc.pathname.startsWith("/usuarios")}
-                >
-                  Usuarios
-                </NavItem>
-              )}
-
-              {canSeeVendedores && (
-                <NavItem
-                  to="/vendedores"
-                  active={loc.pathname.startsWith("/vendedores")}
-                >
-                  Vendedores
-                </NavItem>
-              )}
-
-              {canSeeZonas && (
-                <NavItem to="/zonas" active={loc.pathname.startsWith("/zonas")}>
-                  Zonas
-                </NavItem>
-              )}
-
-              {canSeeRutas && (
-                <NavItem to="/rutas" active={loc.pathname.startsWith("/rutas")}>
-                  Rutas
-                </NavItem>
-              )}
-
-              {canSeeProductos && (
-                <NavItem
-                  to="/productos"
-                  active={loc.pathname.startsWith("/productos")}
-                >
-                  Productos
-                </NavItem>
-              )}
-
-              {canSeeStock && (
-                <NavItem to="/stock" active={loc.pathname.startsWith("/stock")}>
-                  Inventario
-                </NavItem>
-              )}
-
-              {canSeeMovimientos && (
-                <NavItem
-                  to="/movimientos-stock"
-                  active={loc.pathname.startsWith("/movimientos-stock")}
-                >
-                  Movimientos
-                </NavItem>
-              )}
-
-              {canSeeCaja && (
-                <NavItem to="/caja" active={loc.pathname.startsWith("/caja")}>
-                  Caja
-                </NavItem>
-              )}
-            </div>
-          </div>
+          <nav className="lux-admin-nav desktop-only">
+            {adminLinks.map((item) => (
+              <NavItem key={item.to} {...item} />
+            ))}
+          </nav>
         )}
+
+        <AnimatePresence>
+          {mobileOpen && (
+            <motion.div
+              className="lux-mobile-panel"
+              initial={{ opacity: 0, y: -14 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -14 }}
+              transition={{ duration: 0.22 }}
+            >
+              {logged && (
+                <div className="lux-mobile-user">
+                  <div className="lux-avatar">
+                    {(me?.nombre || me?.usuario || "U").charAt(0).toUpperCase()}
+                  </div>
+
+                  <div className="lux-user-copy">
+                    <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
+                    <span>{rol || "—"}</span>
+                  </div>
+                </div>
+              )}
+
+              {vendedorEnPedidos && (
+                <div className="lux-mobile-group">
+                  <Link
+                    to="/pedidos#crear-pedido"
+                    className={`lux-mobile-link ${vendedorVista === "crear" ? "is-active" : ""}`}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    <PlusCircle size={16} />
+                    Crear pedido
+                  </Link>
+
+                  <Link
+                    to="/pedidos#mis-pedidos"
+                    className={`lux-mobile-link ${vendedorVista === "mios" ? "is-active" : ""}`}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    <ReceiptText size={16} />
+                    Mis pedidos
+                  </Link>
+                </div>
+              )}
+
+              <div className="lux-mobile-group">
+                {adminLinks.map((item) => (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`lux-mobile-link ${item.active ? "is-active" : ""}`}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+
+              {logged ? (
+                <button type="button" className="lux-mobile-logout" onClick={logout}>
+                  <LogOut size={16} />
+                  Cerrar sesión
+                </button>
+              ) : (
+                <Link
+                  className="lux-mobile-logout"
+                  to="/login"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Iniciar sesión
+                </Link>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </header>
 
-      <main className="pro-main">{children}</main>
+      <main className="lux-main">
+        <motion.div
+          className="lux-content-wrap"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.28 }}
+        >
+          {children}
+        </motion.div>
+      </main>
 
-      <footer className="pro-footer">
-        <div className="pro-footer-inner">
-          <span>© {new Date().getFullYear()} Plastiquería</span>
+      <footer className="lux-footer">
+        <div className="lux-footer-inner">
+          <div className="lux-footer-brand">
+            <LayoutDashboard size={16} />
+            <span>© {new Date().getFullYear()} Plastiquería</span>
+          </div>
           <span>Grupo Cresth by Joserweb</span>
         </div>
       </footer>
@@ -186,10 +297,11 @@ export default function Layout({ children }) {
   );
 }
 
-function NavItem({ to, active, children }) {
+function NavItem({ to, active, label, icon }) {
   return (
-    <Link to={to} className={`pro-nav-btn ${active ? "is-active" : ""}`}>
-      {children}
+    <Link to={to} className={`lux-nav-link ${active ? "is-active" : ""}`}>
+      {icon}
+      <span>{label}</span>
     </Link>
   );
 }

@@ -1,36 +1,71 @@
 // src/lib/stock.js
 import { http } from "./http";
 
-// Inventario (stock actual)
+function cleanParams(obj = {}) {
+  const params = new URLSearchParams();
+
+  Object.entries(obj).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+
+    const text = String(value).trim();
+    if (text === "") return;
+
+    params.set(key, text);
+  });
+
+  return params.toString();
+}
+
 export const stockApi = {
   list: async ({ q = "", ubicacion_id = "", page = 1, per_page = 10 } = {}) => {
-    const params = new URLSearchParams();
-    if (q) params.set("q", q);
-    if (ubicacion_id) params.set("ubicacion_id", ubicacion_id);
-    params.set("page", String(page));
-    params.set("per_page", String(per_page));
+    const query = cleanParams({
+      q,
+      ubicacion_id,
+      page,
+      per_page,
+    });
 
-    const { data } = await http.get(`/stock?${params.toString()}`);
+    const url = query ? `/stock?${query}` : `/stock`;
+    const { data } = await http.get(url);
     return data;
   },
 };
 
-// Movimientos de stock
 export const movimientosStockApi = {
-  list: async ({ tipo = "", ubicacion_id = "", producto_id = "", page = 1, per_page = 10 } = {}) => {
-    const params = new URLSearchParams();
-    if (tipo) params.set("tipo", tipo);
-    if (ubicacion_id) params.set("ubicacion_id", ubicacion_id);
-    if (producto_id) params.set("producto_id", producto_id);
-    params.set("page", String(page));
-    params.set("per_page", String(per_page));
+  list: async ({
+    tipo = "",
+    ubicacion_id = "",
+    producto_id = "",
+    page = 1,
+    per_page = 10,
+  } = {}) => {
+    const query = cleanParams({
+      tipo,
+      ubicacion_id,
+      producto_id,
+      page,
+      per_page,
+    });
 
-    const { data } = await http.get(`/movimientos-stock?${params.toString()}`);
+    const url = query ? `/movimientos-stock?${query}` : `/movimientos-stock`;
+    const { data } = await http.get(url);
     return data;
   },
 
-  create: async (payload) => {
-    const { data } = await http.post(`/movimientos-stock`, payload);
+  create: async (payload = {}) => {
+    const cleanPayload = { ...payload };
+
+    Object.keys(cleanPayload).forEach((key) => {
+      if (
+        cleanPayload[key] === undefined ||
+        cleanPayload[key] === null ||
+        cleanPayload[key] === ""
+      ) {
+        delete cleanPayload[key];
+      }
+    });
+
+    const { data } = await http.post(`/movimientos-stock`, cleanPayload);
     return data;
   },
 };

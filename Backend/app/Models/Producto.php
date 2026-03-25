@@ -4,8 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use App\Models\Stock;
-use App\Models\Ubicacion;
 
 class Producto extends Model
 {
@@ -31,33 +29,10 @@ class Producto extends Model
         'actualizado_en' => 'datetime',
     ];
 
-    public $timestamps = false;
+    const CREATED_AT = 'creado_en';
+    const UPDATED_AT = 'actualizado_en';
 
-    /**
-     * AUTO-CREAR STOCK EN 0 PARA TODAS LAS UBICACIONES
-     */
-    protected static function booted()
-    {
-        static::created(function (Producto $producto) {
-            $ubicaciones = Ubicacion::query()->get(['id']);
-
-            foreach ($ubicaciones as $u) {
-                Stock::query()->firstOrCreate(
-                    [
-                        'producto_id'  => $producto->id,
-                        'ubicacion_id' => $u->id,
-                    ],
-                    [
-                        'cantidad_base' => 0,
-                    ]
-                );
-            }
-        });
-    }
-
-    /* =========================
-       RELACIONES
-    ========================= */
+    public $timestamps = true;
 
     public function unidades()
     {

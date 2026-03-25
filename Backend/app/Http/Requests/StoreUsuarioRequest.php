@@ -9,29 +9,28 @@ class StoreUsuarioRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // Permitir (luego si quieres, aquí validamos rol admin/super_admin)
         return true;
     }
 
     public function rules(): array
     {
         return [
-            'nombre'   => ['required', 'string', 'max:150'],
-            'usuario'  => ['required', 'string', 'max:120', 'unique:usuarios,usuario'],
-            'telefono' => ['nullable', 'string', 'max:50'],
-            'password' => ['required', 'string', 'min:6', 'max:255'],
-            'rol'      => ['required', Rule::in(['super_admin', 'admin', 'vendedor', 'caja   '])],
-            'activo'   => ['nullable', 'boolean'],
+            'ubicacion_id' => ['required', 'integer', Rule::exists('ubicaciones', 'id')],
+            'nombre'       => ['required', 'string', 'max:150'],
+            'usuario'      => ['required', 'string', 'max:120', 'unique:usuarios,usuario'],
+            'telefono'     => ['nullable', 'string', 'max:50'],
+            'password'     => ['required', 'string', 'min:6'],
+            'rol'          => ['required', 'string', Rule::in(['admin', 'super_admin', 'vendedor', 'caja'])],
+            'activo'       => ['nullable', 'boolean'],
         ];
     }
 
-    protected function prepareForValidation(): void
+    public function messages(): array
     {
-        // Por si te llega activo como 1/0 o true/false
-        if ($this->has('activo')) {
-            $this->merge([
-                'activo' => filter_var($this->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
-            ]);
-        }
+        return [
+            'ubicacion_id.required' => 'La sucursal es obligatoria.',
+            'ubicacion_id.exists'   => 'La sucursal seleccionada no existe.',
+            'usuario.unique'        => 'Ese nombre de usuario ya está en uso.',
+        ];
     }
 }

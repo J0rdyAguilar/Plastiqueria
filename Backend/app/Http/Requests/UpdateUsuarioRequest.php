@@ -14,24 +14,31 @@ class UpdateUsuarioRequest extends FormRequest
 
     public function rules(): array
     {
-        $id = $this->route('usuario')?->id; // Route Model Binding
+        $usuarioId = $this->route('usuario')->id ?? null;
 
         return [
-            'nombre'   => ['sometimes', 'required', 'string', 'max:150'],
-            'usuario'  => ['sometimes', 'required', 'string', 'max:120', Rule::unique('usuarios', 'usuario')->ignore($id)],
-            'telefono' => ['sometimes', 'nullable', 'string', 'max:50'],
-            'password' => ['sometimes', 'nullable', 'string', 'min:6', 'max:255'], // opcional
-            'rol'      => ['sometimes', 'required', Rule::in(['super_admin', 'admin', 'vendedor', 'caja'])],
-            'activo'   => ['sometimes', 'nullable', 'boolean'],
+            'ubicacion_id' => ['sometimes', 'required', 'integer', Rule::exists('ubicaciones', 'id')],
+            'nombre'       => ['sometimes', 'required', 'string', 'max:150'],
+            'usuario'      => [
+                'sometimes',
+                'required',
+                'string',
+                'max:120',
+                Rule::unique('usuarios', 'usuario')->ignore($usuarioId),
+            ],
+            'telefono'     => ['nullable', 'string', 'max:50'],
+            'password'     => ['nullable', 'string', 'min:6'],
+            'rol'          => ['sometimes', 'required', 'string', Rule::in(['admin', 'super_admin', 'vendedor', 'caja'])],
+            'activo'       => ['nullable', 'boolean'],
         ];
     }
 
-    protected function prepareForValidation(): void
+    public function messages(): array
     {
-        if ($this->has('activo')) {
-            $this->merge([
-                'activo' => filter_var($this->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
-            ]);
-        }
+        return [
+            'ubicacion_id.required' => 'La sucursal es obligatoria.',
+            'ubicacion_id.exists'   => 'La sucursal seleccionada no existe.',
+            'usuario.unique'        => 'Ese nombre de usuario ya está en uso.',
+        ];
     }
 }

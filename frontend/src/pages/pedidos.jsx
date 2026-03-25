@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { getSession } from "../lib/auth";
 import { stockApi } from "../lib/stock";
 import { rutasApi } from "../lib/rutas";
@@ -7,6 +8,7 @@ import { ubicacionesApi } from "../lib/ubicaciones";
 import { clientesApi } from "../lib/clientes";
 import { pedidosApi } from "../lib/pedidos";
 import { misPedidosApi } from "../lib/misPedidos";
+import { productosApi } from "../lib/productos";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -24,6 +26,7 @@ function estadoBadgeStyle(estado) {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 700,
+    textTransform: "capitalize",
   };
 
   switch (estado) {
@@ -40,9 +43,62 @@ function estadoBadgeStyle(estado) {
   }
 }
 
+function getVistaFromHash(hash) {
+  return hash === "#mis-pedidos" ? "mios" : "crear";
+}
+
+function normalizarPresentaciones(precios = []) {
+  const lista = Array.isArray(precios) ? precios : [];
+
+  const mapped = lista
+    .filter((p) => p && (p.activo === undefined || p.activo === true || p.activo === 1))
+    .map((p) => ({
+      tipo: String(p.presentacion || "unidad").toLowerCase(),
+      label: String(p.presentacion || "unidad"),
+      factor: num(p.factor_base || 1),
+      precio: num(p.precio || 0),
+    }))
+    .filter((p) => p.factor > 0);
+
+  if (mapped.length > 0) return mapped;
+
+  return [{ tipo: "unidad", label: "unidad", factor: 1, precio: 0 }];
+}
+
+async function fetchProductosConPrecios({ q = "", per_page = 500 }) {
+  try {
+    if (typeof productosApi.catalogo === "function") {
+      const res = await productosApi.catalogo();
+      if (Array.isArray(res)) return res;
+      if (Array.isArray(res?.data)) return res.data;
+    }
+
+    if (typeof productosApi.list === "function") {
+      const res = await productosApi.list({ q, per_page });
+      if (Array.isArray(res)) return res;
+      if (Array.isArray(res?.data)) return res.data;
+    }
+
+    if (typeof productosApi.search === "function") {
+      const res = await productosApi.search(q, { per_page });
+      if (Array.isArray(res)) return res;
+      if (Array.isArray(res?.data)) return res.data;
+    }
+
+    return [];
+  } catch (err) {
+    console.error("Error cargando productos con precios", err);
+    return [];
+  }
+}
+
 export default function Pedidos() {
   const session = getSession();
   const me = session?.user || {};
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const [vista, setVista] = useState(getVistaFromHash(location.hash));
 
   const [loadingInit, setLoadingInit] = useState(true);
   const [enviando, setEnviando] = useState(false);
@@ -95,28 +151,24 @@ export default function Pedidos() {
       const [resUbicaciones, resRutas, resZonas, resClientes] = results;
 
       if (resUbicaciones.status === "fulfilled") {
-        console.log("ubicaciones OK", resUbicaciones.value);
         setUbicaciones(resUbicaciones.value?.data || []);
       } else {
         console.error("ubicaciones ERROR", resUbicaciones.reason);
       }
 
       if (resRutas.status === "fulfilled") {
-        console.log("rutas OK", resRutas.value);
         setRutas(resRutas.value?.data || []);
       } else {
         console.error("rutas ERROR", resRutas.reason);
       }
 
       if (resZonas.status === "fulfilled") {
-        console.log("zonas OK", resZonas.value);
         setZonas(resZonas.value?.data || []);
       } else {
         console.error("zonas ERROR", resZonas.reason);
       }
 
       if (resClientes.status === "fulfilled") {
-        console.log("clientes OK", resClientes.value);
         setClientes(resClientes.value?.data || []);
       } else {
         console.error("clientes ERROR", resClientes.reason);
@@ -135,34 +187,89 @@ export default function Pedidos() {
 
   async function loadProductos() {
     try {
+      setError("");
+
       if (!ubicacionId) {
         setProductos([]);
         return;
       }
 
-      const res = await stockApi.list({
-        ubicacion_id: ubicacionId,
-        q,
-        page: 1,
-        per_page: 200,
+      const [stockRes, productosRes] = await Promise.all([
+        stockApi.list({
+          ubicacion_id: ubicacionId,
+          q,
+          page: 1,
+          per_page: 500,
+        }),
+        fetchProductosConPrecios({ q, per_page: 500 }),
+      ]);
+
+      const stockRows = Array.isArray(stockRes?.data) ? stockRes.data : [];
+      const productosRows = Array.isArray(productosRes) ? productosRes : [];
+
+      const productosMap = new Map(
+        productosRows.map((p) => [
+          Number(p.id),
+          {
+            ...p,
+            presentaciones: normalizarPresentaciones(p.precios),
+          },
+        ])
+      );
+
+      const merged = stockRows.map((item) => {
+        const productoId = Number(item.producto_id);
+        const full = productosMap.get(productoId);
+
+        return {
+          id: productoId,
+          nombre: full?.nombre || item.producto_nombre,
+          sku: full?.sku || item.producto_sku,
+          cantidad_base: num(item.cantidad_base),
+          presentaciones:
+            full?.presentaciones?.length > 0
+              ? full.presentaciones
+              : [{ tipo: "unidad", label: "unidad", factor: 1, precio: 0 }],
+          permite_monto_variable: true,
+        };
       });
 
-      const rows = res?.data || [];
-      console.log("stock rows", rows);
+      setProductos(merged);
 
-      setProductos(
-        rows.map((item) => ({
-          id: item.producto_id,
-          nombre: item.producto_nombre,
-          sku: item.producto_sku,
-          cantidad_base: num(item.cantidad_base),
-          presentaciones: [{ tipo: "unidad", factor: 1, precio: 0 }],
-          permite_monto_variable: true,
-        }))
-      );
+      setLineas((prev) => {
+        const next = {};
+        for (const producto of merged) {
+          const actual = prev[producto.id];
+          if (!actual) continue;
+
+          const presentacionExiste = producto.presentaciones.some(
+            (p) => p.tipo === actual.presentacion
+          );
+
+          const p0 =
+            producto.presentaciones.find((p) => p.tipo === actual.presentacion) ||
+            producto.presentaciones[0] || {
+              tipo: "unidad",
+              factor: 1,
+              precio: 0,
+            };
+
+          next[producto.id] = {
+            ...actual,
+            presentacion: presentacionExiste ? actual.presentacion : p0.tipo,
+            factor: num(p0.factor || 1),
+            precioBase: num(p0.precio || 0),
+            montoVariable: actual.usaMontoVariable
+              ? num(actual.montoVariable)
+              : num(p0.precio || 0),
+            stockDisponible: num(producto.cantidad_base),
+          };
+        }
+        return next;
+      });
     } catch (err) {
       console.error(err);
-      setError("No se pudo cargar el stock.");
+      setError("No se pudo cargar el stock/productos.");
     }
   }
 
@@ -195,6 +302,10 @@ export default function Pedidos() {
   }, []);
 
   useEffect(() => {
+    setVista(getVistaFromHash(location.hash));
+  }, [location.hash]);
+
+  useEffect(() => {
     loadProductos();
   }, [ubicacionId]);
 
@@ -220,6 +331,7 @@ export default function Pedidos() {
   function getPresentacionDefault(producto) {
     return producto.presentaciones?.[0] || {
       tipo: "unidad",
+      label: "unidad",
       factor: 1,
       precio: 0,
     };
@@ -268,7 +380,9 @@ export default function Pedidos() {
         presentacion: encontrada?.tipo || "unidad",
         factor: num(encontrada?.factor || 1),
         precioBase: num(encontrada?.precio || 0),
-        montoVariable: num(encontrada?.precio || 0),
+        montoVariable: linea.usaMontoVariable
+          ? num(linea.montoVariable)
+          : num(encontrada?.precio || 0),
       },
     }));
   }
@@ -302,9 +416,7 @@ export default function Pedidos() {
 
   function getPrecioFinal(producto) {
     const linea = ensureLinea(producto);
-    return linea.usaMontoVariable
-      ? num(linea.montoVariable)
-      : num(linea.precioBase);
+    return linea.usaMontoVariable ? num(linea.montoVariable) : num(linea.precioBase);
   }
 
   function getCantidadBase(producto) {
@@ -452,6 +564,7 @@ export default function Pedidos() {
       setQ("");
       await loadProductos();
       await loadMisPedidos();
+      navigate("/pedidos#mis-pedidos", { replace: true });
     } catch (err) {
       console.error(err);
       alert(err?.response?.data?.message || "No se pudo enviar el pedido.");
@@ -485,592 +598,604 @@ export default function Pedidos() {
         </div>
       ) : null}
 
-      <form onSubmit={handleSubmit} style={{ marginTop: 12 }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "2fr 1fr",
-            gap: 16,
-            alignItems: "start",
-          }}
-        >
-          <div style={{ display: "grid", gap: 16 }}>
-            <div className="card pad">
-              <h3 style={{ marginTop: 0 }}>Datos del pedido</h3>
+      {vista === "crear" && (
+        <form onSubmit={handleSubmit} style={{ marginTop: 12 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "2fr 1fr",
+              gap: 16,
+              alignItems: "start",
+            }}
+          >
+            <div style={{ display: "grid", gap: 16 }}>
+              <div className="card pad">
+                <h3 style={{ marginTop: 0 }}>Datos del pedido</h3>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: 12,
-                }}
-              >
-                <div>
-                  <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                    Sucursal
-                  </label>
-                  <select
-                    value={ubicacionId}
-                    onChange={(e) => setUbicacionId(e.target.value)}
-                    style={inputStyle}
-                  >
-                    <option value="">Selecciona sucursal</option>
-                    {ubicaciones.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                    Fecha
-                  </label>
-                  <input
-                    type="text"
-                    readOnly
-                    value={new Date().toLocaleDateString()}
-                    style={{ ...inputStyle, background: "#f7f7f7" }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginTop: 16, borderTop: "1px solid #eee", paddingTop: 16 }}>
                 <div
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                     gap: 12,
-                    alignItems: "center",
-                    flexWrap: "wrap",
                   }}
                 >
-                  <h4 style={{ margin: 0 }}>Cliente / Tienda</h4>
-                  <button
-                    type="button"
-                    onClick={() => setMostrarNuevoCliente((v) => !v)}
-                    style={miniBtn}
-                  >
-                    {mostrarNuevoCliente ? "Cancelar" : "Nuevo cliente"}
-                  </button>
-                </div>
-
-                {!mostrarNuevoCliente ? (
-                  <div style={{ marginTop: 12 }}>
+                  <div>
                     <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                      Cliente
+                      Sucursal
                     </label>
                     <select
-                      value={clienteId}
-                      onChange={(e) => setClienteId(e.target.value)}
+                      value={ubicacionId}
+                      onChange={(e) => setUbicacionId(e.target.value)}
                       style={inputStyle}
                     >
-                      <option value="">Selecciona cliente</option>
-                      {clientes.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.nombre}
+                      <option value="">Selecciona sucursal</option>
+                      {ubicaciones.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.nombre}
                         </option>
                       ))}
                     </select>
                   </div>
-                ) : (
+
+                  <div>
+                    <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                      Fecha
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={new Date().toLocaleDateString()}
+                      style={{ ...inputStyle, background: "#f7f7f7" }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 16, borderTop: "1px solid #eee", paddingTop: 16 }}>
                   <div
                     style={{
-                      marginTop: 12,
-                      display: "grid",
-                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      display: "flex",
+                      justifyContent: "space-between",
                       gap: 12,
+                      alignItems: "center",
+                      flexWrap: "wrap",
                     }}
                   >
-                    <div>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Nombre tienda
-                      </label>
-                      <input
-                        value={nuevoCliente.nombre}
-                        onChange={(e) =>
-                          setNuevoCliente((p) => ({ ...p, nombre: e.target.value }))
-                        }
-                        style={inputStyle}
-                      />
-                    </div>
+                    <h4 style={{ margin: 0 }}>Cliente / Tienda</h4>
+                    <button
+                      type="button"
+                      onClick={() => setMostrarNuevoCliente((v) => !v)}
+                      style={miniBtn}
+                    >
+                      {mostrarNuevoCliente ? "Cancelar" : "Nuevo cliente"}
+                    </button>
+                  </div>
 
-                    <div>
+                  {!mostrarNuevoCliente ? (
+                    <div style={{ marginTop: 12 }}>
                       <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Propietario
-                      </label>
-                      <input
-                        value={nuevoCliente.propietario}
-                        onChange={(e) =>
-                          setNuevoCliente((p) => ({ ...p, propietario: e.target.value }))
-                        }
-                        style={inputStyle}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Teléfono
-                      </label>
-                      <input
-                        value={nuevoCliente.telefono}
-                        onChange={(e) =>
-                          setNuevoCliente((p) => ({ ...p, telefono: e.target.value }))
-                        }
-                        style={inputStyle}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Ruta
+                        Cliente
                       </label>
                       <select
-                        value={nuevoCliente.ruta_id}
-                        onChange={(e) =>
-                          setNuevoCliente((p) => ({ ...p, ruta_id: e.target.value }))
-                        }
+                        value={clienteId}
+                        onChange={(e) => setClienteId(e.target.value)}
                         style={inputStyle}
                       >
-                        <option value="">Selecciona ruta</option>
-                        {rutas.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.nombre}
+                        <option value="">Selecciona cliente</option>
+                        {clientes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.nombre}
                           </option>
                         ))}
                       </select>
                     </div>
-
-                    <div>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Zona
-                      </label>
-                      <select
-                        value={nuevoCliente.zona_id}
-                        onChange={(e) =>
-                          setNuevoCliente((p) => ({ ...p, zona_id: e.target.value }))
-                        }
-                        style={inputStyle}
-                      >
-                        <option value="">Selecciona zona</option>
-                        {zonas.map((z) => (
-                          <option key={z.id} value={z.id}>
-                            {z.nombre}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div style={{ gridColumn: "1 / -1" }}>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Dirección
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={nuevoCliente.direccion}
-                        onChange={(e) =>
-                          setNuevoCliente((p) => ({ ...p, direccion: e.target.value }))
-                        }
-                        style={{ ...inputStyle, resize: "vertical" }}
-                      />
-                    </div>
-
-                    <div style={{ gridColumn: "1 / -1" }}>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Referencia
-                      </label>
-                      <input
-                        value={nuevoCliente.referencia}
-                        onChange={(e) =>
-                          setNuevoCliente((p) => ({ ...p, referencia: e.target.value }))
-                        }
-                        style={inputStyle}
-                      />
-                    </div>
-
-                    <div style={{ gridColumn: "1 / -1" }}>
-                      <button type="button" onClick={handleCrearCliente} style={saveBtn}>
-                        Guardar cliente
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {!mostrarNuevoCliente && clienteSeleccionado ? (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      display: "grid",
-                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                      gap: 12,
-                    }}
-                  >
-                    <div>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Ruta
-                      </label>
-                      <input
-                        readOnly
-                        value={clienteSeleccionado?.ruta_nombre || ""}
-                        style={{ ...inputStyle, background: "#f7f7f7" }}
-                      />
-                    </div>
-                    <div>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Zona
-                      </label>
-                      <input
-                        readOnly
-                        value={clienteSeleccionado?.zona_nombre || ""}
-                        style={{ ...inputStyle, background: "#f7f7f7" }}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              <div style={{ marginTop: 12 }}>
-                <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                  Observaciones
-                </label>
-                <textarea
-                  value={observaciones}
-                  onChange={(e) => setObservaciones(e.target.value)}
-                  rows={3}
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-              </div>
-            </div>
-
-            <div className="card pad">
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  flexWrap: "wrap",
-                }}
-              >
-                <h3 style={{ margin: 0 }}>Productos</h3>
-
-                <input
-                  type="text"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  onBlur={loadProductos}
-                  placeholder="Buscar por nombre o código..."
-                  style={{ ...inputStyle, maxWidth: 320 }}
-                />
-              </div>
-
-              <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-                {productosFiltrados.map((producto) => {
-                  const linea = ensureLinea(producto);
-                  const subtotal = getSubtotal(producto);
-
-                  return (
+                  ) : (
                     <div
-                      key={producto.id}
                       style={{
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 12,
-                        padding: 14,
+                        marginTop: 12,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                        gap: 12,
                       }}
                     >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 12,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 700 }}>{producto.nombre}</div>
-                          <div className="muted" style={{ fontSize: 13 }}>
-                            Código: {producto.sku || "—"}
-                          </div>
-                          <div className="muted" style={{ fontSize: 13 }}>
-                            Stock base: {producto.cantidad_base}
-                          </div>
-                        </div>
-
-                        <div style={{ fontWeight: 700 }}>
-                          Subtotal: {money(subtotal)}
-                        </div>
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop: 12,
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <div>
-                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                            Presentación
-                          </label>
-                          <select
-                            value={linea.presentacion}
-                            onChange={(e) => changePresentacion(producto, e.target.value)}
-                            style={inputStyle}
-                          >
-                            {(producto.presentaciones || []).map((p) => (
-                              <option key={p.tipo} value={p.tipo}>
-                                {p.tipo}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                            Cantidad
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={linea.cantidad}
-                            onChange={(e) => changeCantidad(producto, e.target.value)}
-                            style={inputStyle}
-                          />
-                        </div>
-
-                        <div>
-                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                            Precio aplicado
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={linea.usaMontoVariable ? linea.montoVariable : linea.precioBase}
-                            onChange={(e) => setMontoVariable(producto, e.target.value)}
-                            style={inputStyle}
-                          />
-                        </div>
-                      </div>
-
-                      <div style={{ marginTop: 12 }}>
-                        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <input
-                            type="checkbox"
-                            checked={!!linea.usaMontoVariable}
-                            onChange={(e) => toggleMontoVariable(producto, e.target.checked)}
-                          />
-                          <span>Usar monto variable</span>
+                      <div>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Nombre tienda
                         </label>
+                        <input
+                          value={nuevoCliente.nombre}
+                          onChange={(e) =>
+                            setNuevoCliente((p) => ({ ...p, nombre: e.target.value }))
+                          }
+                          style={inputStyle}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Propietario
+                        </label>
+                        <input
+                          value={nuevoCliente.propietario}
+                          onChange={(e) =>
+                            setNuevoCliente((p) => ({ ...p, propietario: e.target.value }))
+                          }
+                          style={inputStyle}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Teléfono
+                        </label>
+                        <input
+                          value={nuevoCliente.telefono}
+                          onChange={(e) =>
+                            setNuevoCliente((p) => ({ ...p, telefono: e.target.value }))
+                          }
+                          style={inputStyle}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Ruta
+                        </label>
+                        <select
+                          value={nuevoCliente.ruta_id}
+                          onChange={(e) =>
+                            setNuevoCliente((p) => ({ ...p, ruta_id: e.target.value }))
+                          }
+                          style={inputStyle}
+                        >
+                          <option value="">Selecciona ruta</option>
+                          {rutas.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Zona
+                        </label>
+                        <select
+                          value={nuevoCliente.zona_id}
+                          onChange={(e) =>
+                            setNuevoCliente((p) => ({ ...p, zona_id: e.target.value }))
+                          }
+                          style={inputStyle}
+                        >
+                          <option value="">Selecciona zona</option>
+                          {zonas.map((z) => (
+                            <option key={z.id} value={z.id}>
+                              {z.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Dirección
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={nuevoCliente.direccion}
+                          onChange={(e) =>
+                            setNuevoCliente((p) => ({ ...p, direccion: e.target.value }))
+                          }
+                          style={{ ...inputStyle, resize: "vertical" }}
+                        />
+                      </div>
+
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Referencia
+                        </label>
+                        <input
+                          value={nuevoCliente.referencia}
+                          onChange={(e) =>
+                            setNuevoCliente((p) => ({ ...p, referencia: e.target.value }))
+                          }
+                          style={inputStyle}
+                        />
+                      </div>
+
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <button type="button" onClick={handleCrearCliente} style={saveBtn}>
+                          Guardar cliente
+                        </button>
                       </div>
                     </div>
-                  );
-                })}
+                  )}
 
-                {productosFiltrados.length === 0 && (
-                  <div className="muted">No se encontraron productos.</div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gap: 16, position: "sticky", top: 12 }}>
-            <div className="card pad">
-              <h3 style={{ marginTop: 0 }}>Resumen del pedido</h3>
-
-              <div style={{ display: "grid", gap: 10 }}>
-                <div>
-                  <div className="muted" style={{ fontSize: 13 }}>Cliente</div>
-                  <div style={{ fontWeight: 600 }}>
-                    {clienteSeleccionado?.nombre || "No seleccionado"}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="muted" style={{ fontSize: 13 }}>Ruta / Zona</div>
-                  <div style={{ fontWeight: 600 }}>
-                    {(clienteSeleccionado?.ruta_nombre || "—") +
-                      " / " +
-                      (clienteSeleccionado?.zona_nombre || "—")}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="muted" style={{ fontSize: 13 }}>Productos agregados</div>
-                  <div style={{ fontWeight: 600 }}>{detalles.length}</div>
-                </div>
-              </div>
-
-              <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
-
-              <div style={{ maxHeight: 260, overflow: "auto", display: "grid", gap: 10 }}>
-                {detalles.length === 0 ? (
-                  <div className="muted">Aún no has agregado productos.</div>
-                ) : (
-                  detalles.map((item) => (
+                  {!mostrarNuevoCliente && clienteSeleccionado ? (
                     <div
-                      key={item.producto_id}
                       style={{
-                        border: "1px solid #eee",
-                        borderRadius: 10,
-                        padding: 10,
+                        marginTop: 12,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                        gap: 12,
                       }}
                     >
-                      <div style={{ fontWeight: 700 }}>{item.producto_nombre}</div>
-                      <div className="muted" style={{ fontSize: 13 }}>
-                        {item.cantidad} × {item.presentacion} × {money(item.precio_unitario)}
+                      <div>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Ruta
+                        </label>
+                        <input
+                          readOnly
+                          value={clienteSeleccionado?.ruta_nombre || ""}
+                          style={{ ...inputStyle, background: "#f7f7f7" }}
+                        />
                       </div>
-                      <div style={{ marginTop: 4, fontWeight: 700 }}>
-                        {money(item.subtotal)}
+                      <div>
+                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          Zona
+                        </label>
+                        <input
+                          readOnly
+                          value={clienteSeleccionado?.zona_nombre || ""}
+                          style={{ ...inputStyle, background: "#f7f7f7" }}
+                        />
                       </div>
                     </div>
-                  ))
-                )}
+                  ) : null}
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                    Observaciones
+                  </label>
+                  <textarea
+                    value={observaciones}
+                    onChange={(e) => setObservaciones(e.target.value)}
+                    rows={3}
+                    style={{ ...inputStyle, resize: "vertical" }}
+                  />
+                </div>
               </div>
 
-              <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
-
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  fontSize: 18,
-                  fontWeight: 800,
-                }}
-              >
-                <span>Total</span>
-                <span>{money(totalPedido)}</span>
-              </div>
-
-              <button
-                type="submit"
-                disabled={enviando}
-                style={{
-                  width: "100%",
-                  marginTop: 14,
-                  border: 0,
-                  borderRadius: 10,
-                  padding: "12px 14px",
-                  fontWeight: 700,
-                  cursor: enviando ? "not-allowed" : "pointer",
-                }}
-              >
-                {enviando ? "Enviando..." : "Enviar pedido al admin"}
-              </button>
-            </div>
-          </div>
-        </div>
-      </form>
-
-      <div className="card pad" style={{ marginTop: 16 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 12,
-            flexWrap: "wrap",
-            marginBottom: 12,
-          }}
-        >
-          <div>
-            <h3 style={{ margin: 0 }}>Mis pedidos</h3>
-            <div className="muted">Aquí puedes ver si el admin ya revisó tu pedido.</div>
-          </div>
-
-          <div style={{ minWidth: 220 }}>
-            <select
-              value={estadoFiltroPedidos}
-              onChange={(e) => setEstadoFiltroPedidos(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">Todos los estados</option>
-              <option value="pendiente_revision">Pendiente revisión</option>
-              <option value="aprobado">Aprobado</option>
-              <option value="preparando">Preparando</option>
-              <option value="entregado">Entregado</option>
-            </select>
-          </div>
-        </div>
-
-        {loadingMisPedidos ? (
-          <div className="muted">Cargando pedidos...</div>
-        ) : misPedidos.length === 0 ? (
-          <div className="muted">Aún no tienes pedidos registrados.</div>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            {misPedidos.map((pedido) => (
-              <div
-                key={pedido.id}
-                style={{
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 12,
-                  padding: 14,
-                }}
-              >
+              <div className="card pad">
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
+                    alignItems: "center",
                     gap: 12,
                     flexWrap: "wrap",
                   }}
                 >
-                  <div>
-                    <div style={{ fontWeight: 800 }}>Pedido #{pedido.id}</div>
-                    <div className="muted">Cliente: {pedido.cliente_nombre || "—"}</div>
-                    <div className="muted">Fecha: {pedido.creado_en || "—"}</div>
-                  </div>
+                  <h3 style={{ margin: 0 }}>Productos</h3>
 
-                  <div style={{ textAlign: "right" }}>
-                    <div style={estadoBadgeStyle(pedido.estado)}>{pedido.estado}</div>
-                    <div style={{ marginTop: 8, fontWeight: 800 }}>
-                      {money(pedido.total)}
-                    </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <input
+                      type="text"
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      placeholder="Buscar por nombre o código..."
+                      style={{ ...inputStyle, maxWidth: 320 }}
+                    />
+                    <button type="button" onClick={loadProductos} style={miniBtn}>
+                      Buscar
+                    </button>
                   </div>
                 </div>
 
-                {pedido.detalles?.length ? (
-                  <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                    {pedido.detalles.map((d) => (
+                <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+                  {productosFiltrados.map((producto) => {
+                    const linea = ensureLinea(producto);
+                    const subtotal = getSubtotal(producto);
+
+                    return (
                       <div
-                        key={d.id}
+                        key={producto.id}
                         style={{
-                          border: "1px solid #f1f5f9",
-                          background: "#fafafa",
+                          border: "1px solid #e5e7eb",
+                          borderRadius: 12,
+                          padding: 14,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{producto.nombre}</div>
+                            <div className="muted" style={{ fontSize: 13 }}>
+                              Código: {producto.sku || "—"}
+                            </div>
+                            <div className="muted" style={{ fontSize: 13 }}>
+                              Stock base: {producto.cantidad_base}
+                            </div>
+                          </div>
+
+                          <div style={{ fontWeight: 700 }}>Subtotal: {money(subtotal)}</div>
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 12,
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr 1fr",
+                            gap: 12,
+                          }}
+                        >
+                          <div>
+                            <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                              Presentación
+                            </label>
+                            <select
+                              value={linea.presentacion}
+                              onChange={(e) => changePresentacion(producto, e.target.value)}
+                              style={inputStyle}
+                            >
+                              {(producto.presentaciones || []).map((p) => (
+                                <option key={p.tipo} value={p.tipo}>
+                                  {p.label || p.tipo} — factor {p.factor} — {money(p.precio)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                              Cantidad
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={linea.cantidad}
+                              onChange={(e) => changeCantidad(producto, e.target.value)}
+                              style={inputStyle}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                              Precio aplicado
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={linea.usaMontoVariable ? linea.montoVariable : linea.precioBase}
+                              onChange={(e) => setMontoVariable(producto, e.target.value)}
+                              disabled={!linea.usaMontoVariable}
+                              style={{
+                                ...inputStyle,
+                                background: linea.usaMontoVariable ? "#fff" : "#f7f7f7",
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ marginTop: 12 }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <input
+                              type="checkbox"
+                              checked={!!linea.usaMontoVariable}
+                              onChange={(e) => toggleMontoVariable(producto, e.target.checked)}
+                            />
+                            <span>Usar monto variable</span>
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {productosFiltrados.length === 0 && (
+                    <div className="muted">No se encontraron productos.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 16, position: "sticky", top: 12 }}>
+              <div className="card pad">
+                <h3 style={{ marginTop: 0 }}>Resumen del pedido</h3>
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div>
+                    <div className="muted" style={{ fontSize: 13 }}>Cliente</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {clienteSeleccionado?.nombre || "No seleccionado"}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="muted" style={{ fontSize: 13 }}>Ruta / Zona</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {(clienteSeleccionado?.ruta_nombre || "—") +
+                        " / " +
+                        (clienteSeleccionado?.zona_nombre || "—")}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="muted" style={{ fontSize: 13 }}>Productos agregados</div>
+                    <div style={{ fontWeight: 600 }}>{detalles.length}</div>
+                  </div>
+                </div>
+
+                <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
+
+                <div style={{ maxHeight: 260, overflow: "auto", display: "grid", gap: 10 }}>
+                  {detalles.length === 0 ? (
+                    <div className="muted">Aún no has agregado productos.</div>
+                  ) : (
+                    detalles.map((item) => (
+                      <div
+                        key={item.producto_id}
+                        style={{
+                          border: "1px solid #eee",
                           borderRadius: 10,
                           padding: 10,
                         }}
                       >
-                        <div style={{ fontWeight: 700 }}>
-                          {d.producto_nombre || `Producto #${d.producto_id}`}
-                        </div>
+                        <div style={{ fontWeight: 700 }}>{item.producto_nombre}</div>
                         <div className="muted" style={{ fontSize: 13 }}>
-                          {d.cantidad_base} × {d.presentacion || "unidad"} × {money(d.precio_unitario)}
+                          {item.cantidad} × {item.presentacion} × {money(item.precio_unitario)}
                         </div>
                         <div style={{ marginTop: 4, fontWeight: 700 }}>
-                          {money(d.subtotal)}
+                          {money(item.subtotal)}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                ) : null}
+                    ))
+                  )}
+                </div>
 
-                {pedido.observaciones ? (
-                  <div style={{ marginTop: 10 }}>
-                    <div className="muted" style={{ fontSize: 13 }}>Observaciones</div>
-                    <div>{pedido.observaciones}</div>
-                  </div>
-                ) : null}
+                <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: 18,
+                    fontWeight: 800,
+                  }}
+                >
+                  <span>Total</span>
+                  <span>{money(totalPedido)}</span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={enviando}
+                  style={{
+                    width: "100%",
+                    marginTop: 14,
+                    border: 0,
+                    borderRadius: 10,
+                    padding: "12px 14px",
+                    fontWeight: 700,
+                    cursor: enviando ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {enviando ? "Enviando..." : "Enviar pedido al admin"}
+                </button>
               </div>
-            ))}
+            </div>
           </div>
-        )}
-      </div>
+        </form>
+      )}
+
+      {vista === "mios" && (
+        <div className="card pad" style={{ marginTop: 16 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+              marginBottom: 12,
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0 }}>Mis pedidos</h3>
+              <div className="muted">Aquí puedes ver si el admin ya revisó tu pedido.</div>
+            </div>
+
+            <div style={{ minWidth: 220 }}>
+              <select
+                value={estadoFiltroPedidos}
+                onChange={(e) => setEstadoFiltroPedidos(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">Todos los estados</option>
+                <option value="pendiente_revision">Pendiente revisión</option>
+                <option value="aprobado">Aprobado</option>
+                <option value="preparando">Preparando</option>
+                <option value="entregado">Entregado</option>
+              </select>
+            </div>
+          </div>
+
+          {loadingMisPedidos ? (
+            <div className="muted">Cargando pedidos...</div>
+          ) : misPedidos.length === 0 ? (
+            <div className="muted">Aún no tienes pedidos registrados.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              {misPedidos.map((pedido) => (
+                <div
+                  key={pedido.id}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    padding: 14,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 800 }}>Pedido #{pedido.id}</div>
+                      <div className="muted">Cliente: {pedido.cliente_nombre || "—"}</div>
+                      <div className="muted">Fecha: {pedido.creado_en || "—"}</div>
+                    </div>
+
+                    <div style={{ textAlign: "right" }}>
+                      <div style={estadoBadgeStyle(pedido.estado)}>
+                        {String(pedido.estado || "").replaceAll("_", " ")}
+                      </div>
+                      <div style={{ marginTop: 8, fontWeight: 800 }}>
+                        {money(pedido.total)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {pedido.detalles?.length ? (
+                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                      {pedido.detalles.map((d) => (
+                        <div
+                          key={d.id}
+                          style={{
+                            border: "1px solid #f1f5f9",
+                            background: "#fafafa",
+                            borderRadius: 10,
+                            padding: 10,
+                          }}
+                        >
+                          <div style={{ fontWeight: 700 }}>
+                            {d.producto_nombre || `Producto #${d.producto_id}`}
+                          </div>
+                          <div className="muted" style={{ fontSize: 13 }}>
+                            {d.cantidad_base} × {d.presentacion || "unidad"} × {money(d.precio_unitario)}
+                          </div>
+                          <div style={{ marginTop: 4, fontWeight: 700 }}>
+                            {money(d.subtotal)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {pedido.observaciones ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="muted" style={{ fontSize: 13 }}>Observaciones</div>
+                      <div>{pedido.observaciones}</div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1100,4 +1225,4 @@ const saveBtn = {
   padding: "12px 14px",
   cursor: "pointer",
   fontWeight: 700,
-}; 
+};

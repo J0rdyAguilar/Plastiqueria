@@ -3,140 +3,178 @@
 namespace App\Services;
 
 use App\Models\MovimientoStock;
+use App\Models\ProductoPrecio;
 use App\Models\Stock;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class StockService
 {
-    /**
-     * Acepta tipo en:
-     * - IN / OUT / TRANSFER / ADJUST
-     * - entrada / salida / traslado / ajuste (ENUM real)
-     *
-     * Guarda SIEMPRE en BD: entrada/salida/traslado/ajuste
-     */
     public function apply(array $data, int $userId): MovimientoStock
     {
         return DB::transaction(function () use ($data, $userId) {
+            $tipo = $this->normalizarTipo($data['tipo'] ?? '');
+            $productoId = (int) ($data['producto_id'] ?? 0);
+            $presentacion = trim((string) ($data['presentacion'] ?? ''));
+            $cantidad = (int) ($data['cantidad'] ?? 0);
 
-            // =========================
-            // 1) NORMALIZAR TIPO
-            // =========================
-            $tipoIn = strtolower(trim((string)($data['tipo'] ?? '')));
+            $origenId = isset($data['ubicacion_origen_id']) && $data['ubicacion_origen_id'] !== ''
+                ? (int) $data['ubicacion_origen_id']
+                : null;
 
-            $map = [
-                'in'       => 'entrada',
-                'out'      => 'salida',
-                'transfer' => 'traslado',
-                'adjust'   => 'ajuste',
-                'entrada'  => 'entrada',
-                'salida'   => 'salida',
-                'traslado' => 'traslado',
-                'ajuste'   => 'ajuste',
-            ];
+            $destinoId = isset($data['ubicacion_destino_id']) && $data['ubicacion_destino_id'] !== ''
+                ? (int) $data['ubicacion_destino_id']
+                : null;
 
-            $tipo = $map[$tipoIn] ?? null;
-
-            if (!$tipo) {
+            if ($productoId <= 0) {
                 throw ValidationException::withMessages([
-                    'tipo' => "Tipo inválido: '{$data['tipo']}'. Usa IN/OUT/TRANSFER/ADJUST o entrada/salida/traslado/ajuste."
+                    'producto_id' => 'Producto inválido.',
                 ]);
             }
 
-            // =========================
-            // 2) DATOS BASE
-            // =========================
-            $productoId = (int)($data['producto_id'] ?? 0);
-            $qty        = (int)($data['cantidad_base'] ?? 0);
-
-            $origenId  = isset($data['ubicacion_origen_id']) ? (int)$data['ubicacion_origen_id'] : null;
-            $destinoId = isset($data['ubicacion_destino_id']) ? (int)$data['ubicacion_destino_id'] : null;
-
-            if ($productoId <= 0) {
-                throw ValidationException::withMessages(['producto_id' => 'producto_id inválido']);
+            if ($presentacion === '') {
+                throw ValidationException::withMessages([
+                    'presentacion' => 'La presentación es obligatoria.',
+                ]);
             }
 
-            // =========================
-            // 3) VALIDACIONES POR TIPO
-            // =========================
-            if ($tipo !== 'ajuste' && $qty <= 0) {
-                throw ValidationException::withMessages(['cantidad_base' => 'La cantidad debe ser mayor a 0.']);
+            if ($cantidad <= 0) {
+                throw ValidationException::withMessages([
+                    'cantidad' => 'La cantidad debe ser mayor a 0.',
+                ]);
             }
+
+            $precio = ProductoPrecio::query()
+                ->where('producto_id', $productoId)
+                ->whereRaw('LOWER(presentacion) = ?', [mb_strtolower($presentacion)])
+                ->where('activo', true)
+                ->first();
+
+            if (!$precio) {
+                throw ValidationException::withMessages([
+                    'presentacion' => 'La presentación seleccionada no existe para este producto.',
+                ]);
+            }
+
+            $factor = (float) $precio->factor_base;
+            if ($factor <= 0) {
+                throw ValidationException::withMessages([
+                    'presentacion' => 'La presentación tiene un factor inválido.',
+                ]);
+            }
+
+            $cantidadBase = (int) round($cantidad * $factor);
 
             if ($tipo === 'entrada') {
                 if (!$destinoId) {
-                    throw ValidationException::withMessages(['ubicacion_destino_id' => 'Requerido para entrada.']);
+                    throw ValidationException::withMessages([
+                        'ubicacion_destino_id' => 'Requerido para entrada.',
+                    ]);
                 }
+
+                $this->sumar($precio->id, $productoId, $destinoId, $cantidad, $cantidadBase);
             }
 
             if ($tipo === 'salida') {
                 if (!$origenId) {
-                    throw ValidationException::withMessages(['ubicacion_origen_id' => 'Requerido para salida.']);
+                    throw ValidationException::withMessages([
+                        'ubicacion_origen_id' => 'Requerido para salida.',
+                    ]);
                 }
+
+                $this->restar($precio->id, $productoId, $origenId, $cantidad, $cantidadBase);
             }
 
             if ($tipo === 'traslado') {
                 if (!$origenId) {
-                    throw ValidationException::withMessages(['ubicacion_origen_id' => 'Requerido para traslado.']);
+                    throw ValidationException::withMessages([
+                        'ubicacion_origen_id' => 'Requerido para traslado.',
+                    ]);
                 }
+
                 if (!$destinoId) {
-                    throw ValidationException::withMessages(['ubicacion_destino_id' => 'Requerido para traslado.']);
+                    throw ValidationException::withMessages([
+                        'ubicacion_destino_id' => 'Requerido para traslado.',
+                    ]);
                 }
+
                 if ($origenId === $destinoId) {
-                    throw ValidationException::withMessages(['ubicacion_destino_id' => 'Origen y destino no pueden ser iguales.']);
+                    throw ValidationException::withMessages([
+                        'ubicacion_destino_id' => 'Origen y destino no pueden ser iguales.',
+                    ]);
                 }
+
+                $this->restar($precio->id, $productoId, $origenId, $cantidad, $cantidadBase);
+                $this->sumar($precio->id, $productoId, $destinoId, $cantidad, $cantidadBase);
             }
 
             if ($tipo === 'ajuste') {
-                // ajuste permite delta positivo o negativo
-                if ($qty === 0) {
-                    throw ValidationException::withMessages(['cantidad_base' => 'En ajuste la cantidad no puede ser 0 (usa + o -).']);
+                $target = $destinoId ?: $origenId;
+
+                if (!$target) {
+                    throw ValidationException::withMessages([
+                        'ubicacion_destino_id' => 'En ajuste debes indicar una ubicación.',
+                    ]);
                 }
-                if (!$destinoId && !$origenId) {
-                    throw ValidationException::withMessages(['ubicacion_destino_id' => 'En ajuste envía ubicacion_destino_id (o ubicacion_origen_id).']);
+
+                if (trim((string) ($data['motivo'] ?? '')) === '') {
+                    throw ValidationException::withMessages([
+                        'motivo' => 'El motivo es obligatorio en ajuste.',
+                    ]);
                 }
+
+                $this->ajustarDelta($precio->id, $productoId, $target, $cantidad, $cantidadBase);
             }
 
-            // =========================
-            // 4) CREAR MOVIMIENTO (TIPO ENUM REAL)
-            // =========================
-            $mov = MovimientoStock::create([
-                'tipo' => $tipo, // <- IMPORTANTÍSIMO: SIEMPRE enum real
+            return MovimientoStock::create([
+                'tipo' => $tipo,
                 'ubicacion_origen_id' => $origenId,
                 'ubicacion_destino_id' => $destinoId,
                 'producto_id' => $productoId,
-                'cantidad_base' => $qty,
+                'producto_precio_id' => $precio->id,
+                'presentacion' => $precio->presentacion,
+                'factor_aplicado' => $factor,
+                'cantidad' => $cantidad,
+                'cantidad_base' => $cantidadBase,
                 'motivo' => $data['motivo'] ?? null,
                 'referencia_tipo' => $data['referencia_tipo'] ?? null,
                 'referencia_id' => $data['referencia_id'] ?? null,
                 'creado_por' => $userId,
                 'creado_en' => now(),
             ]);
-
-            // =========================
-            // 5) APLICAR IMPACTO A STOCK
-            // =========================
-            if ($tipo === 'entrada') {
-                $this->sumar($productoId, $destinoId, $qty);
-            } elseif ($tipo === 'salida') {
-                $this->restar($productoId, $origenId, $qty);
-            } elseif ($tipo === 'traslado') {
-                $this->restar($productoId, $origenId, $qty);
-                $this->sumar($productoId, $destinoId, $qty);
-            } elseif ($tipo === 'ajuste') {
-                $target = $destinoId ?: $origenId;
-                $this->ajustarDelta($productoId, $target, $qty); // qty puede ser + o -
-            }
-
-            return $mov;
         });
     }
 
-    private function sumar(int $productoId, int $ubicacionId, int $qty): void
+    private function normalizarTipo(string $tipoInput): string
+    {
+        $tipoIn = strtolower(trim($tipoInput));
+
+        $map = [
+            'in' => 'entrada',
+            'out' => 'salida',
+            'transfer' => 'traslado',
+            'adjust' => 'ajuste',
+            'entrada' => 'entrada',
+            'salida' => 'salida',
+            'traslado' => 'traslado',
+            'ajuste' => 'ajuste',
+        ];
+
+        $tipo = $map[$tipoIn] ?? null;
+
+        if (!$tipo) {
+            throw ValidationException::withMessages([
+                'tipo' => "Tipo inválido: '{$tipoInput}'.",
+            ]);
+        }
+
+        return $tipo;
+    }
+
+    private function sumar(int $productoPrecioId, int $productoId, int $ubicacionId, int $qty, int $qtyBase): void
     {
         $stock = Stock::query()
-            ->where('producto_id', $productoId)
+            ->where('producto_precio_id', $productoPrecioId)
             ->where('ubicacion_id', $ubicacionId)
             ->lockForUpdate()
             ->first();
@@ -144,45 +182,49 @@ class StockService
         if (!$stock) {
             $stock = Stock::create([
                 'producto_id' => $productoId,
+                'producto_precio_id' => $productoPrecioId,
                 'ubicacion_id' => $ubicacionId,
+                'cantidad' => 0,
                 'cantidad_base' => 0,
             ]);
         }
 
-        $stock->cantidad_base = (int)$stock->cantidad_base + $qty;
+        $stock->cantidad = (int) $stock->cantidad + $qty;
+        $stock->cantidad_base = (int) $stock->cantidad_base + $qtyBase;
         $stock->actualizado_en = now();
         $stock->save();
     }
 
-    private function restar(int $productoId, int $ubicacionId, int $qty): void
+    private function restar(int $productoPrecioId, int $productoId, int $ubicacionId, int $qty, int $qtyBase): void
     {
         $stock = Stock::query()
-            ->where('producto_id', $productoId)
+            ->where('producto_precio_id', $productoPrecioId)
             ->where('ubicacion_id', $ubicacionId)
             ->lockForUpdate()
             ->first();
 
         if (!$stock) {
             throw ValidationException::withMessages([
-                'stock' => "No existe stock para producto {$productoId} en ubicación {$ubicacionId}."
+                'stock' => 'No existe stock para esa presentación en esa ubicación.',
             ]);
         }
 
-        if ((int)$stock->cantidad_base < $qty) {
+        if ((int) $stock->cantidad < $qty) {
             throw ValidationException::withMessages([
-                'stock' => "Stock insuficiente. Disponible: {$stock->cantidad_base}, requerido: {$qty}."
+                'stock' => "Stock insuficiente. Disponible: {$stock->cantidad}.",
             ]);
         }
 
-        $stock->cantidad_base = (int)$stock->cantidad_base - $qty;
+        $stock->cantidad = (int) $stock->cantidad - $qty;
+        $stock->cantidad_base = max(0, (int) $stock->cantidad_base - $qtyBase);
         $stock->actualizado_en = now();
         $stock->save();
     }
 
-    private function ajustarDelta(int $productoId, int $ubicacionId, int $delta): void
+    private function ajustarDelta(int $productoPrecioId, int $productoId, int $ubicacionId, int $qty, int $qtyBase): void
     {
         $stock = Stock::query()
-            ->where('producto_id', $productoId)
+            ->where('producto_precio_id', $productoPrecioId)
             ->where('ubicacion_id', $ubicacionId)
             ->lockForUpdate()
             ->first();
@@ -190,20 +232,24 @@ class StockService
         if (!$stock) {
             $stock = Stock::create([
                 'producto_id' => $productoId,
+                'producto_precio_id' => $productoPrecioId,
                 'ubicacion_id' => $ubicacionId,
+                'cantidad' => 0,
                 'cantidad_base' => 0,
             ]);
         }
 
-        $nuevo = (int)$stock->cantidad_base + $delta;
+        $nuevo = (int) $stock->cantidad + $qty;
+        $nuevoBase = (int) $stock->cantidad_base + $qtyBase;
 
-        if ($nuevo < 0) {
+        if ($nuevo < 0 || $nuevoBase < 0) {
             throw ValidationException::withMessages([
-                'stock' => "El ajuste deja stock negativo. Actual: {$stock->cantidad_base}, delta: {$delta}."
+                'stock' => 'El ajuste deja stock negativo.',
             ]);
         }
 
-        $stock->cantidad_base = $nuevo;
+        $stock->cantidad = $nuevo;
+        $stock->cantidad_base = $nuevoBase;
         $stock->actualizado_en = now();
         $stock->save();
     }

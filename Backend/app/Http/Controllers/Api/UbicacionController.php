@@ -2,81 +2,81 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Http\Controllers\Controller;
-use App\Http\Requests\UbicacionStoreRequest;
-use App\Http\Requests\UbicacionUpdateRequest;
 use App\Models\Ubicacion;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
 
 class UbicacionController extends Controller
 {
-    // GET /api/ubicaciones?q=&tipo=&activa=&page=
     public function index(Request $request)
     {
-        $q = trim((string) $request->query('q', ''));
-        $tipo = $request->query('tipo');     // bodega|tienda
-        $activa = $request->query('activa'); // 1|0
+        $q = $request->query('q');
+        $activa = $request->query('activa');
 
-        $query = Ubicacion::query();
-
-        if ($q !== '') {
-            $query->where(function ($w) use ($q) {
-                $w->where('nombre', 'like', "%{$q}%")
-                  ->orWhere('direccion', 'like', "%{$q}%");
-            });
-        }
-
-        if ($tipo !== null && $tipo !== '') {
-            $query->where('tipo', $tipo);
-        }
-
-        if ($activa !== null && $activa !== '') {
-            $query->where('activa', (int) $activa);
-        }
-
-        $items = $query
+        $ubicaciones = Ubicacion::query()
+            ->when($q, function ($query) use ($q) {
+                $query->where(function ($qq) use ($q) {
+                    $qq->where('nombre', 'like', "%{$q}%")
+                       ->orWhere('tipo', 'like', "%{$q}%")
+                       ->orWhere('direccion', 'like', "%{$q}%");
+                });
+            })
+            ->when($activa !== null && $activa !== '', function ($query) use ($activa) {
+                $query->where('activa', (int) $activa);
+            })
             ->orderBy('nombre')
-            ->paginate((int) $request->query('per_page', 10));
+            ->get();
 
-        return response()->json($items);
+        return response()->json([
+            'data' => $ubicaciones
+        ]);
     }
 
-    // POST /api/ubicaciones
-    public function store(UbicacionStoreRequest $request)
+    public function show(Ubicacion $ubicacion)
     {
-        $data = $request->validated();
+        return response()->json([
+            'data' => $ubicacion
+        ]);
+    }
 
-        // default activa = 1 si no viene
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'nombre'    => ['required', 'string', 'max:160'],
+            'tipo'      => ['required', 'string', 'max:50'],
+            'direccion' => ['nullable', 'string', 'max:255'],
+            'activa'    => ['nullable', 'boolean'],
+        ]);
+
         if (!array_key_exists('activa', $data)) {
             $data['activa'] = 1;
         }
 
-        $u = Ubicacion::create($data);
+        $ubicacion = Ubicacion::create($data);
 
         return response()->json([
-            'message' => 'Ubicación creada.',
-            'data' => $u,
+            'message' => 'Ubicación creada correctamente.',
+            'data' => $ubicacion
         ], 201);
     }
 
-    // GET /api/ubicaciones/{id}
-    public function show(Ubicacion $ubicacion)
+    public function update(Request $request, Ubicacion $ubicacion)
     {
-        return response()->json($ubicacion);
-    }
+        $data = $request->validate([
+            'nombre'    => ['sometimes', 'required', 'string', 'max:160'],
+            'tipo'      => ['sometimes', 'required', 'string', 'max:50'],
+            'direccion' => ['nullable', 'string', 'max:255'],
+            'activa'    => ['nullable', 'boolean'],
+        ]);
 
-    // PUT/PATCH /api/ubicaciones/{id}
-    public function update(UbicacionUpdateRequest $request, Ubicacion $ubicacion)
-    {
-        $ubicacion->update($request->validated());
+        $ubicacion->update($data);
 
         return response()->json([
             'message' => 'Ubicación actualizada.',
-            'data' => $ubicacion->fresh(),
+            'data' => $ubicacion->fresh()
         ]);
     }
 
-    // PATCH /api/ubicaciones/{id}/toggle
     public function toggle(Ubicacion $ubicacion)
     {
         $ubicacion->activa = !$ubicacion->activa;
@@ -84,7 +84,16 @@ class UbicacionController extends Controller
 
         return response()->json([
             'message' => $ubicacion->activa ? 'Ubicación activada.' : 'Ubicación desactivada.',
-            'data' => $ubicacion->fresh(),
+            'data' => $ubicacion->fresh()
+        ]);
+    }
+
+    public function destroy(Ubicacion $ubicacion)
+    {
+        $ubicacion->delete();
+
+        return response()->json([
+            'message' => 'Ubicación eliminada.'
         ]);
     }
 }

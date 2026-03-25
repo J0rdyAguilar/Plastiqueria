@@ -8,6 +8,7 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Usuario extends Authenticatable
 {
@@ -20,11 +21,12 @@ class Usuario extends Authenticatable
     const UPDATED_AT = 'actualizado_en';
 
     protected $fillable = [
+        'ubicacion_id',
         'nombre',
         'usuario',
         'telefono',
         'password',
-        'rol',      // admin, vendedor, caja, etc (según tu ER)
+        'rol',
         'activo',
     ];
 
@@ -34,14 +36,22 @@ class Usuario extends Authenticatable
     ];
 
     protected $casts = [
-        'activo'   => 'boolean',
-        // Laravel 10+ / 12 → hashea automáticamente al asignar
+        'activo' => 'boolean',
         'password' => 'hashed',
     ];
 
     /* =========================================================
-       RELACIONES (según ER)
+       RELACIONES
     ========================================================= */
+
+    /**
+     * Un usuario pertenece a una sucursal/ubicación
+     * usuarios.ubicacion_id -> ubicaciones.id
+     */
+    public function ubicacion(): BelongsTo
+    {
+        return $this->belongsTo(Ubicacion::class, 'ubicacion_id');
+    }
 
     /**
      * Un usuario PUEDE ser un vendedor
@@ -62,7 +72,7 @@ class Usuario extends Authenticatable
     }
 
     /* =========================================================
-       SCOPES ÚTILES (para APIs)
+       SCOPES ÚTILES
     ========================================================= */
 
     public function scopeActivos($query)

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\ProductoResource;
 use App\Models\Producto;
 use App\Models\ProductoPrecio;
 use App\Models\Stock;
@@ -34,33 +35,9 @@ class ProductoController extends Controller
             });
         }
 
-        return $query
-            ->orderBy('nombre')
-            ->paginate($perPage)
-            ->through(function ($p) {
-                return [
-                    'id' => $p->id,
-                    'sku' => $p->sku,
-                    'nombre' => $p->nombre,
-                    'descripcion' => $p->descripcion,
-                    'unidad_base' => $p->unidad_base,
-                    'alerta_stock' => $p->alerta_stock,
-                    'activo' => (bool) $p->activo,
-                    'imagen_principal' => $p->imagenPrincipal ? [
-                        'id' => $p->imagenPrincipal->id,
-                        'url' => $p->imagenPrincipal->url,
-                    ] : null,
-                    'precios' => $p->precios->map(function ($precio) {
-                        return [
-                            'id' => $precio->id,
-                            'presentacion' => $precio->presentacion,
-                            'factor_base' => (float) $precio->factor_base,
-                            'precio' => (float) $precio->precio,
-                            'activo' => (bool) $precio->activo,
-                        ];
-                    })->values(),
-                ];
-            });
+        return ProductoResource::collection(
+            $query->orderBy('nombre')->paginate($perPage)
+        );
     }
 
     public function store(Request $request)
@@ -96,6 +73,7 @@ class ProductoController extends Controller
                 'alerta_stock' => $data['alerta_stock'] ?? 0,
                 'activo' => $data['activo'] ?? true,
                 'creado_en' => $ahora,
+                'actualizado_en' => $ahora,
             ]);
 
             foreach ($data['precios'] as $item) {
@@ -106,6 +84,7 @@ class ProductoController extends Controller
                     'precio' => $item['precio'],
                     'activo' => $item['activo'] ?? true,
                     'creado_en' => $ahora,
+                    'actualizado_en' => $ahora,
                 ]);
             }
 
@@ -126,19 +105,28 @@ class ProductoController extends Controller
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
                 'precios:id,producto_id,presentacion,factor_base,precio,activo,creado_en,actualizado_en',
+                'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ]);
 
-            return response()->json($producto, 201);
+            return response()->json([
+                'message' => 'Producto creado correctamente.',
+                'data' => new ProductoResource($producto),
+            ], 201);
         });
     }
 
     public function show(Producto $producto)
     {
-        return $producto->load([
+        $producto->load([
             'unidades',
             'precios',
             'imagenes',
             'imagenPrincipal',
+            'stocks',
+        ]);
+
+        return response()->json([
+            'data' => new ProductoResource($producto),
         ]);
     }
 
@@ -189,7 +177,7 @@ class ProductoController extends Controller
                 ->when(
                     count($idsRecibidos) > 0,
                     fn ($q) => $q->whereNotIn('id', $idsRecibidos),
-                    fn ($q) => $q->whereRaw('1 = 1')
+                    fn ($q) => $q
                 )
                 ->delete();
 
@@ -216,6 +204,7 @@ class ProductoController extends Controller
                             'precio' => $item['precio'],
                             'activo' => $item['activo'] ?? true,
                             'creado_en' => $ahora,
+                            'actualizado_en' => $ahora,
                         ]);
                     }
                 } else {
@@ -226,6 +215,7 @@ class ProductoController extends Controller
                         'precio' => $item['precio'],
                         'activo' => $item['activo'] ?? true,
                         'creado_en' => $ahora,
+                        'actualizado_en' => $ahora,
                     ]);
                 }
             }
@@ -233,9 +223,13 @@ class ProductoController extends Controller
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
                 'precios:id,producto_id,presentacion,factor_base,precio,activo,creado_en,actualizado_en',
+                'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ]);
 
-            return response()->json($producto);
+            return response()->json([
+                'message' => 'Producto actualizado correctamente.',
+                'data' => new ProductoResource($producto),
+            ]);
         });
     }
 
@@ -250,7 +244,7 @@ class ProductoController extends Controller
 
     public function catalogo()
     {
-        return Producto::where('activo', true)
+        $productos = Producto::where('activo', true)
             ->with([
                 'unidades',
                 'precios' => function ($q) {
@@ -259,32 +253,13 @@ class ProductoController extends Controller
                 },
                 'imagenes' => fn ($q) => $q->orderBy('orden'),
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
+                'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ])
             ->orderBy('nombre')
-            ->get()
-            ->map(function ($p) {
-                return [
-                    'id' => $p->id,
-                    'sku' => $p->sku,
-                    'nombre' => $p->nombre,
-                    'descripcion' => $p->descripcion,
-                    'unidad_base' => $p->unidad_base,
-                    'alerta_stock' => $p->alerta_stock,
-                    'activo' => (bool) $p->activo,
-                    'imagen_principal' => $p->imagenPrincipal ? [
-                        'id' => $p->imagenPrincipal->id,
-                        'url' => $p->imagenPrincipal->url,
-                    ] : null,
-                    'precios' => $p->precios->map(function ($precio) {
-                        return [
-                            'id' => $precio->id,
-                            'presentacion' => $precio->presentacion,
-                            'factor_base' => (float) $precio->factor_base,
-                            'precio' => (float) $precio->precio,
-                            'activo' => (bool) $precio->activo,
-                        ];
-                    })->values(),
-                ];
-            });
+            ->get();
+
+        return response()->json([
+            'data' => ProductoResource::collection($productos),
+        ]);
     }
 }

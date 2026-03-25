@@ -3,12 +3,15 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Ubicacion extends Model
 {
+    use HasFactory;
+
     protected $table = 'ubicaciones';
 
-    // Tus columnas de timestamps no son created_at/updated_at
     const CREATED_AT = 'creado_en';
     const UPDATED_AT = 'actualizado_en';
 
@@ -23,8 +26,8 @@ class Ubicacion extends Model
         'activa' => 'boolean',
     ];
 
-    public function stocks()
+    public function usuarios(): HasMany
     {
-        return $this->hasMany(Stock::class, 'ubicacion_id', 'id');
+        return $this->hasMany(Usuario::class, 'ubicacion_id');
     }
 }

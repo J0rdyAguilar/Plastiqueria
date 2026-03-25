@@ -12,6 +12,7 @@ require __DIR__.'/api/zonas.php';
 require __DIR__.'/api/stock.php';
 require __DIR__.'/api/movimientos_stock.php';
 
+
 Route::prefix('pedidos')
     ->middleware('auth:sanctum')
     ->group(base_path('routes/api/pedidos.php'));

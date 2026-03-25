@@ -1,9 +1,15 @@
-// src/pages/Login.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { motion } from "framer-motion";
+import {
+  LockKeyhole,
+  User,
+  Eye,
+  EyeOff,
+  ArrowRight,
+} from "lucide-react";
 import { api } from "../lib/api";
 import { setSession, getSession, isLoggedIn } from "../lib/auth";
-import Layout from "../components/Layout";
 
 function normalizeRole(r) {
   const x = (r || "").toLowerCase();
@@ -12,9 +18,7 @@ function normalizeRole(r) {
 
 function roleHome(role) {
   const r = normalizeRole(role);
-  // caja/cajero -> /caja
   if (r === "caja") return "/caja";
-  // admin/super_admin -> /usuarios
   return "/usuarios";
 }
 
@@ -26,15 +30,18 @@ export default function Login() {
   const [password, setPassword] = useState("123456");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPass, setShowPass] = useState(false);
 
-  // ✅ si ya hay sesión, no debe quedarse en /login
   useEffect(() => {
     if (isLoggedIn()) {
       const me = getSession()?.user;
       nav(roleHome(me?.rol), { replace: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [nav]);
+
+  const canSubmit = useMemo(() => {
+    return usuario.trim() && password.trim() && !loading;
+  }, [usuario, password, loading]);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -42,10 +49,9 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const res = await api.login({ usuario, password }); // { token, user }
+      const res = await api.login({ usuario, password });
       setSession(res);
 
-      // ✅ si venía de una ruta protegida, respétala
       const from = loc.state?.from;
       if (from) {
         nav(from, { replace: true });
@@ -60,50 +66,73 @@ export default function Login() {
   }
 
   return (
-    
-      <div className="auth-wrap">
-        <div className="auth-bg" />
+    <div className="login-premium-page">
+      <div className="login-premium-bg">
+        <div className="login-orb orb-1" />
+        <div className="login-orb orb-2" />
+        <div className="login-grid" />
+      </div>
 
-        <form className="card auth-card" onSubmit={onSubmit}>
-          <div className="auth-brand">
-            <div className="auth-logo">P</div>
+      <div className="login-center-wrap">
+        <motion.form
+          className="login-card-premium"
+          onSubmit={onSubmit}
+          initial={{ opacity: 0, y: 24, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.45 }}
+        >
+          <div className="login-card-top">
+            <div className="login-logo-premium">P</div>
             <div>
-              <h1>Iniciar sesión</h1>
-              <p className="muted">Usa tu usuario y contraseña</p>
+              <h2>Iniciar sesión</h2>
+              <p>Panel administrativo</p>
             </div>
           </div>
 
-          {error ? <div className="alert">{error}</div> : null}
+          {error ? <div className="login-alert">{error}</div> : null}
 
-          <div className="field">
+          <div className="premium-field">
             <label>Usuario</label>
-            <input
-              value={usuario}
-              onChange={(e) => setUsuario(e.target.value)}
-              autoFocus
-              autoComplete="username"
-            />
+            <div className="premium-input-wrap">
+              <User size={18} />
+              <input
+                value={usuario}
+                onChange={(e) => setUsuario(e.target.value)}
+                autoFocus
+                autoComplete="username"
+                placeholder="Ingresa tu usuario"
+              />
+            </div>
           </div>
 
-          <div className="field">
+          <div className="premium-field">
             <label>Contraseña</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-            />
+            <div className="premium-input-wrap">
+              <LockKeyhole size={18} />
+              <input
+                type={showPass ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Ingresa tu contraseña"
+              />
+              <button
+                type="button"
+                className="pass-toggle-btn"
+                onClick={() => setShowPass((v) => !v)}
+                aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
+              >
+                {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
-          <button className="btn primary" disabled={loading}>
-            {loading ? "Entrando..." : "Entrar"}
+          <button className="premium-submit-btn" disabled={!canSubmit}>
+            <span>{loading ? "Entrando..." : "Entrar"}</span>
+            <ArrowRight size={18} />
           </button>
-
-          <p className="hint">
-            Consejo: luego quitamos los valores por defecto (admin/123456) para producción.
-          </p>
-        </form>
+        </motion.form>
       </div>
-   
+    </div>
   );
 }

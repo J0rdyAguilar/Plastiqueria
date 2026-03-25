@@ -15,20 +15,22 @@ class UsuarioController extends Controller
     {
         $q = $request->query('q');
         $rol = $request->query('rol');
-        $activo = $request->query('activo'); // 0/1
+        $activo = $request->query('activo');
+        $ubicacionId = $request->query('ubicacion_id');
         $perPage = (int) $request->query('per_page', 10);
         $perPage = max(1, min($perPage, 100));
 
-        $usuarios = Usuario::query()
+        $usuarios = Usuario::with('ubicacion')
             ->when($q, function ($query) use ($q) {
                 $query->where(function ($qq) use ($q) {
-                    $qq->where('nombre', 'like', "%$q%")
-                       ->orWhere('usuario', 'like', "%$q%")
-                       ->orWhere('telefono', 'like', "%$q%");
+                    $qq->where('nombre', 'like', "%{$q}%")
+                        ->orWhere('usuario', 'like', "%{$q}%")
+                        ->orWhere('telefono', 'like', "%{$q}%");
                 });
             })
             ->when($rol, fn ($query) => $query->where('rol', $rol))
-            ->when($activo !== null && $activo !== '', fn ($query) => $query->where('activo', (int)$activo))
+            ->when($activo !== null && $activo !== '', fn ($query) => $query->where('activo', (int) $activo))
+            ->when($ubicacionId, fn ($query) => $query->where('ubicacion_id', $ubicacionId))
             ->orderByDesc('id')
             ->paginate($perPage);
 
@@ -39,16 +41,15 @@ class UsuarioController extends Controller
     {
         $data = $request->validated();
 
-        // default activo si no viene
         if (!array_key_exists('activo', $data) || $data['activo'] === null) {
             $data['activo'] = 1;
         } else {
             $data['activo'] = $data['activo'] ? 1 : 0;
         }
 
-        $data['password'] = bcrypt($data['password']);
-
         $usuario = Usuario::create($data);
+
+        $usuario->load('ubicacion');
 
         return (new UsuarioResource($usuario))
             ->response()
@@ -57,6 +58,8 @@ class UsuarioController extends Controller
 
     public function show(Usuario $usuario)
     {
+        $usuario->load('ubicacion');
+
         return new UsuarioResource($usuario);
     }
 
@@ -68,13 +71,13 @@ class UsuarioController extends Controller
             $data['activo'] = $data['activo'] ? 1 : 0;
         }
 
-        if (array_key_exists('password', $data) && $data['password']) {
-            $data['password'] = bcrypt($data['password']);
-        } else {
+        if (array_key_exists('password', $data) && empty($data['password'])) {
             unset($data['password']);
         }
 
         $usuario->update($data);
+
+        $usuario->load('ubicacion');
 
         return new UsuarioResource($usuario);
     }
@@ -82,6 +85,9 @@ class UsuarioController extends Controller
     public function destroy(Usuario $usuario)
     {
         $usuario->delete();
-        return response()->json(['message' => 'Usuario eliminado']);
+
+        return response()->json([
+            'message' => 'Usuario eliminado'
+        ]);
     }
 }

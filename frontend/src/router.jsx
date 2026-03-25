@@ -26,6 +26,7 @@ function normalizeRole(r) {
 
 function roleHome() {
   if (!isLoggedIn()) return "/login";
+
   const rol = normalizeRole(getSession()?.user?.rol);
 
   if (rol === "admin" || rol === "super_admin") return "/pedidos-admin";
@@ -48,10 +49,16 @@ function Wrap({ roles, children }) {
 }
 
 export const router = createBrowserRouter([
-  { path: "/", element: <HomeRedirect /> },
-  { path: "/login", element: <Login /> },
+  {
+    path: "/",
+    element: <HomeRedirect />,
+  },
+  {
+    path: "/login",
+    element: <Login />,
+  },
 
-  // ADMIN
+  // ADMIN / SUPER ADMIN
   {
     path: "/usuarios",
     element: (
@@ -137,5 +144,9 @@ export const router = createBrowserRouter([
     ),
   },
 
-  { path: "*", element: <HomeRedirect /> },
+  // CUALQUIER OTRA RUTA
+  {
+    path: "*",
+    element: <HomeRedirect />,
+  },
 ]);

@@ -1,4 +1,3 @@
-// src/pages/MovimientosStock.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { movimientosStockApi } from "../lib/stock";
 import { ubicacionesApi } from "../lib/ubicaciones";
@@ -12,13 +11,47 @@ const TIPOS = [
   { value: "ajuste", label: "Ajuste" },
 ];
 
+function formatApiError(e) {
+  const data = e?.response?.data;
+
+  if (typeof data?.message === "string" && data.message.trim()) {
+    return data.message;
+  }
+
+  if (data?.errors && typeof data.errors === "object") {
+    const firstKey = Object.keys(data.errors)[0];
+    const firstValue = data.errors[firstKey];
+    if (Array.isArray(firstValue) && firstValue.length) {
+      return firstValue[0];
+    }
+    if (typeof firstValue === "string") {
+      return firstValue;
+    }
+  }
+
+  return e?.message || "Error cargando movimientos";
+}
+
+function normalizarPrecios(precios = []) {
+  if (!Array.isArray(precios)) return [];
+
+  return precios
+    .filter((p) => p && (p.activo === undefined || p.activo === true || p.activo === 1))
+    .map((p) => ({
+      id: p.id,
+      presentacion: String(p.presentacion || "").trim(),
+      factor_base: Number(p.factor_base || 0),
+      precio: Number(p.precio || 0),
+    }))
+    .filter((p) => p.presentacion && p.factor_base > 0);
+}
+
 export default function MovimientosStock() {
   const [tipo, setTipo] = useState("");
   const [ubicacionId, setUbicacionId] = useState("");
   const [productoId, setProductoId] = useState("");
 
   const [ubicaciones, setUbicaciones] = useState([]);
-
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState(null);
 
@@ -32,7 +65,8 @@ export default function MovimientosStock() {
   const [form, setForm] = useState({
     tipo: "entrada",
     producto_id: "",
-    cantidad_base: "",
+    presentacion: "",
+    cantidad: "",
     ubicacion_origen_id: "",
     ubicacion_destino_id: "",
     motivo: "",
@@ -45,6 +79,7 @@ export default function MovimientosStock() {
   const [productoOptions, setProductoOptions] = useState([]);
   const [searchingProductos, setSearchingProductos] = useState(false);
   const [selectedProducto, setSelectedProducto] = useState(null);
+  const [presentaciones, setPresentaciones] = useState([]);
 
   const needsOrigen = useMemo(
     () => ["salida", "traslado", "ajuste"].includes(form.tipo),
@@ -55,6 +90,12 @@ export default function MovimientosStock() {
     () => ["entrada", "traslado"].includes(form.tipo),
     [form.tipo]
   );
+
+  const presentacionSeleccionada = useMemo(() => {
+    return presentaciones.find(
+      (p) => p.presentacion.toLowerCase() === String(form.presentacion || "").toLowerCase()
+    ) || null;
+  }, [presentaciones, form.presentacion]);
 
   async function loadUbicaciones() {
     try {
@@ -69,23 +110,27 @@ export default function MovimientosStock() {
   async function load(p = page) {
     setLoading(true);
     setError("");
+
     try {
-      const res = await movimientosStockApi.list({
-        tipo,
-        ubicacion_id: ubicacionId,
-        producto_id: productoId,
+      const payload = {
         page: p,
         per_page: perPage,
-      });
+      };
 
-      setItems(res.data || []);
+      if (tipo) payload.tipo = tipo;
+      if (ubicacionId) payload.ubicacion_id = ubicacionId;
+      if (productoId) payload.producto_id = productoId;
+
+      const res = await movimientosStockApi.list(payload);
+
+      setItems(res?.data || []);
       setMeta({
-        current_page: res.current_page,
-        last_page: res.last_page,
-        total: res.total,
+        current_page: res?.current_page || 1,
+        last_page: res?.last_page || 1,
+        total: res?.total || 0,
       });
     } catch (e) {
-      setError(e?.response?.data?.message || e?.message || "Error cargando movimientos");
+      setError(formatApiError(e));
     } finally {
       setLoading(false);
     }
@@ -101,8 +146,16 @@ export default function MovimientosStock() {
 
     try {
       setSearchingProductos(true);
-      const res = await productosApi.search(text, { per_page: 20 });
-      const arr = res?.data ?? [];
+
+      let arr = [];
+      if (typeof productosApi.search === "function") {
+        const res = await productosApi.search(text, { per_page: 20 });
+        arr = res?.data ?? [];
+      } else if (typeof productosApi.list === "function") {
+        const res = await productosApi.list({ q: text, per_page: 20 });
+        arr = res?.data ?? [];
+      }
+
       setProductoOptions(arr);
     } catch (e) {
       console.error(e);
@@ -115,14 +168,7 @@ export default function MovimientosStock() {
   useEffect(() => {
     loadUbicaciones();
     load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    setPage(1);
-    load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipo, ubicacionId]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -142,13 +188,23 @@ export default function MovimientosStock() {
       const payload = {
         tipo: form.tipo,
         producto_id: Number(form.producto_id),
-        cantidad_base: Number(form.cantidad_base),
+        presentacion: form.presentacion,
+        cantidad: Number(form.cantidad),
         motivo: form.motivo || undefined,
         ubicacion_origen_id: needsOrigen ? Number(form.ubicacion_origen_id) : undefined,
         ubicacion_destino_id: needsDestino ? Number(form.ubicacion_destino_id) : undefined,
       };
 
-      Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+      Object.keys(payload).forEach((k) => {
+        if (
+          payload[k] === undefined ||
+          payload[k] === null ||
+          payload[k] === "" ||
+          Number.isNaN(payload[k])
+        ) {
+          delete payload[k];
+        }
+      });
 
       await movimientosStockApi.create(payload);
 
@@ -157,7 +213,8 @@ export default function MovimientosStock() {
       setForm({
         tipo: "entrada",
         producto_id: "",
-        cantidad_base: "",
+        presentacion: "",
+        cantidad: "",
         ubicacion_origen_id: "",
         ubicacion_destino_id: "",
         motivo: "",
@@ -165,27 +222,50 @@ export default function MovimientosStock() {
       setProductoSearch("");
       setProductoOptions([]);
       setSelectedProducto(null);
-      load(1);
+      setPresentaciones([]);
+      setPage(1);
+      await load(1);
     } catch (e) {
-      const m = e?.response?.data?.message || e?.message || "Error al crear movimiento";
-      setError(m);
+      setError(formatApiError(e));
     } finally {
       setSaving(false);
     }
   }
 
   function pickProducto(p) {
+    const precios = normalizarPrecios(p?.precios || []);
+
     setSelectedProducto(p);
     setProductoSearch(`${p.sku || ""} - ${p.nombre || ""}`.trim());
     setProductoOptions([]);
+    setPresentaciones(precios);
+
     setForm((s) => ({
       ...s,
       producto_id: String(p.id),
+      presentacion: precios[0]?.presentacion || "",
     }));
   }
 
-  const canPrev = meta?.current_page > 1;
-  const canNext = meta?.current_page < meta?.last_page;
+  function resetModal() {
+    setOpen(false);
+    setForm({
+      tipo: "entrada",
+      producto_id: "",
+      presentacion: "",
+      cantidad: "",
+      ubicacion_origen_id: "",
+      ubicacion_destino_id: "",
+      motivo: "",
+    });
+    setProductoSearch("");
+    setProductoOptions([]);
+    setSelectedProducto(null);
+    setPresentaciones([]);
+  }
+
+  const canPrev = (meta?.current_page || 1) > 1;
+  const canNext = (meta?.current_page || 1) < (meta?.last_page || 1);
 
   return (
     <div className="page">
@@ -194,7 +274,14 @@ export default function MovimientosStock() {
           <h2>Movimientos de Stock</h2>
           <div className="muted">Entradas, salidas, traslados y ajustes</div>
         </div>
-        <button className="btn primary" onClick={() => setOpen(true)}>
+        <button
+          className="btn primary"
+          onClick={() => {
+            setMsg("");
+            setError("");
+            setOpen(true);
+          }}
+        >
           + Nuevo movimiento
         </button>
       </div>
@@ -235,7 +322,15 @@ export default function MovimientosStock() {
 
           <div className="field">
             <label>&nbsp;</label>
-            <button className="btn" onClick={() => load(1)} disabled={loading}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setPage(1);
+                load(1);
+              }}
+              disabled={loading}
+            >
               {loading ? "Cargando..." : "Filtrar"}
             </button>
           </div>
@@ -251,7 +346,10 @@ export default function MovimientosStock() {
                 <th>Fecha</th>
                 <th>Tipo</th>
                 <th>Producto</th>
+                <th>Presentación</th>
                 <th className="right">Cantidad</th>
+                <th className="right">Factor</th>
+                <th className="right">Cantidad base</th>
                 <th>Origen</th>
                 <th>Destino</th>
                 <th>Motivo</th>
@@ -260,19 +358,27 @@ export default function MovimientosStock() {
             <tbody>
               {!loading && items.length === 0 && (
                 <tr>
-                  <td colSpan="7" className="muted">
+                  <td colSpan="10" className="muted">
                     No hay movimientos.
                   </td>
                 </tr>
               )}
+
               {items.map((m) => (
                 <tr key={m.id}>
                   <td className="muted">{m.creado_en}</td>
                   <td>{m.tipo}</td>
-                  <td>{m.producto_id}</td>
+                  <td>{m.producto_nombre || m.producto?.nombre || m.producto_id}</td>
+                  <td>{m.presentacion || "-"}</td>
+                  <td className="right">{m.cantidad ?? "-"}</td>
+                  <td className="right">{m.factor_aplicado ?? "-"}</td>
                   <td className="right">{m.cantidad_base}</td>
-                  <td className="muted">{m.ubicacion_origen_id || "-"}</td>
-                  <td className="muted">{m.ubicacion_destino_id || "-"}</td>
+                  <td className="muted">
+                    {m.ubicacion_origen_nombre || m.ubicacion_origen_id || "-"}
+                  </td>
+                  <td className="muted">
+                    {m.ubicacion_destino_nombre || m.ubicacion_destino_id || "-"}
+                  </td>
                   <td className="muted">{m.motivo || "-"}</td>
                 </tr>
               ))}
@@ -314,11 +420,11 @@ export default function MovimientosStock() {
       </div>
 
       {open && (
-        <div className="modal-backdrop" onClick={() => !saving && setOpen(false)}>
+        <div className="modal-backdrop" onClick={() => !saving && resetModal()}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <h3>Nuevo movimiento</h3>
-              <button className="icon-btn" onClick={() => !saving && setOpen(false)}>
+              <button className="icon-btn" onClick={() => !saving && resetModal()}>
                 ✕
               </button>
             </div>
@@ -333,6 +439,8 @@ export default function MovimientosStock() {
                       setForm((s) => ({
                         ...s,
                         tipo: e.target.value,
+                        ubicacion_origen_id: "",
+                        ubicacion_destino_id: "",
                       }))
                     }
                   >
@@ -351,15 +459,21 @@ export default function MovimientosStock() {
                     onChange={(e) => {
                       setProductoSearch(e.target.value);
                       setSelectedProducto(null);
-                      setForm((s) => ({ ...s, producto_id: "" }));
+                      setPresentaciones([]);
+                      setForm((s) => ({
+                        ...s,
+                        producto_id: "",
+                        presentacion: "",
+                      }));
                     }}
-                    placeholder="Escribe SKU, nombre o ID. Ej: VA"
+                    placeholder="Escribe SKU, nombre o ID"
                     autoComplete="off"
                   />
 
                   {form.producto_id && selectedProducto ? (
                     <div className="muted" style={{ marginTop: 6 }}>
-                      Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} - {selectedProducto.nombre}
+                      Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} -{" "}
+                      {selectedProducto.nombre}
                     </div>
                   ) : null}
 
@@ -395,7 +509,8 @@ export default function MovimientosStock() {
                             cursor: "pointer",
                           }}
                         >
-                          <b>{p.sku || "(sin sku)"}</b> - {p.nombre} <span className="muted">#{p.id}</span>
+                          <b>{p.sku || "(sin sku)"}</b> - {p.nombre}{" "}
+                          <span className="muted">#{p.id}</span>
                         </button>
                       ))}
                     </div>
@@ -409,15 +524,59 @@ export default function MovimientosStock() {
                 </div>
 
                 <div className="field">
-                  <label>{form.tipo === "ajuste" ? "Cantidad (delta +/-)" : "Cantidad"}</label>
+                  <label>Presentación</label>
+                  <select
+                    required
+                    value={form.presentacion}
+                    onChange={(e) =>
+                      setForm((s) => ({ ...s, presentacion: e.target.value }))
+                    }
+                    disabled={!form.producto_id || presentaciones.length === 0}
+                  >
+                    <option value="">Seleccione...</option>
+                    {presentaciones.map((p) => (
+                      <option key={p.id || p.presentacion} value={p.presentacion}>
+                        {p.presentacion} (factor: {p.factor_base})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>{form.tipo === "ajuste" ? "Cantidad (delta)" : "Cantidad"}</label>
                   <input
                     required
-                    value={form.cantidad_base}
-                    onChange={(e) => setForm((s) => ({ ...s, cantidad_base: e.target.value }))}
-                    placeholder={form.tipo === "ajuste" ? "Ej: 5 o -3" : "Ej: 10"}
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={form.cantidad}
+                    onChange={(e) => setForm((s) => ({ ...s, cantidad: e.target.value }))}
+                    placeholder="Ej: 10"
                   />
                 </div>
               </div>
+
+              {presentacionSeleccionada ? (
+                <div
+                  style={{
+                    marginTop: 10,
+                    marginBottom: 8,
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
+                    fontSize: 14,
+                  }}
+                >
+                  <b>Equivalencia:</b>{" "}
+                  {form.cantidad || 0} × {presentacionSeleccionada.presentacion} × factor{" "}
+                  {presentacionSeleccionada.factor_base} ={" "}
+                  <b>
+                    {Number(form.cantidad || 0) * Number(presentacionSeleccionada.factor_base || 0)}
+                  </b>{" "}
+                  en unidad base
+                </div>
+              ) : null}
 
               <div className="row gap">
                 {needsOrigen && (
@@ -475,11 +634,19 @@ export default function MovimientosStock() {
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => !saving && setOpen(false)}
+                  onClick={() => !saving && resetModal()}
                 >
                   Cancelar
                 </button>
-                <button className="btn primary" disabled={saving || !form.producto_id}>
+                <button
+                  className="btn primary"
+                  disabled={
+                    saving ||
+                    !form.producto_id ||
+                    !form.presentacion ||
+                    !form.cantidad
+                  }
+                >
                   {saving ? "Guardando..." : "Aplicar"}
                 </button>
               </div>

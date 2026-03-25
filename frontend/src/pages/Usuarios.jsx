@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { getSession } from "../lib/auth";
 
 const emptyForm = {
+  ubicacion_id: "",
   nombre: "",
   usuario: "",
   telefono: "",
@@ -29,11 +30,12 @@ export default function Usuarios() {
   const nav = useNavigate();
   const me = getSession()?.user;
 
-  // ✅ Solo admin/super_admin pueden entrar
   const canManageUsers = me?.rol === "admin" || me?.rol === "super_admin";
 
   const [items, setItems] = useState([]);
+  const [ubicaciones, setUbicaciones] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingUbicaciones, setLoadingUbicaciones] = useState(true);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
@@ -42,13 +44,12 @@ export default function Usuarios() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
-  // ✅ si no hay sesión, al login
   useEffect(() => {
     if (!me) nav("/login", { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function load() {
+  async function loadUsuarios() {
     setError("");
     setLoading(true);
     try {
@@ -63,28 +64,61 @@ export default function Usuarios() {
     }
   }
 
-  // ✅ Solo cargar si tiene permisos
+  async function loadUbicaciones() {
+    setLoadingUbicaciones(true);
+    try {
+      const res = await api.ubicacionesList();
+      let list = Array.isArray(res) ? res : res?.data || [];
+
+      // Solo activas, por si quieres evitar asignar usuarios a sucursales desactivadas
+      list = list.filter((u) => Number(u.activa) === 1 || u.activa === true);
+
+      setUbicaciones(list);
+    } catch (err) {
+      setError(formatBackendError(err));
+    } finally {
+      setLoadingUbicaciones(false);
+    }
+  }
+
+  async function loadAll() {
+    await Promise.all([loadUsuarios(), loadUbicaciones()]);
+  }
+
   useEffect(() => {
     if (!canManageUsers) {
       setLoading(false);
+      setLoadingUbicaciones(false);
       return;
     }
-    load();
+    loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManageUsers]);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return items;
+
     return items.filter((u) => {
-      const a = `${u.nombre || ""} ${u.usuario || ""} ${u.telefono || ""} ${u.rol || ""}`.toLowerCase();
+      const ubicacionNombre =
+        u.ubicacion?.nombre ||
+        u.ubicacion_nombre ||
+        "";
+
+      const a = `${u.nombre || ""} ${u.usuario || ""} ${u.telefono || ""} ${u.rol || ""} ${ubicacionNombre}`.toLowerCase();
+
       return a.includes(s);
     });
   }, [items, q]);
 
   function openCreate() {
     setEditing(null);
-    setForm({ ...emptyForm, activo: true, rol: "vendedor" });
+    setForm({
+      ...emptyForm,
+      activo: true,
+      rol: "vendedor",
+      ubicacion_id: "",
+    });
     setOpen(true);
     setError("");
   }
@@ -92,6 +126,7 @@ export default function Usuarios() {
   function openEdit(u) {
     setEditing(u);
     setForm({
+      ubicacion_id: u.ubicacion_id ?? u.ubicacion?.id ?? "",
       nombre: u.nombre ?? "",
       usuario: u.usuario ?? "",
       telefono: u.telefono ?? "",
@@ -109,7 +144,12 @@ export default function Usuarios() {
     setError("");
 
     try {
+      if (!form.ubicacion_id) {
+        throw new Error("Debes seleccionar una sucursal.");
+      }
+
       const payload = {
+        ubicacion_id: Number(form.ubicacion_id),
         nombre: form.nombre.trim(),
         usuario: form.usuario.trim(),
         telefono: form.telefono.trim() ? form.telefono.trim() : null,
@@ -124,12 +164,14 @@ export default function Usuarios() {
       if (editing?.id) {
         await api.usuariosUpdate(editing.id, payload);
       } else {
-        if (!payload.password) throw new Error("La contraseña es obligatoria para crear un usuario.");
+        if (!payload.password) {
+          throw new Error("La contraseña es obligatoria para crear un usuario.");
+        }
         await api.usuariosCreate(payload);
       }
 
       setOpen(false);
-      await load();
+      await loadUsuarios();
     } catch (err) {
       setError(formatBackendError(err));
     } finally {
@@ -145,7 +187,7 @@ export default function Usuarios() {
     setError("");
     try {
       await api.usuariosDelete(u.id);
-      await load();
+      await loadUsuarios();
     } catch (err) {
       setError(formatBackendError(err));
     } finally {
@@ -155,7 +197,6 @@ export default function Usuarios() {
 
   return (
     <div className="page">
-      {/* ✅ Si no tiene permisos, no dejar blanco */}
       {!canManageUsers ? (
         <div className="card pad" style={{ marginTop: 12 }}>
           <h3>Acceso denegado</h3>
@@ -178,7 +219,7 @@ export default function Usuarios() {
             <div className="row">
               <div className="search">
                 <input
-                  placeholder="Buscar por nombre, usuario, teléfono o rol…"
+                  placeholder="Buscar por nombre, usuario, teléfono, rol o sucursal…"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                 />
@@ -189,10 +230,18 @@ export default function Usuarios() {
               </div>
 
               <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-                <button className="btn" onClick={load} disabled={loading || busy}>
+                <button
+                  className="btn"
+                  onClick={loadAll}
+                  disabled={loading || busy || loadingUbicaciones}
+                >
                   Recargar
                 </button>
-                <button className="btn primary" onClick={openCreate} disabled={busy}>
+                <button
+                  className="btn primary"
+                  onClick={openCreate}
+                  disabled={busy || loadingUbicaciones}
+                >
                   + Nuevo
                 </button>
               </div>
@@ -211,6 +260,7 @@ export default function Usuarios() {
                     <th>Nombre</th>
                     <th>Usuario</th>
                     <th>Teléfono</th>
+                    <th>Sucursal</th>
                     <th>Rol</th>
                     <th>Activo</th>
                     <th className="right">Acciones</th>
@@ -220,13 +270,13 @@ export default function Usuarios() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan="6" className="muted">
+                      <td colSpan="7" className="muted">
                         Cargando…
                       </td>
                     </tr>
                   ) : filtered.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="muted">
+                      <td colSpan="7" className="muted">
                         Sin resultados
                       </td>
                     </tr>
@@ -238,6 +288,9 @@ export default function Usuarios() {
                           <span className="pill">{u.usuario}</span>
                         </td>
                         <td>{u.telefono || "—"}</td>
+                        <td>
+                          {u.ubicacion?.nombre || u.ubicacion_nombre || "—"}
+                        </td>
                         <td>
                           <span className="badge">{u.rol}</span>
                         </td>
@@ -271,7 +324,9 @@ export default function Usuarios() {
                   <div>
                     <h3>{editing ? "Editar usuario" : "Nuevo usuario"}</h3>
                     <p className="muted small">
-                      {editing ? "Actualiza datos. Password opcional." : "Crea un usuario con rol y contraseña."}
+                      {editing
+                        ? "Actualiza los datos del usuario y su sucursal. Password opcional."
+                        : "Crea un usuario con rol, contraseña y sucursal."}
                     </p>
                   </div>
                   <button className="iconbtn" onClick={() => !busy && setOpen(false)}>
@@ -279,22 +334,53 @@ export default function Usuarios() {
                   </button>
                 </div>
 
-                {error ? <div className="alert" style={{ whiteSpace: "pre-wrap" }}>{error}</div> : null}
+                {error ? (
+                  <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
+                    {error}
+                  </div>
+                ) : null}
 
                 <form onSubmit={save} className="grid">
                   <div className="field">
+                    <label>Sucursal</label>
+                    <select
+                      value={form.ubicacion_id}
+                      onChange={(e) => setForm({ ...form, ubicacion_id: e.target.value })}
+                      disabled={loadingUbicaciones}
+                    >
+                      <option value="">
+                        {loadingUbicaciones ? "Cargando sucursales..." : "Seleccione una sucursal"}
+                      </option>
+                      {ubicaciones.map((ub) => (
+                        <option key={ub.id} value={ub.id}>
+                          {ub.nombre} {ub.tipo ? `(${ub.tipo})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
                     <label>Nombre</label>
-                    <input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+                    <input
+                      value={form.nombre}
+                      onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+                    />
                   </div>
 
                   <div className="field">
                     <label>Usuario</label>
-                    <input value={form.usuario} onChange={(e) => setForm({ ...form, usuario: e.target.value })} />
+                    <input
+                      value={form.usuario}
+                      onChange={(e) => setForm({ ...form, usuario: e.target.value })}
+                    />
                   </div>
 
                   <div className="field">
                     <label>Teléfono</label>
-                    <input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
+                    <input
+                      value={form.telefono}
+                      onChange={(e) => setForm({ ...form, telefono: e.target.value })}
+                    />
                   </div>
 
                   <div className="field">
@@ -309,7 +395,10 @@ export default function Usuarios() {
 
                   <div className="field">
                     <label>Rol</label>
-                    <select value={form.rol} onChange={(e) => setForm({ ...form, rol: e.target.value })}>
+                    <select
+                      value={form.rol}
+                      onChange={(e) => setForm({ ...form, rol: e.target.value })}
+                    >
                       <option value="super_admin">super_admin</option>
                       <option value="admin">admin</option>
                       <option value="vendedor">vendedor</option>
@@ -331,7 +420,11 @@ export default function Usuarios() {
                   </div>
 
                   <div className="modal-actions">
-                    <button type="button" className="btn" onClick={() => !busy && setOpen(false)}>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => !busy && setOpen(false)}
+                    >
                       Cancelar
                     </button>
                     <button className="btn primary" disabled={busy}>
