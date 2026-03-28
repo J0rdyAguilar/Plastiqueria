@@ -153,7 +153,7 @@ export default function Pedidos() {
 
   const rol = String(me?.rol || me?.role || "").toLowerCase();
   const isVendedor = rol === "vendedor";
-  const userUbicacionId = String(me?.ubicacion_id || me?.sucursal_id || "");
+  const userUbicacionId = String(me?.ubicacion_id || "");
   const vendedorId = me?.vendedor_id || "";
 
   const [vista, setVista] = useState(getVistaFromHash(location.hash));
@@ -235,7 +235,9 @@ export default function Pedidos() {
       }
 
       if (resClientes.status === "fulfilled") {
-        const arrClientes = extractArray(resClientes.value).map(normalizarCliente).filter(Boolean);
+        const arrClientes = extractArray(resClientes.value)
+          .map(normalizarCliente)
+          .filter(Boolean);
         setClientes(arrClientes);
       } else {
         console.error("clientes ERROR", resClientes.reason);
@@ -348,36 +350,28 @@ export default function Pedidos() {
     }
   }
 
-async function loadMisPedidos() {
-  try {
-    setLoadingMisPedidos(true);
+  async function loadMisPedidos() {
+    try {
+      setLoadingMisPedidos(true);
 
-    const res = await misPedidosApi.list({
-      estado: estadoFiltroPedidos,
-      page: 1,
-      per_page: 20,
-    });
+      const res = await misPedidosApi.list({
+        estado: estadoFiltroPedidos,
+        page: 1,
+        per_page: 20,
+      });
 
-    const pedidos =
-      Array.isArray(res) ? res :
-      Array.isArray(res?.data) ? res.data :
-      Array.isArray(res?.data?.data) ? res.data.data :
-      [];
+      console.log("RESPUESTA MIS PEDIDOS:", res);
 
-    setMisPedidos(pedidos);
-  } catch (err) {
-    console.error("mis pedidos ERROR", err?.response?.data || err);
-    setMisPedidos([]);
-  } finally {
-    setLoadingMisPedidos(false);
+      const pedidos = extractArray(res).map(normalizarPedido).filter(Boolean);
+
+      setMisPedidos(pedidos);
+    } catch (err) {
+      console.error("mis pedidos ERROR", err?.response?.data || err);
+      setMisPedidos([]);
+    } finally {
+      setLoadingMisPedidos(false);
+    }
   }
-}
-
-useEffect(() => {
-  if (vista === "mios") {
-    loadMisPedidos();
-  }
-}, [vista, estadoFiltroPedidos]);
 
   useEffect(() => {
     loadInicial();
@@ -400,30 +394,11 @@ useEffect(() => {
     }
   }, [ubicacionId, userUbicacionId, isVendedor]);
 
-async function loadMisPedidos() {
-  try {
-    setLoadingMisPedidos(true);
-
-    const res = await misPedidosApi.list({
-      estado: estadoFiltroPedidos,
-      page: 1,
-      per_page: 20,
-    });
-
-    const pedidos =
-      Array.isArray(res) ? res :
-      Array.isArray(res?.data) ? res.data :
-      Array.isArray(res?.data?.data) ? res.data.data :
-      [];
-
-    setMisPedidos(pedidos);
-  } catch (err) {
-    console.error("mis pedidos ERROR", err?.response?.data || err);
-    setMisPedidos([]);
-  } finally {
-    setLoadingMisPedidos(false);
-  }
-}
+  useEffect(() => {
+    if (vista === "mios") {
+      loadMisPedidos();
+    }
+  }, [vista, estadoFiltroPedidos]);
 
   const clienteSeleccionado = useMemo(() => {
     return clientes.find((c) => String(c.id) === String(clienteId)) || null;
@@ -598,8 +573,6 @@ async function loadMisPedidos() {
       console.log("PAYLOAD CREAR CLIENTE:", payload);
 
       const res = await clientesApi.create(payload);
-      console.log("RESPUESTA CREAR CLIENTE:", res);
-
       const creado = normalizarCliente(res?.data?.data || res?.data || res);
 
       if (!creado?.id) {
@@ -706,9 +679,6 @@ async function loadMisPedidos() {
       setObservaciones("");
       setLineas({});
       setQ("");
-
-      await loadProductos();
-      await loadMisPedidos();
 
       navigate("/pedidos#mis-pedidos", { replace: true });
     } catch (err) {
