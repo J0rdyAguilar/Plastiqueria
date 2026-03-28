@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Cliente;
-use App\Models\Stock;
 use App\Models\Venta;
 use App\Models\VentaDetalle;
 use App\Models\Vendedor;
@@ -140,26 +139,6 @@ class VentaController extends Controller
                 return response()->json([
                     'message' => 'Este cliente no está asignado al vendedor.'
                 ], 422);
-            }
-
-            foreach ($data['detalles'] as $item) {
-                $stock = Stock::query()
-                    ->where('ubicacion_id', $ubicacionAuthId)
-                    ->where('producto_id', $item['producto_id'])
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$stock) {
-                    return response()->json([
-                        'message' => "No existe stock para el producto {$item['producto_id']} en esa sucursal."
-                    ], 422);
-                }
-
-                if ((float) $stock->cantidad_base < (float) $item['cantidad_base']) {
-                    return response()->json([
-                        'message' => "Stock insuficiente para el producto {$item['producto_id']}."
-                    ], 422);
-                }
             }
 
             $venta = Venta::create([

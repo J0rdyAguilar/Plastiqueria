@@ -48,7 +48,6 @@ class UsuarioController extends Controller
         }
 
         $usuario = Usuario::create($data);
-
         $usuario->load('ubicacion');
 
         return (new UsuarioResource($usuario))
@@ -76,7 +75,6 @@ class UsuarioController extends Controller
         }
 
         $usuario->update($data);
-
         $usuario->load('ubicacion');
 
         return new UsuarioResource($usuario);

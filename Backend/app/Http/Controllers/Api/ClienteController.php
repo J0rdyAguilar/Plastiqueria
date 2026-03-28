@@ -60,10 +60,17 @@ class ClienteController extends Controller
                 });
             }
         } elseif ($role === 'vendedor') {
+            // IMPORTANTE:
+            // si el usuario vendedor aún no tiene registro en vendedores,
+            // no tumbes la pantalla con 403; devuelve vacío.
             if (!$vendedorAuthId) {
                 return response()->json([
-                    'message' => 'No se encontró vendedor relacionado a este usuario.'
-                ], 403);
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => (int) $request->query('per_page', 20),
+                    'total' => 0,
+                    'data' => [],
+                ]);
             }
 
             $query->whereHas('vendedores', function ($sub) use ($vendedorAuthId) {
@@ -146,10 +153,11 @@ class ClienteController extends Controller
             'vendedor_id' => ['nullable', 'integer'],
         ]);
 
+        // Si es vendedor y aún no existe su registro en vendedores, tampoco explotes.
         if ($role === 'vendedor' && !$vendedorAuthId) {
             return response()->json([
-                'message' => 'No se encontró vendedor relacionado a este usuario.'
-            ], 403);
+                'message' => 'Este usuario aún no está vinculado correctamente como vendedor.'
+            ], 422);
         }
 
         $cliente = Cliente::create([

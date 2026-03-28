@@ -4,12 +4,13 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 class RoleMiddleware
 {
-    public function handle(Request $request, Closure $next, ...$roles)
+    public function handle(Request $request, Closure $next, ...$roles): Response
     {
-        $user = $request->user(); // Sanctum
+        $user = $request->user();
 
         if (!$user) {
             return response()->json([
@@ -18,8 +19,9 @@ class RoleMiddleware
         }
 
         $rolUsuario = strtolower((string) $user->rol);
+
         $rolesPermitidos = array_map(
-            fn ($r) => strtolower(trim($r)),
+            fn ($r) => strtolower(trim((string) $r)),
             $roles
         );
 
@@ -32,4 +34,3 @@ class RoleMiddleware
         return $next($request);
     }
 }
-// GET /api/v1/caja/actual?ubicacion_id=1

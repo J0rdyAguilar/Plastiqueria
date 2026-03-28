@@ -28,7 +28,19 @@ class UpdateUsuarioRequest extends FormRequest
             ],
             'telefono'     => ['nullable', 'string', 'max:50'],
             'password'     => ['nullable', 'string', 'min:6'],
-            'rol'          => ['sometimes', 'required', 'string', Rule::in(['admin', 'super_admin', 'vendedor', 'caja'])],
+            'rol'          => [
+                'sometimes',
+                'required',
+                'string',
+                Rule::in([
+                    'admin',
+                    'super_admin',
+                    'vendedor',
+                    'vendedor-tienda',
+                    'caja',
+                    'rutero',
+                ]),
+            ],
             'activo'       => ['nullable', 'boolean'],
         ];
     }
@@ -39,6 +51,7 @@ class UpdateUsuarioRequest extends FormRequest
             'ubicacion_id.required' => 'La sucursal es obligatoria.',
             'ubicacion_id.exists'   => 'La sucursal seleccionada no existe.',
             'usuario.unique'        => 'Ese nombre de usuario ya está en uso.',
+            'rol.in'                => 'El rol seleccionado no es válido.',
         ];
     }
 }

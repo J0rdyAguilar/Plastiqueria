@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getSession } from "../lib/auth";
-import { stockApi } from "../lib/stock";
 import { rutasApi } from "../lib/rutas";
 import { zonasApi } from "../lib/zonas";
 import { ubicacionesApi } from "../lib/ubicaciones";
@@ -262,52 +261,17 @@ export default function Pedidos() {
     try {
       setError("");
 
-      const effectiveUbicacionId = isVendedor ? userUbicacionId : ubicacionId;
+      const productosRows = await fetchProductosConPrecios({ q, per_page: 500 });
+      const rows = Array.isArray(productosRows) ? productosRows : [];
 
-      if (!effectiveUbicacionId) {
-        setProductos([]);
-        return;
-      }
-
-      const [stockRes, productosRes] = await Promise.all([
-        stockApi.list({
-          ubicacion_id: effectiveUbicacionId,
-          q,
-          page: 1,
-          per_page: 500,
-        }),
-        fetchProductosConPrecios({ q, per_page: 500 }),
-      ]);
-
-      const stockRows = extractArray(stockRes);
-      const productosRows = Array.isArray(productosRes) ? productosRes : [];
-
-      const productosMap = new Map(
-        productosRows.map((p) => [
-          Number(p.id),
-          {
-            ...p,
-            presentaciones: normalizarPresentaciones(p.precios),
-          },
-        ])
-      );
-
-      const merged = stockRows.map((item) => {
-        const productoId = Number(item.producto_id);
-        const full = productosMap.get(productoId);
-
-        return {
-          id: productoId,
-          nombre: full?.nombre || item.producto_nombre,
-          sku: full?.sku || item.producto_sku,
-          cantidad_base: num(item.cantidad_base),
-          presentaciones:
-            full?.presentaciones?.length > 0
-              ? full.presentaciones
-              : [{ tipo: "unidad", label: "unidad", factor: 1, precio: 0 }],
-          permite_monto_variable: true,
-        };
-      });
+      const merged = rows.map((p) => ({
+        id: Number(p.id),
+        nombre: p.nombre,
+        sku: p.sku,
+        cantidad_base: 999999,
+        presentaciones: normalizarPresentaciones(p.precios),
+        permite_monto_variable: true,
+      }));
 
       setProductos(merged);
 
@@ -338,7 +302,7 @@ export default function Pedidos() {
             montoVariable: actual.usaMontoVariable
               ? num(actual.montoVariable)
               : num(p0.precio || 0),
-            stockDisponible: num(producto.cantidad_base),
+            stockDisponible: 999999,
           };
         }
 
@@ -346,7 +310,7 @@ export default function Pedidos() {
       });
     } catch (err) {
       console.error(err);
-      setError("No se pudo cargar el stock/productos.");
+      setError("No se pudieron cargar los productos.");
     }
   }
 
@@ -382,17 +346,8 @@ export default function Pedidos() {
   }, [location.hash]);
 
   useEffect(() => {
-    if (isVendedor && userUbicacionId) {
-      loadProductos();
-      return;
-    }
-
-    if (ubicacionId) {
-      loadProductos();
-    } else {
-      setProductos([]);
-    }
-  }, [ubicacionId, userUbicacionId, isVendedor]);
+    loadProductos();
+  }, [q]);
 
   useEffect(() => {
     if (vista === "mios") {
@@ -439,7 +394,7 @@ export default function Pedidos() {
       precioBase: num(p0.precio || 0),
       usaMontoVariable: false,
       montoVariable: num(p0.precio || 0),
-      stockDisponible: num(producto.cantidad_base),
+      stockDisponible: 999999,
     };
   }
 
@@ -629,16 +584,6 @@ export default function Pedidos() {
     if (detalles.length === 0) {
       notify.error("Debes agregar al menos un producto.");
       return;
-    }
-
-    for (const item of detalles) {
-      const producto = productos.find((p) => p.id === item.producto_id);
-      if (!producto) continue;
-
-      if (num(item.cantidad_base) > num(producto.cantidad_base)) {
-        notify.error(`No hay stock suficiente para ${producto.nombre}`);
-        return;
-      }
     }
 
     const payload = {
@@ -1036,7 +981,7 @@ export default function Pedidos() {
                               Código: {producto.sku || "—"}
                             </div>
                             <div className="muted" style={{ fontSize: 13 }}>
-                              Stock base: {producto.cantidad_base}
+                              Disponible para pedido
                             </div>
                           </div>
 

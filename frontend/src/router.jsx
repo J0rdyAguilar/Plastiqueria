@@ -14,12 +14,18 @@ import Stock from "./pages/Stock";
 import MovimientosStock from "./pages/MovimientosStock";
 import Pedidos from "./pages/Pedidos";
 import PedidosAdmin from "./pages/PedidosAdmin";
+import VentaTienda from "./pages/VentaTienda";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
-import { isLoggedIn, getSession } from "./lib/auth";
+import { getSession, getToken } from "./lib/auth";
 
 function normalizeRole(r) {
-  const x = (r || "").toString().trim().toLowerCase();
+  const x = (r || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
 
   if (x === "cajero") return "caja";
   if (x === "superadmin") return "super_admin";
@@ -27,26 +33,55 @@ function normalizeRole(r) {
   return x;
 }
 
-function roleHome() {
-  if (!isLoggedIn()) return "/login";
+function getRole() {
+  const session = getSession();
+  return normalizeRole(session?.user?.rol || session?.user?.role);
+}
 
-  const rol = normalizeRole(getSession()?.user?.rol || getSession()?.user?.role);
+function roleHome() {
+  const token = getToken();
+  if (!token) return "/login";
+
+  const rol = getRole();
 
   if (rol === "admin" || rol === "super_admin") return "/pedidos-admin";
   if (rol === "caja") return "/caja";
   if (rol === "vendedor") return "/pedidos";
+  if (rol === "vendedor_tienda") return "/ventas-tienda";
 
   return "/login";
 }
 
-function HomeRedirect() {
+function RootRedirect() {
   return <Navigate to={roleHome()} replace />;
+}
+
+function LoginRoute() {
+  const token = getToken();
+
+  if (token) {
+    return <Navigate to={roleHome()} replace />;
+  }
+
+  return <Login />;
+}
+
+function RoleGuard({ roles = [], children }) {
+  const rol = getRole();
+
+  if (roles.length > 0 && !roles.includes(rol)) {
+    return <Navigate to={roleHome()} replace />;
+  }
+
+  return children;
 }
 
 function Wrap({ roles, children }) {
   return (
-    <ProtectedRoute roles={roles} fallback={roleHome()}>
-      <Layout>{children}</Layout>
+    <ProtectedRoute>
+      <RoleGuard roles={roles}>
+        <Layout>{children}</Layout>
+      </RoleGuard>
     </ProtectedRoute>
   );
 }
@@ -54,14 +89,13 @@ function Wrap({ roles, children }) {
 export const router = createBrowserRouter([
   {
     path: "/",
-    element: <HomeRedirect />,
+    element: <RootRedirect />,
   },
   {
     path: "/login",
-    element: <Login />,
+    element: <LoginRoute />,
   },
 
-  // SOLO SUPER ADMIN
   {
     path: "/usuarios",
     element: (
@@ -71,7 +105,6 @@ export const router = createBrowserRouter([
     ),
   },
 
-  // ADMIN / SUPER ADMIN
   {
     path: "/vendedores",
     element: (
@@ -80,6 +113,7 @@ export const router = createBrowserRouter([
       </Wrap>
     ),
   },
+
   {
     path: "/pedidos-admin",
     element: (
@@ -88,6 +122,7 @@ export const router = createBrowserRouter([
       </Wrap>
     ),
   },
+
   {
     path: "/zonas",
     element: (
@@ -96,6 +131,7 @@ export const router = createBrowserRouter([
       </Wrap>
     ),
   },
+
   {
     path: "/rutas",
     element: (
@@ -104,6 +140,7 @@ export const router = createBrowserRouter([
       </Wrap>
     ),
   },
+
   {
     path: "/productos",
     element: (
@@ -112,6 +149,7 @@ export const router = createBrowserRouter([
       </Wrap>
     ),
   },
+
   {
     path: "/stock",
     element: (
@@ -120,6 +158,7 @@ export const router = createBrowserRouter([
       </Wrap>
     ),
   },
+
   {
     path: "/movimientos-stock",
     element: (
@@ -129,7 +168,6 @@ export const router = createBrowserRouter([
     ),
   },
 
-  // VENDEDOR
   {
     path: "/pedidos",
     element: (
@@ -139,19 +177,26 @@ export const router = createBrowserRouter([
     ),
   },
 
-  // CAJA
+  {
+    path: "/ventas-tienda",
+    element: (
+      <Wrap roles={["vendedor_tienda", "admin", "super_admin"]}>
+        <VentaTienda />
+      </Wrap>
+    ),
+  },
+
   {
     path: "/caja",
     element: (
-      <Wrap roles={["admin", "super_admin", "caja", "cajero"]}>
+      <Wrap roles={["admin", "super_admin", "caja"]}>
         <Caja />
       </Wrap>
     ),
   },
 
-  // CUALQUIER OTRA RUTA
   {
     path: "*",
-    element: <HomeRedirect />,
+    element: <RootRedirect />,
   },
 ]);

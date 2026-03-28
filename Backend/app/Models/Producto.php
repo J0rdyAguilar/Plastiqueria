@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Producto extends Model
 {
@@ -11,52 +13,77 @@ class Producto extends Model
 
     protected $table = 'productos';
 
+    // Si usas timestamps personalizados
+    const CREATED_AT = 'creado_en';
+    const UPDATED_AT = 'actualizado_en';
+
     protected $fillable = [
         'sku',
         'nombre',
         'descripcion',
         'activo',
-        'unidad_base',
-        'alerta_stock',
-        'creado_en',
-        'actualizado_en',
     ];
 
     protected $casts = [
-        'activo'         => 'boolean',
-        'alerta_stock'   => 'integer',
-        'creado_en'      => 'datetime',
-        'actualizado_en' => 'datetime',
+        'activo' => 'boolean',
     ];
 
-    const CREATED_AT = 'creado_en';
-    const UPDATED_AT = 'actualizado_en';
+    /* =========================================================
+       RELACIONES
+    ========================================================= */
 
-    public $timestamps = true;
-
-    public function unidades()
+    /**
+     * Precios por presentación (unidad, caja, etc)
+     * productos.id -> producto_precios.producto_id
+     */
+    public function precios(): HasMany
     {
-        return $this->hasMany(ProductoUnidad::class, 'producto_id', 'id');
+        return $this->hasMany(ProductoPrecio::class, 'producto_id');
     }
 
-    public function precios()
+    /**
+     * Imagen principal del producto
+     */
+    public function imagenPrincipal(): HasOne
     {
-        return $this->hasMany(ProductoPrecio::class, 'producto_id', 'id');
+        return $this->hasOne(ProductoImagen::class, 'producto_id')
+            ->where('es_principal', 1)
+            ->orderBy('orden');
     }
 
-    public function imagenes()
+    /**
+     * Todas las imágenes
+     */
+    public function imagenes(): HasMany
     {
-        return $this->hasMany(ProductoImagen::class, 'producto_id', 'id');
+        return $this->hasMany(ProductoImagen::class, 'producto_id')
+            ->orderBy('orden');
     }
 
-    public function imagenPrincipal()
+    /**
+     * Stock en diferentes ubicaciones
+     */
+    public function stocks(): HasMany
     {
-        return $this->hasOne(ProductoImagen::class, 'producto_id', 'id')
-            ->where('es_principal', 1);
+        return $this->hasMany(Stock::class, 'producto_id');
     }
 
-    public function stocks()
+    /* =========================================================
+       SCOPES
+    ========================================================= */
+
+    public function scopeActivos($query)
     {
-        return $this->hasMany(Stock::class, 'producto_id', 'id');
+        return $query->where('activo', true);
+    }
+
+    public function scopeBuscar($query, $q)
+    {
+        if (!$q) return $query;
+
+        return $query->where(function ($qq) use ($q) {
+            $qq->where('nombre', 'like', "%{$q}%")
+               ->orWhere('sku', 'like', "%{$q}%");
+        });
     }
 }

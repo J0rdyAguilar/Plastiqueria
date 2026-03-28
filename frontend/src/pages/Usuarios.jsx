@@ -41,6 +41,23 @@ function TableLoader() {
   );
 }
 
+function prettyRole(rol) {
+  switch (rol) {
+    case "super_admin":
+      return "Super Admin";
+    case "admin":
+      return "Admin";
+    case "vendedor":
+      return "Vendedor";
+    case "vendedor-tienda":
+      return "Vendedor Tienda";
+    case "caja":
+      return "Caja";
+    default:
+      return rol || "—";
+  }
+}
+
 export default function Usuarios() {
   const nav = useNavigate();
   const me = getSession()?.user;
@@ -84,9 +101,7 @@ export default function Usuarios() {
     try {
       const res = await api.ubicacionesList();
       let list = Array.isArray(res) ? res : res?.data || [];
-
       list = list.filter((u) => Number(u.activa) === 1 || u.activa === true);
-
       setUbicaciones(list);
     } catch (err) {
       setError(formatBackendError(err));
@@ -169,7 +184,7 @@ export default function Usuarios() {
       };
 
       if (form.password && form.password.trim().length > 0) {
-        payload.password = form.password;
+        payload.password = form.password.trim();
       }
 
       if (editing?.id) {
@@ -301,7 +316,7 @@ export default function Usuarios() {
                         <td>{u.telefono || "—"}</td>
                         <td>{u.ubicacion?.nombre || u.ubicacion_nombre || "—"}</td>
                         <td>
-                          <span className="badge">{u.rol}</span>
+                          <span className="badge">{prettyRole(u.rol)}</span>
                         </td>
                         <td>
                           {u.activo ? (
@@ -408,10 +423,12 @@ export default function Usuarios() {
                       value={form.rol}
                       onChange={(e) => setForm({ ...form, rol: e.target.value })}
                     >
-                      <option value="super_admin">super_admin</option>
-                      <option value="admin">admin</option>
-                      <option value="vendedor">vendedor</option>
-                      <option value="caja">caja</option>
+                      <option value="super_admin">Super Admin</option>
+                      <option value="admin">Admin</option>
+                      <option value="vendedor">Vendedor</option>
+                      <option value="vendedor-tienda">Vendedor Tienda</option>
+                      <option value="caja">Caja</option>
+                      <option value="rutero">rutero</option>
                     </select>
                   </div>
 

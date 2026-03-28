@@ -1,4 +1,3 @@
-// src/lib/api.js
 import { getToken, clearSession } from "./auth";
 
 const BASE_URL =
@@ -132,4 +131,12 @@ export const api = {
 
   cajaCerrar: (payload) =>
     request("/caja/cerrar", { method: "POST", body: payload }),
+
+  ventasTiendaList: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/ventas-tienda${qs ? `?${qs}` : ""}`);
+  },
+
+  ventasTiendaCreate: (payload) =>
+    request("/ventas-tienda", { method: "POST", body: payload }),
 };

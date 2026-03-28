@@ -17,6 +17,7 @@ import {
   ShoppingCart,
   PlusCircle,
   ReceiptText,
+  Store,
 } from "lucide-react";
 import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 
@@ -40,15 +41,19 @@ export default function Layout({ children }) {
   const isAdmin = logged && rol === "admin";
   const isAdminLike = logged && (rol === "admin" || rol === "super_admin");
   const isVendedor = logged && rol === "vendedor";
+  const isVendedorTienda = logged && rol === "vendedor_tienda";
   const isCaja = logged && rol === "caja";
+
+  const canAccessTienda = logged && (isAdmin || isSuperAdmin || isVendedorTienda);
 
   const homeLink = useMemo(() => {
     if (!logged) return "/login";
+    if (isVendedorTienda) return "/ventas-tienda";
     if (isAdminLike) return "/pedidos-admin";
     if (isCaja) return "/caja";
     if (isVendedor) return "/pedidos#crear-pedido";
     return "/login";
-  }, [logged, isAdminLike, isCaja, isVendedor]);
+  }, [logged, isVendedorTienda, isAdminLike, isCaja, isVendedor]);
 
   const vendedorEnPedidos = isVendedor && loc.pathname === "/pedidos";
   const vendedorVista = loc.hash === "#mis-pedidos" ? "mios" : "crear";
@@ -116,6 +121,13 @@ export default function Layout({ children }) {
       active: loc.pathname.startsWith("/movimientos-stock"),
     },
     {
+      to: "/ventas-tienda",
+      label: "Tienda",
+      icon: <Store size={16} />,
+      show: canAccessTienda,
+      active: loc.pathname.startsWith("/ventas-tienda"),
+    },
+    {
       to: "/caja",
       label: "Caja",
       icon: <Wallet size={16} />,
@@ -133,7 +145,9 @@ export default function Layout({ children }) {
 
             <div className="lux-brand-copy">
               <strong>Plastimax</strong>
-              <span>Panel administrativo</span>
+              <span>
+                {isVendedorTienda ? "Panel de tienda" : "Panel administrativo"}
+              </span>
             </div>
           </Link>
 
@@ -191,7 +205,7 @@ export default function Layout({ children }) {
           </div>
         </div>
 
-        {isAdminLike && (
+        {(isAdminLike || isVendedorTienda) && (
           <nav className="lux-admin-nav desktop-only">
             {adminLinks.map((item) => (
               <NavItem key={item.to} {...item} />

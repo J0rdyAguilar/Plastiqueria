@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -9,47 +9,70 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { api } from "../lib/api";
-import { setSession, getSession, isLoggedIn } from "../lib/auth";
-import { notify } from "../lib/notify"; // 🔥 IMPORTANTE
+import { setSession } from "../lib/auth";
+import { notify } from "../lib/notify";
 
 function normalizeRole(r) {
-  const x = (r || "").toLowerCase();
-  return x === "cajero" ? "caja" : x;
+  const x = (r || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
+
+  if (x === "cajero") return "caja";
+  if (x === "superadmin") return "super_admin";
+
+  return x;
 }
 
-function roleHome(role) {
-  const r = normalizeRole(role);
-  if (r === "caja") return "/caja";
-  return "/usuarios";
+function extractUser(payload) {
+  return (
+    payload?.user ||
+    payload?.usuario ||
+    payload?.data?.user ||
+    payload?.data?.usuario ||
+    null
+  );
+}
+
+function roleHomeFromPayload(payload) {
+  const user = extractUser(payload);
+  const rol = normalizeRole(user?.rol || user?.role);
+
+  if (rol === "admin" || rol === "super_admin") return "/pedidos-admin";
+  if (rol === "caja") return "/caja";
+  if (rol === "vendedor") return "/pedidos";
+  if (rol === "vendedor_tienda") return "/ventas-tienda";
+
+  return "/login";
 }
 
 export default function Login() {
   const nav = useNavigate();
   const loc = useLocation();
 
-  const [usuario, setUsuario] = useState("admin");
-  const [password, setPassword] = useState("123456");
+  const [usuario, setUsuario] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
-  useEffect(() => {
-    if (isLoggedIn()) {
-      const me = getSession()?.user;
-      nav(roleHome(me?.rol), { replace: true });
-    }
-  }, [nav]);
-
   const canSubmit = useMemo(() => {
-    return usuario.trim() && password.trim() && !loading;
+    return usuario.trim() !== "" && password.trim() !== "" && !loading;
   }, [usuario, password, loading]);
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (!canSubmit) return;
+
     setLoading(true);
 
     try {
       const res = await notify.promise(
-        api.login({ usuario, password }),
+        api.login({
+          usuario: usuario.trim(),
+          password,
+        }),
         {
           loading: "Iniciando sesión...",
           success: "Bienvenido 👋",
@@ -60,14 +83,11 @@ export default function Login() {
       setSession(res);
 
       const from = loc.state?.from;
-      if (from) {
-        nav(from, { replace: true });
-      } else {
-        nav(roleHome(res?.user?.rol), { replace: true });
-      }
+      const destino = from || roleHomeFromPayload(res);
+
+      nav(destino, { replace: true });
     } catch (err) {
       console.error(err);
-      // 👇 Ya no mostramos error en pantalla
       notify.error(err, "Error al iniciar sesión");
     } finally {
       setLoading(false);
@@ -97,8 +117,6 @@ export default function Login() {
               <p>Panel administrativo</p>
             </div>
           </div>
-
-          {/* ❌ eliminamos login-alert */}
 
           <div className="premium-field">
             <label>Usuario</label>
@@ -135,7 +153,11 @@ export default function Login() {
             </div>
           </div>
 
-          <button className="premium-submit-btn" disabled={!canSubmit}>
+          <button
+            type="submit"
+            className="premium-submit-btn"
+            disabled={!canSubmit}
+          >
             <span>{loading ? "Entrando..." : "Entrar"}</span>
             <ArrowRight size={18} />
           </button>
