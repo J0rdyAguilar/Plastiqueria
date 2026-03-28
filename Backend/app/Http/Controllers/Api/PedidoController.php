@@ -81,26 +81,51 @@ class PedidoController extends Controller
             $p->vendedor?->usuario?->usuario
             ?? $p->vendedor?->usuario?->nombre
             ?? $p->vendedor?->codigo
-            ?? ('Vendedor #' . $p->vendedor_id);
+            ?? ($p->vendedor_id ? ('Vendedor #' . $p->vendedor_id) : null);
+
+        $ruteroNombre =
+            $p->rutero?->usuario
+            ?? $p->rutero?->nombre
+            ?? ($p->rutero_id ? ('Rutero #' . $p->rutero_id) : null);
 
         return [
             'id' => $p->id,
             'codigo' => $p->codigo,
             'estado' => $p->estado,
+
             'ubicacion_id' => $p->ubicacion_id,
             'ubicacion_nombre' => $p->ubicacion?->nombre,
+
             'cliente_id' => $p->cliente_id,
             'cliente_nombre' => $p->cliente?->nombre,
+
             'vendedor_id' => $p->vendedor_id,
             'vendedor_nombre' => $vendedorNombre,
+
+            'rutero_id' => $p->rutero_id,
+            'rutero_nombre' => $ruteroNombre,
+
             'ruta_id' => $p->ruta_id,
             'ruta_nombre' => $p->ruta?->nombre,
+
             'zona_id' => $p->zona_id,
             'zona_nombre' => $p->zona?->nombre,
+
             'observaciones' => $p->observaciones,
             'total' => $total,
+
             'creado_en' => optional($p->creado_en)->format('Y-m-d H:i:s'),
             'actualizado_en' => optional($p->actualizado_en)->format('Y-m-d H:i:s'),
+            'fecha_en_ruta' => optional($p->fecha_en_ruta)->format('Y-m-d H:i:s'),
+            'entregado_en' => optional($p->entregado_en)->format('Y-m-d H:i:s'),
+
+            'rutero' => $p->rutero ? [
+                'id' => (int) $p->rutero->id,
+                'nombre' => $p->rutero->nombre,
+                'usuario' => $p->rutero->usuario,
+                'rol' => $p->rutero->rol,
+            ] : null,
+
             'detalles' => $detalles,
         ];
     }
@@ -111,6 +136,7 @@ class PedidoController extends Controller
             'cliente:id,nombre,ruta_id,zona_id',
             'vendedor:id,codigo,usuario_id',
             'vendedor.usuario:id,usuario,nombre',
+            'rutero:id,usuario,nombre,rol',
             'ruta:id,nombre',
             'zona:id,nombre',
             'ubicacion:id,nombre,tipo',
@@ -139,6 +165,7 @@ class PedidoController extends Controller
                 'cliente:id,nombre,ruta_id,zona_id',
                 'vendedor:id,codigo,usuario_id',
                 'vendedor.usuario:id,usuario,nombre',
+                'rutero:id,usuario,nombre,rol',
                 'ruta:id,nombre',
                 'zona:id,nombre',
                 'ubicacion:id,nombre,tipo',
@@ -178,6 +205,8 @@ class PedidoController extends Controller
             if ($userUbicacionId) {
                 $query->where('ubicacion_id', $userUbicacionId);
             }
+        } elseif ($role === 'rutero') {
+            $query->where('rutero_id', (int) $user->id);
         } else {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
@@ -202,6 +231,10 @@ class PedidoController extends Controller
                     })
                     ->orWhereHas('vendedor', function ($q) use ($qText) {
                         $q->where('codigo', 'like', "%{$qText}%");
+                    })
+                    ->orWhereHas('rutero', function ($q) use ($qText) {
+                        $q->where('usuario', 'like', "%{$qText}%")
+                          ->orWhere('nombre', 'like', "%{$qText}%");
                     });
             });
         }
@@ -238,6 +271,7 @@ class PedidoController extends Controller
                 'cliente:id,nombre,ruta_id,zona_id',
                 'vendedor:id,codigo,usuario_id',
                 'vendedor.usuario:id,usuario,nombre',
+                'rutero:id,usuario,nombre,rol',
                 'ruta:id,nombre',
                 'zona:id,nombre',
                 'ubicacion:id,nombre,tipo',
@@ -354,12 +388,14 @@ class PedidoController extends Controller
                 'ubicacion_id' => (int) $data['ubicacion_id'],
                 'cliente_id' => (int) $data['cliente_id'],
                 'vendedor_id' => (int) $data['vendedor_id'],
+                'rutero_id' => null,
                 'ruta_id' => !empty($data['ruta_id']) ? (int) $data['ruta_id'] : null,
                 'zona_id' => !empty($data['zona_id']) ? (int) $data['zona_id'] : null,
                 'estado' => 'pendiente_revision',
                 'observaciones' => $data['observaciones'] ?? null,
                 'total' => $total,
                 'fecha_pedido' => now()->toDateString(),
+                'fecha_en_ruta' => null,
                 'canal' => 'ruta',
                 'creado_en' => now(),
                 'actualizado_en' => now(),
@@ -585,7 +621,7 @@ class PedidoController extends Controller
         $userUbicacionId = $this->userUbicacionId($user);
         $vendedorAuthId = $this->resolveVendedorId($user);
 
-        if (!in_array($role, ['vendedor', 'admin', 'super_admin'], true)) {
+        if (!in_array($role, ['vendedor', 'admin', 'super_admin', 'rutero'], true)) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
@@ -601,7 +637,13 @@ class PedidoController extends Controller
             ], 403);
         }
 
-        if (!in_array($pedido->estado, ['preparando', 'aprobado'], true)) {
+        if ($role === 'rutero' && (int) $pedido->rutero_id !== (int) $user->id) {
+            return response()->json([
+                'message' => 'No puedes entregar un pedido que no te fue asignado.'
+            ], 403);
+        }
+
+        if (!in_array($pedido->estado, ['preparando', 'aprobado', 'en_ruta'], true)) {
             return response()->json([
                 'message' => 'Solo se puede entregar un pedido preparado.'
             ], 422);
@@ -617,6 +659,68 @@ class PedidoController extends Controller
         return response()->json([
             'message' => 'Pedido entregado.',
             'data' => $this->pedidoResponse($pedido),
+        ]);
+    }
+
+    public function asignarRutero(Request $request, Pedido $pedido)
+    {
+        $data = $request->validate([
+            'rutero_id' => ['required', 'integer', 'exists:usuarios,id'],
+        ]);
+
+        $rutero = \App\Models\Usuario::findOrFail($data['rutero_id']);
+
+        if ($rutero->rol !== 'rutero') {
+            return response()->json([
+                'message' => 'El usuario seleccionado no es un rutero.'
+            ], 422);
+        }
+
+        $pedido->rutero_id = $rutero->id;
+        $pedido->estado = 'en_ruta';
+        $pedido->fecha_en_ruta = now();
+        $pedido->actualizado_en = now();
+        $pedido->save();
+
+        $this->loadPedidoRelations($pedido);
+
+        return response()->json([
+            'message' => 'Rutero asignado correctamente.',
+            'pedido' => $this->pedidoResponse($pedido),
+        ]);
+    }
+
+    public function misEntregas(Request $request)
+    {
+        $user = $request->user();
+
+        $query = Pedido::with([
+            'cliente:id,nombre,ruta_id,zona_id',
+            'vendedor:id,codigo,usuario_id',
+            'vendedor.usuario:id,usuario,nombre',
+            'rutero:id,usuario,nombre,rol',
+            'ruta:id,nombre',
+            'zona:id,nombre',
+            'ubicacion:id,nombre,tipo',
+            'detalles.producto:id,nombre,sku',
+        ])->where('rutero_id', $user->id)
+          ->orderByDesc('creado_en');
+
+        $estado = $this->normalizeEstado($request->query('estado', ''));
+        if ($estado !== '') {
+            $query->where('estado', $estado);
+        }
+
+        $page = $query->paginate(50);
+
+        return response()->json([
+            'current_page' => $page->currentPage(),
+            'last_page' => $page->lastPage(),
+            'per_page' => $page->perPage(),
+            'total' => $page->total(),
+            'data' => collect($page->items())
+                ->map(fn ($p) => $this->pedidoResponse($p))
+                ->values(),
         ]);
     }
 

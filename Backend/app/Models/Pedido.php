@@ -73,4 +73,9 @@ class Pedido extends Model
     {
         return $this->belongsTo(Ubicacion::class, 'ubicacion_id');
     }
+
+    public function rutero()
+{
+    return $this->belongsTo(Usuario::class, 'rutero_id');
+}
 }

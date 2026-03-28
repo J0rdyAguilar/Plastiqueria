@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { pedidosAdminApi } from "../lib/pedidosAdmin";
 import { notify } from "../lib/notify";
+import { usuariosApi } from "../lib/usuarios";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -38,6 +39,8 @@ function badgeStyle(estado) {
       return { ...base, background: "#ecfeff", color: "#155e75" };
     case "preparando":
       return { ...base, background: "#ecfdf5", color: "#166534" };
+    case "en_ruta":
+      return { ...base, background: "#eff6ff", color: "#1d4ed8" };
     case "entregado":
       return { ...base, background: "#f3f4f6", color: "#374151" };
     default:
@@ -65,17 +68,49 @@ export default function PedidosAdmin() {
   const [observaciones, setObservaciones] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [ruteros, setRuteros] = useState([]);
+  const [ruteroId, setRuteroId] = useState("");
 
-  async function loadPedidos() {
+  async function loadPedidos(selectedId = null) {
     try {
       setLoading(true);
+
       const res = await pedidosAdminApi.list({
         q,
         estado,
         page: 1,
         per_page: 50,
       });
-      setItems(res?.data || []);
+
+      const nuevosItems = res?.data || [];
+      setItems(nuevosItems);
+
+      const idBuscado = selectedId ?? pedidoActivo?.id ?? null;
+      if (idBuscado) {
+        const actualizado = nuevosItems.find((p) => p.id === idBuscado);
+        if (actualizado) {
+          setPedidoActivo(actualizado);
+          setObservaciones(actualizado?.observaciones || "");
+          setRuteroId(actualizado?.rutero_id || "");
+          setLineasEdit(
+            (actualizado?.detalles || []).map((d) => ({
+              id: d.id,
+              producto_id: d.producto_id,
+              producto_nombre: d.producto_nombre,
+              presentacion: d.presentacion || "unidad",
+              cantidad_base: num(d.cantidad_base),
+              precio_unitario: num(d.precio_unitario),
+              subtotal: num(d.subtotal),
+              es_monto_variable: !!d.es_monto_variable,
+              sugeridos: [
+                num(d.precio_unitario),
+                num(d.precio_unitario) + 2,
+                num(d.precio_unitario) + 5,
+              ],
+            }))
+          );
+        }
+      }
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudieron cargar los pedidos.");
@@ -84,13 +119,31 @@ export default function PedidosAdmin() {
     }
   }
 
+  async function loadRuteros() {
+    try {
+      const res = await usuariosApi.list({
+        rol: "rutero",
+        page: 1,
+        per_page: 100,
+      });
+
+      setRuteros(res?.data || []);
+    } catch (err) {
+      console.error(err);
+      notify.error(err, "No se pudieron cargar los ruteros.");
+    }
+  }
+
   useEffect(() => {
     loadPedidos();
+    loadRuteros();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function seleccionarPedido(item) {
     setPedidoActivo(item);
     setObservaciones(item?.observaciones || "");
+    setRuteroId(item?.rutero_id || "");
     setLineasEdit(
       (item?.detalles || []).map((d) => ({
         id: d.id,
@@ -143,7 +196,7 @@ export default function PedidosAdmin() {
         })),
       });
 
-      await loadPedidos();
+      await loadPedidos(pedidoActivo.id);
       notify.success("Pedido actualizado correctamente.");
     } catch (err) {
       console.error(err);
@@ -160,7 +213,7 @@ export default function PedidosAdmin() {
     try {
       await pedidosAdminApi.aprobar(pedidoActivo.id);
       notify.success("Pedido aprobado correctamente.");
-      await loadPedidos();
+      await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudo aprobar el pedido.");
@@ -172,10 +225,66 @@ export default function PedidosAdmin() {
     try {
       await pedidosAdminApi.preparar(pedidoActivo.id);
       notify.success("Pedido marcado como preparando.");
-      await loadPedidos();
+      await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudo actualizar el pedido.");
+    }
+  }
+
+  async function asignarRutero() {
+    if (!pedidoActivo) {
+      notify.error("Selecciona un pedido.");
+      return;
+    }
+
+    if (!ruteroId) {
+      notify.error("Selecciona un rutero.");
+      return;
+    }
+
+    try {
+      const res = await pedidosAdminApi.asignarRutero(pedidoActivo.id, {
+        rutero_id: Number(ruteroId),
+      });
+
+      const pedidoActualizado = res?.pedido || null;
+
+      if (pedidoActualizado) {
+        setPedidoActivo(pedidoActualizado);
+        setRuteroId(pedidoActualizado.rutero_id || "");
+
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === pedidoActualizado.id ? pedidoActualizado : item
+          )
+        );
+
+        setObservaciones(pedidoActualizado?.observaciones || "");
+        setLineasEdit(
+          (pedidoActualizado?.detalles || []).map((d) => ({
+            id: d.id,
+            producto_id: d.producto_id,
+            producto_nombre: d.producto_nombre,
+            presentacion: d.presentacion || "unidad",
+            cantidad_base: num(d.cantidad_base),
+            precio_unitario: num(d.precio_unitario),
+            subtotal: num(d.subtotal),
+            es_monto_variable: !!d.es_monto_variable,
+            sugeridos: [
+              num(d.precio_unitario),
+              num(d.precio_unitario) + 2,
+              num(d.precio_unitario) + 5,
+            ],
+          }))
+        );
+      }
+
+      notify.success(res?.message || "Rutero asignado correctamente.");
+      await loadPedidos(pedidoActivo.id);
+    } catch (err) {
+      console.error(err);
+      notify.error(err, "No se pudo asignar el rutero.");
     }
   }
 
@@ -184,7 +293,7 @@ export default function PedidosAdmin() {
     try {
       await pedidosAdminApi.entregar(pedidoActivo.id);
       notify.success("Pedido marcado como entregado.");
-      await loadPedidos();
+      await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudo actualizar el pedido.");
@@ -313,6 +422,9 @@ export default function PedidosAdmin() {
             <div class="row"><span class="label">Vendedor:</span><strong>${
               pedidoActivo.vendedor_nombre || "—"
             }</strong></div>
+            <div class="row"><span class="label">Rutero:</span><strong>${
+              pedidoActivo.rutero?.nombre || pedidoActivo.rutero_nombre || "Sin asignar"
+            }</strong></div>
           </div>
 
           <div>
@@ -389,7 +501,7 @@ export default function PedidosAdmin() {
       <header className="topbar">
         <div>
           <h2>Pedidos Admin</h2>
-          <p className="muted">Revisión, aprobación y preparación de pedidos</p>
+          <p className="muted">Revisión, aprobación, preparación y asignación de rutero</p>
         </div>
       </header>
 
@@ -410,10 +522,11 @@ export default function PedidosAdmin() {
                 <option value="pendiente_revision">Pendiente revisión</option>
                 <option value="aprobado">Aprobado</option>
                 <option value="preparando">Preparando</option>
+                <option value="en_ruta">En ruta</option>
                 <option value="entregado">Entregado</option>
               </select>
 
-              <button onClick={loadPedidos} style={primaryBtn}>
+              <button onClick={() => loadPedidos()} style={primaryBtn}>
                 Buscar
               </button>
             </div>
@@ -444,6 +557,9 @@ export default function PedidosAdmin() {
                         <div style={{ fontWeight: 700 }}>Pedido #{item.id}</div>
                         <div className="muted">Cliente: {item.cliente_nombre || "—"}</div>
                         <div className="muted">Vendedor: {item.vendedor_nombre || "—"}</div>
+                        <div className="muted">
+                          Rutero: {item.rutero?.nombre || item.rutero_nombre || "Sin asignar"}
+                        </div>
                       </div>
 
                       <div style={{ textAlign: "right" }}>
@@ -472,6 +588,10 @@ export default function PedidosAdmin() {
                   </div>
                   <div>
                     <b>Vendedor:</b> {pedidoActivo.vendedor_nombre}
+                  </div>
+                  <div>
+                    <b>Rutero:</b>{" "}
+                    {pedidoActivo.rutero?.nombre || pedidoActivo.rutero_nombre || "Sin asignar"}
                   </div>
                   <div>
                     <b>Estado:</b>{" "}
@@ -598,6 +718,33 @@ export default function PedidosAdmin() {
                 </div>
 
                 <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+                    <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                      Asignar rutero
+                    </label>
+
+                    <select
+                      value={ruteroId}
+                      onChange={(e) => setRuteroId(e.target.value)}
+                      style={inputStyle}
+                    >
+                      <option value="">Seleccionar rutero</option>
+                      {ruteros.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.nombre || r.usuario || `Rutero #${r.id}`}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={asignarRutero}
+                      style={{ ...primaryBtn, marginTop: 8, width: "100%" }}
+                    >
+                      Asignar rutero
+                    </button>
+                  </div>
+
                   <button onClick={guardarCambios} disabled={saving} style={primaryBtn}>
                     Guardar cambios
                   </button>

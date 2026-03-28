@@ -31,4 +31,9 @@ export const pedidosAdminApi = {
     const { data } = await http.post(`/ventas/${id}/entregar`);
     return data;
   },
+
+  asignarRutero: async (id, payload) => {
+    const { data } = await http.post(`/ventas/${id}/asignar-rutero`, payload);
+    return data;
+  },
 };

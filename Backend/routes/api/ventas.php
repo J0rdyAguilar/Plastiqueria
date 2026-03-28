@@ -11,5 +11,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/ventas/{venta}/actualizar-admin', [VentaController::class, 'actualizarPedidoAdmin']);
     Route::post('/ventas/{venta}/aprobar', [VentaController::class, 'aprobarPedidoAdmin']);
     Route::post('/ventas/{venta}/preparar', [VentaController::class, 'prepararPedidoAdmin']);
+    Route::post('/ventas/{venta}/asignar-rutero', [VentaController::class, 'asignarRuteroAdmin']);
     Route::post('/ventas/{venta}/entregar', [VentaController::class, 'entregarPedidoAdmin']);
 });

@@ -3,11 +3,23 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\PedidoController;
 
-Route::get('/mis-pedidos', [PedidoController::class, 'misPedidos']);
-Route::get('/', [PedidoController::class, 'index']);
-Route::post('/', [PedidoController::class, 'store']);
+// vendedor, admin y super_admin
+Route::middleware(['auth:sanctum', 'role:admin,super_admin,vendedor'])->group(function () {
+    Route::get('/mis-pedidos', [PedidoController::class, 'misPedidos']);
+    Route::get('/', [PedidoController::class, 'index']);
+    Route::post('/', [PedidoController::class, 'store']);
+    Route::post('/{pedido}/enviar', [PedidoController::class, 'enviar']);
+});
 
-Route::post('/{pedido}/enviar', [PedidoController::class, 'enviar']);
-Route::post('/{pedido}/aprobar', [PedidoController::class, 'aprobar']);
-Route::post('/{pedido}/preparar', [PedidoController::class, 'preparar']);
-Route::post('/{pedido}/entregar', [PedidoController::class, 'entregar']);
+// admin y super_admin
+Route::middleware(['auth:sanctum', 'role:admin,super_admin'])->group(function () {
+    Route::post('/{pedido}/aprobar', [PedidoController::class, 'aprobar']);
+    Route::post('/{pedido}/preparar', [PedidoController::class, 'preparar']);
+    Route::post('/{pedido}/asignar-rutero', [PedidoController::class, 'asignarRutero']);
+});
+
+// rutero y super_admin
+Route::middleware(['auth:sanctum', 'role:rutero,super_admin'])->group(function () {
+    Route::get('/mis-entregas', [PedidoController::class, 'misEntregas']);
+    Route::post('/{pedido}/entregar', [PedidoController::class, 'entregar']);
+});

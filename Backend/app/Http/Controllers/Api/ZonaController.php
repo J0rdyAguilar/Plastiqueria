@@ -5,11 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Zona;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class ZonaController extends Controller
 {
-    // GET /api/v1/zonas?q=&per_page=10
     public function index(Request $request)
     {
         $q = $request->query('q');
@@ -17,18 +17,17 @@ class ZonaController extends Controller
         $perPage = max(1, min($perPage, 200));
 
         $zonas = Zona::query()
-            ->when($q, fn($qq) => $qq->where('nombre', 'like', "%$q%"))
+            ->when($q, fn($qq) => $qq->where('nombre', 'like', "%{$q}%"))
             ->orderBy('nombre')
             ->paginate($perPage);
 
         return response()->json($zonas);
     }
 
-    // POST /api/v1/zonas
     public function store(Request $request)
     {
         $data = $request->validate([
-            'nombre' => ['required','string','max:120', Rule::unique('zonas','nombre')],
+            'nombre' => ['required', 'string', 'max:120', Rule::unique('zonas', 'nombre')],
         ]);
 
         $zona = Zona::create([
@@ -38,17 +37,15 @@ class ZonaController extends Controller
         return response()->json($zona, 201);
     }
 
-    // GET /api/v1/zonas/{zona}
     public function show(Zona $zona)
     {
         return response()->json($zona);
     }
 
-    // PUT /api/v1/zonas/{zona}
     public function update(Request $request, Zona $zona)
     {
         $data = $request->validate([
-            'nombre' => ['required','string','max:120', Rule::unique('zonas','nombre')->ignore($zona->id)],
+            'nombre' => ['required', 'string', 'max:120', Rule::unique('zonas', 'nombre')->ignore($zona->id)],
         ]);
 
         $zona->update([
@@ -58,13 +55,39 @@ class ZonaController extends Controller
         return response()->json($zona);
     }
 
-    // DELETE /api/v1/zonas/{zona}
-    public function destroy(Zona $zona)
+    public function destroy(Request $request, Zona $zona)
     {
-        // opcional: impedir borrar si tiene rutas
-        // if ($zona->rutas()->exists()) return response()->json(['message'=>'Zona tiene rutas'], 422);
+        $user = $request->user();
+        $isSuperAdmin = $user && ($user->rol === 'super_admin');
 
-        $zona->delete();
-        return response()->json(['message' => 'Zona eliminada']);
+        if (!$isSuperAdmin) {
+            if ($zona->rutas()->exists()) {
+                return response()->json([
+                    'message' => 'No se puede eliminar la zona porque tiene rutas asociadas.'
+                ], 422);
+            }
+        }
+
+        DB::transaction(function () use ($zona, $isSuperAdmin) {
+            if ($isSuperAdmin) {
+                $zona->load('rutas');
+
+                foreach ($zona->rutas as $ruta) {
+                    // Esto requiere que clientes.ruta_id acepte NULL
+                    $ruta->clientes()->update([
+                        'ruta_id' => null,
+                    ]);
+
+                    $ruta->vendedores()->detach();
+                    $ruta->delete();
+                }
+            }
+
+            $zona->delete();
+        });
+
+        return response()->json([
+            'message' => 'Zona eliminada'
+        ]);
     }
 }

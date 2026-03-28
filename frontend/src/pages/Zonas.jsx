@@ -8,7 +8,8 @@ import Layout from "../components/Layout";
 const emptyForm = { nombre: "" };
 
 function formatBackendError(err) {
-  const data = err?.data;
+  const data = err?.response?.data;
+
   if (data?.errors && typeof data.errors === "object") {
     const lines = [];
     for (const [k, arr] of Object.entries(data.errors)) {
@@ -16,6 +17,7 @@ function formatBackendError(err) {
     }
     if (lines.length) return lines.join("\n");
   }
+
   return data?.message || err?.message || "Ocurrió un error";
 }
 
