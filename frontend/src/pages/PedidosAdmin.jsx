@@ -13,7 +13,7 @@ function num(v) {
 
 const PRESENTACIONES = [
   "unidad",
-  "docena",
+  "docena",clea
   "fardo",
   "paquete",
   "caja",
