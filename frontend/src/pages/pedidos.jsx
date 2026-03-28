@@ -9,6 +9,7 @@ import { clientesApi } from "../lib/clientes";
 import { pedidosApi } from "../lib/pedidos";
 import { misPedidosApi } from "../lib/misPedidos";
 import { productosApi } from "../lib/productos";
+import { notify } from "../lib/notify";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -17,6 +18,28 @@ function money(n) {
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function getErrorMessage(err, fallback = "Ocurrió un error") {
+  const data = err?.response?.data;
+
+  if (data?.errors && typeof data.errors === "object") {
+    const firstKey = Object.keys(data.errors)[0];
+    const firstVal = firstKey ? data.errors[firstKey] : null;
+
+    if (Array.isArray(firstVal) && firstVal[0]) return firstVal[0];
+    if (typeof firstVal === "string" && firstVal.trim()) return firstVal;
+  }
+
+  if (typeof data?.message === "string" && data.message.trim()) {
+    return data.message;
+  }
+
+  if (typeof err?.message === "string" && err.message.trim()) {
+    return err.message;
+  }
+
+  return fallback;
 }
 
 function estadoBadgeStyle(estado) {
@@ -65,31 +88,61 @@ function normalizarPresentaciones(precios = []) {
   return [{ tipo: "unidad", label: "unidad", factor: 1, precio: 0 }];
 }
 
+function normalizarCliente(c) {
+  if (!c) return null;
+
+  return {
+    ...c,
+    ruta_nombre: c.ruta_nombre || c.ruta?.nombre || "",
+    zona_nombre: c.zona_nombre || c.zona?.nombre || "",
+  };
+}
+
+function extractArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.data)) return payload.data.data;
+  return [];
+}
+
+function normalizarPedido(p) {
+  if (!p) return null;
+
+  return {
+    ...p,
+    cliente_nombre:
+      p.cliente_nombre ||
+      p.cliente?.nombre ||
+      p.cliente?.nombre_tienda ||
+      "—",
+    detalles: Array.isArray(p.detalles)
+      ? p.detalles
+      : Array.isArray(p.detalles?.data)
+      ? p.detalles.data
+      : [],
+  };
+}
+
 async function fetchProductosConPrecios({ q = "", per_page = 500 }) {
-  try {
-    if (typeof productosApi.catalogo === "function") {
-      const res = await productosApi.catalogo();
-      if (Array.isArray(res)) return res;
-      if (Array.isArray(res?.data)) return res.data;
-    }
-
-    if (typeof productosApi.list === "function") {
-      const res = await productosApi.list({ q, per_page });
-      if (Array.isArray(res)) return res;
-      if (Array.isArray(res?.data)) return res.data;
-    }
-
-    if (typeof productosApi.search === "function") {
-      const res = await productosApi.search(q, { per_page });
-      if (Array.isArray(res)) return res;
-      if (Array.isArray(res?.data)) return res.data;
-    }
-
-    return [];
-  } catch (err) {
-    console.error("Error cargando productos con precios", err);
-    return [];
+  if (typeof productosApi.catalogo === "function") {
+    const res = await productosApi.catalogo();
+    if (Array.isArray(res)) return res;
+    if (Array.isArray(res?.data)) return res.data;
   }
+
+  if (typeof productosApi.list === "function") {
+    const res = await productosApi.list({ q, per_page });
+    if (Array.isArray(res)) return res;
+    if (Array.isArray(res?.data)) return res.data;
+  }
+
+  if (typeof productosApi.search === "function") {
+    const res = await productosApi.search(q, { per_page });
+    if (Array.isArray(res)) return res;
+    if (Array.isArray(res?.data)) return res.data;
+  }
+
+  return [];
 }
 
 export default function Pedidos() {
@@ -97,6 +150,11 @@ export default function Pedidos() {
   const me = session?.user || {};
   const location = useLocation();
   const navigate = useNavigate();
+
+  const rol = String(me?.rol || me?.role || "").toLowerCase();
+  const isVendedor = rol === "vendedor";
+  const userUbicacionId = String(me?.ubicacion_id || me?.sucursal_id || "");
+  const vendedorId = me?.vendedor_id || "";
 
   const [vista, setVista] = useState(getVistaFromHash(location.hash));
 
@@ -134,8 +192,6 @@ export default function Pedidos() {
   const [estadoFiltroPedidos, setEstadoFiltroPedidos] = useState("");
   const [loadingMisPedidos, setLoadingMisPedidos] = useState(false);
 
-  const vendedorId = me?.vendedor_id || me?.id || "";
-
   async function loadInicial() {
     try {
       setLoadingInit(true);
@@ -150,32 +206,47 @@ export default function Pedidos() {
 
       const [resUbicaciones, resRutas, resZonas, resClientes] = results;
 
+      let arrUbicaciones = [];
       if (resUbicaciones.status === "fulfilled") {
-        setUbicaciones(resUbicaciones.value?.data || []);
+        arrUbicaciones = extractArray(resUbicaciones.value);
       } else {
         console.error("ubicaciones ERROR", resUbicaciones.reason);
       }
 
+      if (isVendedor) {
+        const propia = arrUbicaciones.find((u) => String(u.id) === userUbicacionId);
+        const soloPropia = propia ? [propia] : [];
+        setUbicaciones(soloPropia);
+        setUbicacionId(propia ? String(propia.id) : "");
+      } else {
+        setUbicaciones(arrUbicaciones);
+      }
+
       if (resRutas.status === "fulfilled") {
-        setRutas(resRutas.value?.data || []);
+        setRutas(extractArray(resRutas.value));
       } else {
         console.error("rutas ERROR", resRutas.reason);
       }
 
       if (resZonas.status === "fulfilled") {
-        setZonas(resZonas.value?.data || []);
+        setZonas(extractArray(resZonas.value));
       } else {
         console.error("zonas ERROR", resZonas.reason);
       }
 
       if (resClientes.status === "fulfilled") {
-        setClientes(resClientes.value?.data || []);
+        const arrClientes = extractArray(resClientes.value).map(normalizarCliente).filter(Boolean);
+        setClientes(arrClientes);
       } else {
         console.error("clientes ERROR", resClientes.reason);
       }
 
       if (results.some((r) => r.status === "rejected")) {
         setError("Algunos datos no cargaron. Revisa la consola.");
+      }
+
+      if (isVendedor && !userUbicacionId) {
+        setError("Tu usuario no tiene una sucursal asignada.");
       }
     } catch (err) {
       console.error(err);
@@ -189,14 +260,16 @@ export default function Pedidos() {
     try {
       setError("");
 
-      if (!ubicacionId) {
+      const effectiveUbicacionId = isVendedor ? userUbicacionId : ubicacionId;
+
+      if (!effectiveUbicacionId) {
         setProductos([]);
         return;
       }
 
       const [stockRes, productosRes] = await Promise.all([
         stockApi.list({
-          ubicacion_id: ubicacionId,
+          ubicacion_id: effectiveUbicacionId,
           q,
           page: 1,
           per_page: 500,
@@ -204,7 +277,7 @@ export default function Pedidos() {
         fetchProductosConPrecios({ q, per_page: 500 }),
       ]);
 
-      const stockRows = Array.isArray(stockRes?.data) ? stockRes.data : [];
+      const stockRows = extractArray(stockRes);
       const productosRows = Array.isArray(productosRes) ? productosRes : [];
 
       const productosMap = new Map(
@@ -238,6 +311,7 @@ export default function Pedidos() {
 
       setLineas((prev) => {
         const next = {};
+
         for (const producto of merged) {
           const actual = prev[producto.id];
           if (!actual) continue;
@@ -265,6 +339,7 @@ export default function Pedidos() {
             stockDisponible: num(producto.cantidad_base),
           };
         }
+
         return next;
       });
     } catch (err) {
@@ -273,29 +348,36 @@ export default function Pedidos() {
     }
   }
 
-  async function loadMisPedidos() {
-    try {
-      if (!vendedorId) {
-        setMisPedidos([]);
-        return;
-      }
+async function loadMisPedidos() {
+  try {
+    setLoadingMisPedidos(true);
 
-      setLoadingMisPedidos(true);
+    const res = await misPedidosApi.list({
+      estado: estadoFiltroPedidos,
+      page: 1,
+      per_page: 20,
+    });
 
-      const res = await misPedidosApi.list({
-        vendedor_id: vendedorId,
-        estado: estadoFiltroPedidos,
-        page: 1,
-        per_page: 20,
-      });
+    const pedidos =
+      Array.isArray(res) ? res :
+      Array.isArray(res?.data) ? res.data :
+      Array.isArray(res?.data?.data) ? res.data.data :
+      [];
 
-      setMisPedidos(res?.data || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingMisPedidos(false);
-    }
+    setMisPedidos(pedidos);
+  } catch (err) {
+    console.error("mis pedidos ERROR", err?.response?.data || err);
+    setMisPedidos([]);
+  } finally {
+    setLoadingMisPedidos(false);
   }
+}
+
+useEffect(() => {
+  if (vista === "mios") {
+    loadMisPedidos();
+  }
+}, [vista, estadoFiltroPedidos]);
 
   useEffect(() => {
     loadInicial();
@@ -306,12 +388,42 @@ export default function Pedidos() {
   }, [location.hash]);
 
   useEffect(() => {
-    loadProductos();
-  }, [ubicacionId]);
+    if (isVendedor && userUbicacionId) {
+      loadProductos();
+      return;
+    }
 
-  useEffect(() => {
-    loadMisPedidos();
-  }, [vendedorId, estadoFiltroPedidos]);
+    if (ubicacionId) {
+      loadProductos();
+    } else {
+      setProductos([]);
+    }
+  }, [ubicacionId, userUbicacionId, isVendedor]);
+
+async function loadMisPedidos() {
+  try {
+    setLoadingMisPedidos(true);
+
+    const res = await misPedidosApi.list({
+      estado: estadoFiltroPedidos,
+      page: 1,
+      per_page: 20,
+    });
+
+    const pedidos =
+      Array.isArray(res) ? res :
+      Array.isArray(res?.data) ? res.data :
+      Array.isArray(res?.data?.data) ? res.data.data :
+      [];
+
+    setMisPedidos(pedidos);
+  } catch (err) {
+    console.error("mis pedidos ERROR", err?.response?.data || err);
+    setMisPedidos([]);
+  } finally {
+    setLoadingMisPedidos(false);
+  }
+}
 
   const clienteSeleccionado = useMemo(() => {
     return clientes.find((c) => String(c.id) === String(clienteId)) || null;
@@ -434,6 +546,7 @@ export default function Pedidos() {
       .map((producto) => {
         const linea = lineas[producto.id];
         const cantidad = num(linea?.cantidad);
+
         if (cantidad <= 0) return null;
 
         return {
@@ -456,38 +569,57 @@ export default function Pedidos() {
 
   async function handleCrearCliente() {
     if (!nuevoCliente.nombre || !nuevoCliente.ruta_id || !nuevoCliente.zona_id) {
-      alert("Debes completar nombre, ruta y zona.");
+      notify.error("Debes completar nombre, ruta y zona.");
       return;
     }
 
     try {
-      const res = await clientesApi.create({
-        ...nuevoCliente,
-        vendedor_id: vendedorId,
+      const effectiveUbicacionId = isVendedor ? userUbicacionId : ubicacionId;
+
+      const payload = {
+        nombre: nuevoCliente.nombre?.trim(),
+        propietario: nuevoCliente.propietario?.trim() || "",
+        telefono: nuevoCliente.telefono?.trim() || "",
+        ruta_id: Number(nuevoCliente.ruta_id),
+        zona_id: Number(nuevoCliente.zona_id),
+        direccion: nuevoCliente.direccion?.trim() || "Sin dirección",
+        referencia: nuevoCliente.referencia?.trim() || "",
+        activo: 1,
+        vendedor_id: vendedorId ? Number(vendedorId) : undefined,
+        ubicacion_id: effectiveUbicacionId ? Number(effectiveUbicacionId) : undefined,
+      };
+
+      Object.keys(payload).forEach((k) => {
+        if (payload[k] === undefined || payload[k] === null || payload[k] === "") {
+          delete payload[k];
+        }
       });
 
-      const creado = res?.data;
-      if (!creado) {
-        alert("No se pudo crear el cliente.");
+      console.log("PAYLOAD CREAR CLIENTE:", payload);
+
+      const res = await clientesApi.create(payload);
+      console.log("RESPUESTA CREAR CLIENTE:", res);
+
+      const creado = normalizarCliente(res?.data?.data || res?.data || res);
+
+      if (!creado?.id) {
+        notify.error("El backend no devolvió el cliente creado correctamente.");
         return;
       }
 
-      const clienteNormalizado = {
-        id: creado.id,
-        nombre: creado.nombre,
-        propietario: creado.propietario,
-        telefono: creado.telefono,
-        direccion: creado.direccion,
-        referencia: creado.referencia,
-        activo: creado.activo,
-        ruta_id: creado.ruta_id,
-        ruta_nombre: creado.ruta?.nombre || "",
-        zona_id: creado.zona_id,
-        zona_nombre: creado.zona?.nombre || "",
-      };
+      const clientesRes = await clientesApi.list({
+        vendedor_id: vendedorId,
+        activo: 1,
+        per_page: 200,
+      });
 
-      setClientes((prev) => [clienteNormalizado, ...prev]);
-      setClienteId(creado.id);
+      const clientesActualizados = extractArray(clientesRes)
+        .map(normalizarCliente)
+        .filter(Boolean);
+
+      setClientes(clientesActualizados);
+      setClienteId(String(creado.id));
+
       setMostrarNuevoCliente(false);
       setNuevoCliente({
         nombre: "",
@@ -499,28 +631,30 @@ export default function Pedidos() {
         referencia: "",
       });
 
-      alert("Cliente creado correctamente.");
+      notify.success("Cliente creado correctamente");
     } catch (err) {
-      console.error(err);
-      alert(err?.response?.data?.message || "No se pudo crear el cliente.");
+      console.error("ERROR CREANDO CLIENTE:", err?.response?.data || err);
+      notify.error(getErrorMessage(err, "No se pudo crear el cliente"));
     }
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
 
-    if (!ubicacionId) {
-      alert("Debes seleccionar una sucursal.");
+    const effectiveUbicacionId = isVendedor ? userUbicacionId : ubicacionId;
+
+    if (!effectiveUbicacionId) {
+      notify.error("Debes tener una sucursal asignada.");
       return;
     }
 
     if (!clienteId) {
-      alert("Debes seleccionar un cliente.");
+      notify.error("Debes seleccionar un cliente.");
       return;
     }
 
     if (detalles.length === 0) {
-      alert("Debes agregar al menos un producto.");
+      notify.error("Debes agregar al menos un producto.");
       return;
     }
 
@@ -529,45 +663,57 @@ export default function Pedidos() {
       if (!producto) continue;
 
       if (num(item.cantidad_base) > num(producto.cantidad_base)) {
-        alert(`No hay stock suficiente para ${producto.nombre}.`);
+        notify.error(`No hay stock suficiente para ${producto.nombre}`);
         return;
       }
     }
 
     const payload = {
-      ubicacion_id: ubicacionId,
-      vendedor_id: vendedorId,
-      cliente_id: clienteId,
-      ruta_id: clienteSeleccionado?.ruta_id,
-      zona_id: clienteSeleccionado?.zona_id,
+      ubicacion_id: Number(effectiveUbicacionId),
+      cliente_id: Number(clienteId),
+      ruta_id: clienteSeleccionado?.ruta_id ? Number(clienteSeleccionado.ruta_id) : undefined,
+      zona_id: clienteSeleccionado?.zona_id ? Number(clienteSeleccionado.zona_id) : undefined,
       observaciones,
-      total: totalPedido,
+      total: Number(totalPedido),
       detalles: detalles.map((d) => ({
-        producto_id: d.producto_id,
+        producto_id: Number(d.producto_id),
         presentacion: d.presentacion,
-        cantidad_base: d.cantidad_base,
-        precio_unitario: d.precio_unitario,
-        subtotal: d.subtotal,
+        cantidad: Number(d.cantidad),
+        cantidad_base: Number(d.cantidad_base),
+        precio_unitario: Number(d.precio_unitario),
+        subtotal: Number(d.subtotal),
         es_monto_variable: d.es_monto_variable ? 1 : 0,
       })),
     };
 
+    Object.keys(payload).forEach((k) => {
+      if (payload[k] === undefined || payload[k] === null || payload[k] === "") {
+        delete payload[k];
+      }
+    });
+
+    console.log("PAYLOAD PEDIDO:", payload);
+
     try {
       setEnviando(true);
-      await pedidosApi.createPedidoVendedor(payload);
 
-      alert("Pedido enviado al administrador correctamente.");
+      const res = await pedidosApi.createPedidoVendedor(payload);
+      console.log("PEDIDO CREADO:", res);
+
+      notify.success("Pedido enviado al administrador");
 
       setClienteId("");
       setObservaciones("");
       setLineas({});
       setQ("");
+
       await loadProductos();
       await loadMisPedidos();
+
       navigate("/pedidos#mis-pedidos", { replace: true });
     } catch (err) {
-      console.error(err);
-      alert(err?.response?.data?.message || "No se pudo enviar el pedido.");
+      console.error("ERROR ENVIANDO PEDIDO:", err?.response?.data || err);
+      notify.error(getErrorMessage(err, "No se pudo enviar el pedido"));
     } finally {
       setEnviando(false);
     }
@@ -587,7 +733,7 @@ export default function Pedidos() {
         <div>
           <h2>Pedidos</h2>
           <p className="muted">
-            Sesión: <b>{me?.nombre || me?.usuario || "—"}</b> ({me?.rol || "—"})
+            Sesión: <b>{me?.nombre || me?.usuario || "—"}</b> ({me?.rol || me?.role || "—"})
           </p>
         </div>
       </header>
@@ -623,18 +769,27 @@ export default function Pedidos() {
                     <label className="muted" style={{ display: "block", marginBottom: 6 }}>
                       Sucursal
                     </label>
-                    <select
-                      value={ubicacionId}
-                      onChange={(e) => setUbicacionId(e.target.value)}
-                      style={inputStyle}
-                    >
-                      <option value="">Selecciona sucursal</option>
-                      {ubicaciones.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.nombre}
-                        </option>
-                      ))}
-                    </select>
+
+                    {isVendedor ? (
+                      <input
+                        readOnly
+                        value={ubicaciones[0]?.nombre || "Sucursal asignada"}
+                        style={{ ...inputStyle, background: "#f7f7f7" }}
+                      />
+                    ) : (
+                      <select
+                        value={ubicacionId}
+                        onChange={(e) => setUbicacionId(e.target.value)}
+                        style={inputStyle}
+                      >
+                        <option value="">Selecciona sucursal</option>
+                        {ubicaciones.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
                   <div>
@@ -1068,7 +1223,7 @@ export default function Pedidos() {
 
                 <button
                   type="submit"
-                  disabled={enviando}
+                  disabled={enviando || (isVendedor && !userUbicacionId)}
                   style={{
                     width: "100%",
                     marginTop: 14,
@@ -1152,9 +1307,7 @@ export default function Pedidos() {
                       <div style={estadoBadgeStyle(pedido.estado)}>
                         {String(pedido.estado || "").replaceAll("_", " ")}
                       </div>
-                      <div style={{ marginTop: 8, fontWeight: 800 }}>
-                        {money(pedido.total)}
-                      </div>
+                      <div style={{ marginTop: 8, fontWeight: 800 }}>{money(pedido.total)}</div>
                     </div>
                   </div>
 
@@ -1174,11 +1327,10 @@ export default function Pedidos() {
                             {d.producto_nombre || `Producto #${d.producto_id}`}
                           </div>
                           <div className="muted" style={{ fontSize: 13 }}>
-                            {d.cantidad_base} × {d.presentacion || "unidad"} × {money(d.precio_unitario)}
+                            {d.cantidad_base} × {d.presentacion || "unidad"} ×{" "}
+                            {money(d.precio_unitario)}
                           </div>
-                          <div style={{ marginTop: 4, fontWeight: 700 }}>
-                            {money(d.subtotal)}
-                          </div>
+                          <div style={{ marginTop: 4, fontWeight: 700 }}>{money(d.subtotal)}</div>
                         </div>
                       ))}
                     </div>
@@ -1186,7 +1338,9 @@ export default function Pedidos() {
 
                   {pedido.observaciones ? (
                     <div style={{ marginTop: 10 }}>
-                      <div className="muted" style={{ fontSize: 13 }}>Observaciones</div>
+                      <div className="muted" style={{ fontSize: 13 }}>
+                        Observaciones
+                      </div>
                       <div>{pedido.observaciones}</div>
                     </div>
                   ) : null}

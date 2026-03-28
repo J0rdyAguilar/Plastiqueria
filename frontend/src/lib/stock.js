@@ -1,4 +1,3 @@
-// src/lib/stock.js
 import { http } from "./http";
 
 function cleanParams(obj = {}) {

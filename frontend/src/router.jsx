@@ -20,14 +20,17 @@ import { isLoggedIn, getSession } from "./lib/auth";
 
 function normalizeRole(r) {
   const x = (r || "").toString().trim().toLowerCase();
+
   if (x === "cajero") return "caja";
+  if (x === "superadmin") return "super_admin";
+
   return x;
 }
 
 function roleHome() {
   if (!isLoggedIn()) return "/login";
 
-  const rol = normalizeRole(getSession()?.user?.rol);
+  const rol = normalizeRole(getSession()?.user?.rol || getSession()?.user?.role);
 
   if (rol === "admin" || rol === "super_admin") return "/pedidos-admin";
   if (rol === "caja") return "/caja";
@@ -58,15 +61,17 @@ export const router = createBrowserRouter([
     element: <Login />,
   },
 
-  // ADMIN / SUPER ADMIN
+  // SOLO SUPER ADMIN
   {
     path: "/usuarios",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <Wrap roles={["super_admin"]}>
         <Usuarios />
       </Wrap>
     ),
   },
+
+  // ADMIN / SUPER ADMIN
   {
     path: "/vendedores",
     element: (

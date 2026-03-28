@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { stockApi } from "../lib/stock";
 import { ubicacionesApi } from "../lib/ubicaciones";
+import { getSession } from "../lib/auth";
 
 function formatNumber(value) {
   const n = Number(value || 0);
@@ -39,6 +40,13 @@ function getStockBadge(cantidad) {
 }
 
 export default function Stock() {
+  const session = getSession();
+  const user = session?.user || {};
+
+  const role = String(user?.role || user?.rol || "").toLowerCase();
+  const isSuperAdmin = role === "superadmin";
+  const userUbicacionId = String(user?.ubicacion_id || user?.sucursal_id || "");
+
   const [q, setQ] = useState("");
   const [ubicacionId, setUbicacionId] = useState("");
   const [ubicaciones, setUbicaciones] = useState([]);
@@ -56,18 +64,32 @@ export default function Stock() {
     try {
       const res = await ubicacionesApi.list({ per_page: 200, activa: 1 });
       const arr = res?.data ?? res ?? [];
-      setUbicaciones(arr);
 
-      if (!ubicacionId && arr.length) {
-        setUbicacionId(String(arr[0].id));
+      if (isSuperAdmin) {
+        setUbicaciones(arr);
+
+        if (!ubicacionId && arr.length) {
+          setUbicacionId(String(arr[0].id));
+        }
+      } else {
+        const propia = arr.find((u) => String(u.id) === userUbicacionId);
+
+        if (propia) {
+          setUbicaciones([propia]);
+          setUbicacionId(String(propia.id));
+        } else {
+          setUbicaciones([]);
+          setUbicacionId(userUbicacionId || "");
+        }
       }
     } catch (e) {
       console.error(e);
+      setError("No se pudieron cargar las ubicaciones.");
     }
   }
 
-  async function load(p = page) {
-    if (!ubicacionId) return;
+  async function load(p = page, forcedUbicacionId = ubicacionId) {
+    if (!forcedUbicacionId) return;
 
     setLoading(true);
     setError("");
@@ -75,7 +97,7 @@ export default function Stock() {
     try {
       const res = await stockApi.list({
         q,
-        ubicacion_id: ubicacionId,
+        ubicacion_id: forcedUbicacionId,
         page: p,
         per_page: perPage,
       });
@@ -101,7 +123,7 @@ export default function Stock() {
   useEffect(() => {
     if (ubicacionId) {
       setPage(1);
-      load(1);
+      load(1, ubicacionId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubicacionId]);
@@ -110,7 +132,7 @@ export default function Stock() {
     const t = setTimeout(() => {
       if (ubicacionId) {
         setPage(1);
-        load(1);
+        load(1, ubicacionId);
       }
     }, 300);
 
@@ -172,13 +194,26 @@ export default function Stock() {
         >
           <div className="field">
             <label>Ubicación</label>
-            <select value={ubicacionId} onChange={(e) => setUbicacionId(e.target.value)}>
-              {ubicaciones.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.nombre} ({u.tipo})
-                </option>
-              ))}
-            </select>
+
+            {isSuperAdmin ? (
+              <select value={ubicacionId} onChange={(e) => setUbicacionId(e.target.value)}>
+                {ubicaciones.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nombre} ({u.tipo})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={
+                  ubicaciones[0]
+                    ? `${ubicaciones[0].nombre} (${ubicaciones[0].tipo})`
+                    : "Sucursal asignada"
+                }
+                disabled
+                readOnly
+              />
+            )}
           </div>
 
           <div className="field">
@@ -193,16 +228,17 @@ export default function Stock() {
           <div className="field">
             <label>&nbsp;</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn" onClick={() => load(1)} disabled={loading || !ubicacionId}>
+              <button className="btn" onClick={() => load(1, ubicacionId)} disabled={loading || !ubicacionId}>
                 {loading ? "Cargando..." : "Buscar"}
               </button>
+
               <button
                 className="btn"
                 type="button"
                 onClick={() => {
                   setQ("");
                   setPage(1);
-                  load(1);
+                  load(1, ubicacionId);
                 }}
                 disabled={loading}
               >
@@ -297,7 +333,7 @@ export default function Stock() {
                 onClick={() => {
                   const p = page - 1;
                   setPage(p);
-                  load(p);
+                  load(p, ubicacionId);
                 }}
               >
                 Anterior
@@ -309,7 +345,7 @@ export default function Stock() {
                 onClick={() => {
                   const p = page + 1;
                   setPage(p);
-                  load(p);
+                  load(p, ubicacionId);
                 }}
               >
                 Siguiente

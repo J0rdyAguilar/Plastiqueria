@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { setSession, getSession, isLoggedIn } from "../lib/auth";
+import { notify } from "../lib/notify"; // 🔥 IMPORTANTE
 
 function normalizeRole(r) {
   const x = (r || "").toLowerCase();
@@ -29,7 +30,6 @@ export default function Login() {
   const [usuario, setUsuario] = useState("admin");
   const [password, setPassword] = useState("123456");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [showPass, setShowPass] = useState(false);
 
   useEffect(() => {
@@ -45,11 +45,18 @@ export default function Login() {
 
   async function onSubmit(e) {
     e.preventDefault();
-    setError("");
     setLoading(true);
 
     try {
-      const res = await api.login({ usuario, password });
+      const res = await notify.promise(
+        api.login({ usuario, password }),
+        {
+          loading: "Iniciando sesión...",
+          success: "Bienvenido 👋",
+          error: "Credenciales incorrectas",
+        }
+      );
+
       setSession(res);
 
       const from = loc.state?.from;
@@ -59,7 +66,9 @@ export default function Login() {
         nav(roleHome(res?.user?.rol), { replace: true });
       }
     } catch (err) {
-      setError(err?.data?.message || err?.message || "Error al iniciar sesión");
+      console.error(err);
+      // 👇 Ya no mostramos error en pantalla
+      notify.error(err, "Error al iniciar sesión");
     } finally {
       setLoading(false);
     }
@@ -89,7 +98,7 @@ export default function Login() {
             </div>
           </div>
 
-          {error ? <div className="login-alert">{error}</div> : null}
+          {/* ❌ eliminamos login-alert */}
 
           <div className="premium-field">
             <label>Usuario</label>
@@ -120,7 +129,6 @@ export default function Login() {
                 type="button"
                 className="pass-toggle-btn"
                 onClick={() => setShowPass((v) => !v)}
-                aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
               >
                 {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>

@@ -3,233 +3,625 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\PedidoStoreRequest;
 use App\Models\Pedido;
 use App\Models\PedidoDetalle;
-use App\Models\Producto;
-use App\Models\ProductoUnidad;
+use App\Models\ProductoPrecio;
+use App\Models\Vendedor;
 use App\Services\StockService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class PedidoController extends Controller
 {
     public function __construct(private StockService $stockService) {}
 
-    // GET /api/pedidos?estado=&vendedor_id=&cliente_id=
-    public function index(Request $request)
+    private function roleOf($user): string
     {
-        $estado = $request->query('estado');
-        $vendedorId = $request->query('vendedor_id');
-        $clienteId = $request->query('cliente_id');
-
-        $q = Pedido::query()
-            ->with(['cliente', 'vendedor', 'detalles.producto.imagenPrincipal'])
-            ->orderByDesc('creado_en');
-
-        if ($estado) $q->where('estado', $estado);
-        if ($vendedorId) $q->where('vendedor_id', (int)$vendedorId);
-        if ($clienteId) $q->where('cliente_id', (int)$clienteId);
-
-        return response()->json($q->paginate((int)$request->query('per_page', 10)));
+        $r = strtolower((string) ($user->rol ?? $user->role ?? ''));
+        if ($r === 'superadmin') return 'super_admin';
+        if ($r === 'cajero') return 'caja';
+        return $r;
     }
 
-    // POST /api/pedidos  (vendedor crea borrador)
-    public function store(PedidoStoreRequest $request)
+    private function userUbicacionId($user): ?int
     {
-        $userId = (int)($request->user()?->id ?? auth()->id() ?? 0);
-
-        $data = $request->validated();
-
-        return DB::transaction(function () use ($data, $userId) {
-
-            $pedido = Pedido::create([
-                'codigo' => $data['codigo'] ?? $this->generarCodigo(),
-                'cliente_id' => (int)$data['cliente_id'],
-                'vendedor_id' => $userId,
-                'estado' => 'borrador',
-                'fecha_pedido' => $data['fecha_pedido'] ?? now()->toDateString(),
-                'notas' => $data['notas'] ?? null,
-                'canal' => $data['canal'] ?? 'ruta',
-            ]);
-
-            foreach ($data['detalles'] as $d) {
-                $productoId = (int)$d['producto_id'];
-                $unidad = (string)$d['unidad'];            // enum
-                $cantidad = (int)$d['cantidad'];
-
-                $cantidadBase = $this->calcularCantidadBase($productoId, $unidad, $cantidad, $d['cantidad_base'] ?? null);
-
-                PedidoDetalle::create([
-                    'pedido_id' => $pedido->id,
-                    'producto_id' => $productoId,
-                    'unidad' => $unidad,
-                    'cantidad' => $cantidad,
-                    'cantidad_base' => $cantidadBase,
-
-                    // precios se llenan cuando admin aprueba
-                    'precio_variable' => 0,
-                    'precio_sugerido_1' => null,
-                    'precio_sugerido_2' => null,
-                    'precio_sugerido_3' => null,
-                    'precio_unitario' => null,
-                    'total_linea' => null,
-                ]);
-            }
-
-            $pedido->load(['cliente', 'vendedor', 'detalles.producto.imagenPrincipal']);
-
-            return response()->json($pedido, 201);
-        });
+        $id = $user->ubicacion_id ?? $user->sucursal_id ?? null;
+        return $id !== null ? (int) $id : null;
     }
 
-    // POST /api/pedidos/{pedido}/enviar  (vendedor envía al admin)
-    public function enviar(Pedido $pedido, Request $request)
+    private function resolveVendedorId($user): ?int
     {
-        // (luego: validar que solo el vendedor dueño pueda enviar)
-        if ($pedido->estado !== 'borrador') {
-            return response()->json(['message' => 'Solo se puede enviar un pedido en borrador.'], 422);
+        if (!empty($user->vendedor_id)) {
+            return (int) $user->vendedor_id;
         }
 
-        $pedido->estado = 'enviado_admin';
-        $pedido->actualizado_en = now();
-        $pedido->save();
+        $userId = (int) ($user->id ?? 0);
+        if ($userId <= 0) return null;
 
-        return response()->json(['message' => 'Pedido enviado al admin.', 'data' => $pedido]);
+        $vend = Vendedor::query()
+            ->where('usuario_id', $userId)
+            ->first();
+
+        return $vend ? (int) $vend->id : null;
     }
 
-    // POST /api/pedidos/{pedido}/aprobar (admin aprueba y pone precios)
-    public function aprobar(Pedido $pedido, Request $request)
+    private function normalizeEstado(?string $estado): string
     {
-        if (!in_array($pedido->estado, ['enviado_admin','borrador'], true)) {
-            return response()->json(['message' => 'El pedido no está en estado válido para aprobar.'], 422);
+        $estado = trim((string) $estado);
+        if ($estado === '') return '';
+
+        $estado = mb_strtolower($estado);
+        $estado = str_replace([' ', '-'], '_', $estado);
+
+        return $estado;
+    }
+
+    private function detalleResponse(PedidoDetalle $d): array
+    {
+        return [
+            'id' => $d->id,
+            'producto_id' => (int) $d->producto_id,
+            'producto_nombre' => $d->producto?->nombre,
+            'presentacion' => $d->presentacion,
+            'cantidad' => (float) ($d->cantidad ?? 0),
+            'cantidad_base' => (int) ($d->cantidad_base ?? 0),
+            'precio_unitario' => (float) ($d->precio_unitario ?? 0),
+            'subtotal' => (float) ($d->subtotal ?? 0),
+            'es_monto_variable' => (bool) ($d->es_monto_variable ?? false),
+        ];
+    }
+
+    private function pedidoResponse(Pedido $p): array
+    {
+        $detalles = $p->detalles->map(fn ($d) => $this->detalleResponse($d))->values();
+        $total = (float) ($p->total ?? $detalles->sum('subtotal'));
+
+        $vendedorNombre =
+            $p->vendedor?->usuario?->usuario
+            ?? $p->vendedor?->usuario?->nombre
+            ?? $p->vendedor?->codigo
+            ?? ('Vendedor #' . $p->vendedor_id);
+
+        return [
+            'id' => $p->id,
+            'codigo' => $p->codigo,
+            'estado' => $p->estado,
+            'ubicacion_id' => $p->ubicacion_id,
+            'ubicacion_nombre' => $p->ubicacion?->nombre,
+            'cliente_id' => $p->cliente_id,
+            'cliente_nombre' => $p->cliente?->nombre,
+            'vendedor_id' => $p->vendedor_id,
+            'vendedor_nombre' => $vendedorNombre,
+            'ruta_id' => $p->ruta_id,
+            'ruta_nombre' => $p->ruta?->nombre,
+            'zona_id' => $p->zona_id,
+            'zona_nombre' => $p->zona?->nombre,
+            'observaciones' => $p->observaciones,
+            'total' => $total,
+            'creado_en' => optional($p->creado_en)->format('Y-m-d H:i:s'),
+            'actualizado_en' => optional($p->actualizado_en)->format('Y-m-d H:i:s'),
+            'detalles' => $detalles,
+        ];
+    }
+
+    private function loadPedidoRelations(Pedido $pedido): Pedido
+    {
+        $pedido->load([
+            'cliente:id,nombre,ruta_id,zona_id',
+            'vendedor:id,codigo,usuario_id',
+            'vendedor.usuario:id,usuario,nombre',
+            'ruta:id,nombre',
+            'zona:id,nombre',
+            'ubicacion:id,nombre,tipo',
+            'detalles.producto:id,nombre,sku',
+        ]);
+
+        return $pedido;
+    }
+
+    public function index(Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+        $vendedorAuthId = $this->resolveVendedorId($user);
+
+        $estado = $this->normalizeEstado($request->query('estado', ''));
+        $vendedorId = $request->query('vendedor_id');
+        $clienteId = $request->query('cliente_id');
+        $qText = trim((string) $request->query('q', ''));
+        $ubicacionId = $request->query('ubicacion_id');
+        $perPage = max(1, (int) $request->query('per_page', 10));
+
+        $query = Pedido::query()
+            ->with([
+                'cliente:id,nombre,ruta_id,zona_id',
+                'vendedor:id,codigo,usuario_id',
+                'vendedor.usuario:id,usuario,nombre',
+                'ruta:id,nombre',
+                'zona:id,nombre',
+                'ubicacion:id,nombre,tipo',
+                'detalles.producto:id,nombre,sku',
+            ])
+            ->orderByDesc('creado_en');
+
+        if ($role === 'super_admin') {
+            if ($ubicacionId) {
+                $query->where('ubicacion_id', (int) $ubicacionId);
+            }
+
+            if ($vendedorId) {
+                $query->where('vendedor_id', (int) $vendedorId);
+            }
+        } elseif ($role === 'admin') {
+            if (!$userUbicacionId) {
+                return response()->json([
+                    'message' => 'El admin no tiene una sucursal asignada.'
+                ], 403);
+            }
+
+            $query->where('ubicacion_id', $userUbicacionId);
+
+            if ($vendedorId) {
+                $query->where('vendedor_id', (int) $vendedorId);
+            }
+        } elseif ($role === 'vendedor') {
+            if (!$vendedorAuthId) {
+                return response()->json([
+                    'message' => 'No se encontró vendedor relacionado a este usuario.'
+                ], 403);
+            }
+
+            $query->where('vendedor_id', $vendedorAuthId);
+
+            if ($userUbicacionId) {
+                $query->where('ubicacion_id', $userUbicacionId);
+            }
+        } else {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($estado !== '') {
+            $query->where('estado', $estado);
+        }
+
+        if ($clienteId) {
+            $query->where('cliente_id', (int) $clienteId);
+        }
+
+        if ($qText !== '') {
+            $query->where(function ($sub) use ($qText) {
+                $sub->where('codigo', 'like', "%{$qText}%")
+                    ->orWhereHas('cliente', function ($q) use ($qText) {
+                        $q->where('nombre', 'like', "%{$qText}%");
+                    })
+                    ->orWhereHas('vendedor.usuario', function ($q) use ($qText) {
+                        $q->where('usuario', 'like', "%{$qText}%")
+                          ->orWhere('nombre', 'like', "%{$qText}%");
+                    })
+                    ->orWhereHas('vendedor', function ($q) use ($qText) {
+                        $q->where('codigo', 'like', "%{$qText}%");
+                    });
+            });
+        }
+
+        $page = $query->paginate($perPage);
+
+        return response()->json([
+            'current_page' => $page->currentPage(),
+            'last_page' => $page->lastPage(),
+            'per_page' => $page->perPage(),
+            'total' => $page->total(),
+            'data' => collect($page->items())
+                ->map(fn ($p) => $this->pedidoResponse($p))
+                ->values(),
+        ]);
+    }
+
+    public function misPedidos(Request $request)
+    {
+        $user = $request->user();
+        $vendedorAuthId = $this->resolveVendedorId($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+        $estado = $this->normalizeEstado($request->query('estado', ''));
+        $perPage = max(1, (int) $request->query('per_page', 20));
+
+        if (!$vendedorAuthId) {
+            return response()->json([
+                'message' => 'No se encontró vendedor relacionado a este usuario.'
+            ], 403);
+        }
+
+        $query = Pedido::query()
+            ->with([
+                'cliente:id,nombre,ruta_id,zona_id',
+                'vendedor:id,codigo,usuario_id',
+                'vendedor.usuario:id,usuario,nombre',
+                'ruta:id,nombre',
+                'zona:id,nombre',
+                'ubicacion:id,nombre,tipo',
+                'detalles.producto:id,nombre,sku',
+            ])
+            ->where('vendedor_id', $vendedorAuthId)
+            ->orderByDesc('creado_en');
+
+        if ($userUbicacionId) {
+            $query->where('ubicacion_id', $userUbicacionId);
+        }
+
+        if ($estado !== '') {
+            $query->where('estado', $estado);
+        }
+
+        $page = $query->paginate($perPage);
+
+        return response()->json([
+            'current_page' => $page->currentPage(),
+            'last_page' => $page->lastPage(),
+            'per_page' => $page->perPage(),
+            'total' => $page->total(),
+            'data' => collect($page->items())
+                ->map(fn ($p) => $this->pedidoResponse($p))
+                ->values(),
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+        $vendedorAuthId = $this->resolveVendedorId($user);
+
+        if (!in_array($role, ['vendedor', 'admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
         }
 
         $data = $request->validate([
-            'detalles' => 'required|array|min:1',
-            'detalles.*.id' => 'required|integer|exists:pedido_detalles,id',
-            'detalles.*.precio_variable' => 'required|boolean',
-            'detalles.*.precio_sugerido_1' => 'nullable|numeric|min:0',
-            'detalles.*.precio_sugerido_2' => 'nullable|numeric|min:0',
-            'detalles.*.precio_sugerido_3' => 'nullable|numeric|min:0',
-            'detalles.*.precio_unitario' => 'required|numeric|min:0',
+            'ubicacion_id' => ['nullable', 'integer', 'exists:ubicaciones,id'],
+            'cliente_id' => ['required', 'integer', 'exists:clientes,id'],
+            'vendedor_id' => ['nullable', 'integer', 'exists:vendedores,id'],
+            'ruta_id' => ['nullable', 'integer', 'exists:rutas,id'],
+            'zona_id' => ['nullable', 'integer', 'exists:zonas,id'],
+            'observaciones' => ['nullable', 'string'],
+            'total' => ['nullable', 'numeric', 'min:0'],
+            'detalles' => ['required', 'array', 'min:1'],
+            'detalles.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
+            'detalles.*.presentacion' => ['required', 'string', 'max:50'],
+            'detalles.*.cantidad' => ['nullable', 'numeric', 'min:0.01'],
+            'detalles.*.cantidad_base' => ['required', 'integer', 'min:1'],
+            'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0'],
+            'detalles.*.subtotal' => ['required', 'numeric', 'min:0'],
+            'detalles.*.es_monto_variable' => ['nullable', Rule::in([0, 1, '0', '1', true, false])],
+        ]);
+
+        if ($role === 'vendedor') {
+            if (!$userUbicacionId) {
+                return response()->json([
+                    'message' => 'El vendedor no tiene una sucursal asignada.'
+                ], 403);
+            }
+
+            if (!$vendedorAuthId) {
+                return response()->json([
+                    'message' => 'No se encontró vendedor relacionado a este usuario.'
+                ], 403);
+            }
+
+            $data['ubicacion_id'] = $userUbicacionId;
+            $data['vendedor_id'] = $vendedorAuthId;
+        }
+
+        if ($role === 'admin') {
+            if (!$userUbicacionId) {
+                return response()->json([
+                    'message' => 'El admin no tiene una sucursal asignada.'
+                ], 403);
+            }
+
+            $data['ubicacion_id'] = $userUbicacionId;
+
+            if (empty($data['vendedor_id'])) {
+                $data['vendedor_id'] = $vendedorAuthId ?: null;
+            }
+        }
+
+        if ($role === 'super_admin') {
+            $data['ubicacion_id'] = !empty($data['ubicacion_id']) ? (int) $data['ubicacion_id'] : null;
+            $data['vendedor_id'] = !empty($data['vendedor_id'])
+                ? (int) $data['vendedor_id']
+                : ($vendedorAuthId ?: null);
+        }
+
+        if (empty($data['ubicacion_id'])) {
+            return response()->json([
+                'message' => 'Debes indicar la sucursal del pedido.'
+            ], 422);
+        }
+
+        if (empty($data['vendedor_id'])) {
+            return response()->json([
+                'message' => 'No se encontró vendedor válido para este pedido.'
+            ], 422);
+        }
+
+        return DB::transaction(function () use ($data) {
+            $total = collect($data['detalles'])->sum(fn ($d) => (float) $d['subtotal']);
+
+            $pedido = Pedido::create([
+                'codigo' => $this->generarCodigo(),
+                'ubicacion_id' => (int) $data['ubicacion_id'],
+                'cliente_id' => (int) $data['cliente_id'],
+                'vendedor_id' => (int) $data['vendedor_id'],
+                'ruta_id' => !empty($data['ruta_id']) ? (int) $data['ruta_id'] : null,
+                'zona_id' => !empty($data['zona_id']) ? (int) $data['zona_id'] : null,
+                'estado' => 'pendiente_revision',
+                'observaciones' => $data['observaciones'] ?? null,
+                'total' => $total,
+                'fecha_pedido' => now()->toDateString(),
+                'canal' => 'ruta',
+                'creado_en' => now(),
+                'actualizado_en' => now(),
+            ]);
+
+            foreach ($data['detalles'] as $d) {
+                PedidoDetalle::create([
+                    'pedido_id' => $pedido->id,
+                    'producto_id' => (int) $d['producto_id'],
+                    'presentacion' => $d['presentacion'],
+                    'cantidad' => isset($d['cantidad']) ? (float) $d['cantidad'] : null,
+                    'cantidad_base' => (int) $d['cantidad_base'],
+                    'precio_unitario' => (float) $d['precio_unitario'],
+                    'subtotal' => (float) $d['subtotal'],
+                    'es_monto_variable' => !empty($d['es_monto_variable']) ? 1 : 0,
+                ]);
+            }
+
+            $this->loadPedidoRelations($pedido);
+
+            return response()->json([
+                'message' => 'Pedido creado correctamente.',
+                'data' => $this->pedidoResponse($pedido),
+            ], 201);
+        });
+    }
+
+    public function enviar(Pedido $pedido, Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $vendedorAuthId = $this->resolveVendedorId($user);
+
+        if ($role !== 'vendedor') {
+            return response()->json([
+                'message' => 'Solo un vendedor puede enviar pedidos.'
+            ], 403);
+        }
+
+        if (!$vendedorAuthId || (int) $pedido->vendedor_id !== $vendedorAuthId) {
+            return response()->json([
+                'message' => 'No puedes enviar un pedido que no es tuyo.'
+            ], 403);
+        }
+
+        if (!in_array($pedido->estado, ['borrador', 'pendiente_revision'], true)) {
+            return response()->json([
+                'message' => 'Este pedido ya no se puede enviar.'
+            ], 422);
+        }
+
+        $pedido->estado = 'pendiente_revision';
+        $pedido->actualizado_en = now();
+        $pedido->save();
+
+        $this->loadPedidoRelations($pedido);
+
+        return response()->json([
+            'message' => 'Pedido enviado al admin.',
+            'data' => $this->pedidoResponse($pedido),
+        ]);
+    }
+
+    public function aprobar(Pedido $pedido, Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+
+        if (!in_array($role, ['admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($role === 'admin' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+            return response()->json([
+                'message' => 'No puedes aprobar pedidos de otra sucursal.'
+            ], 403);
+        }
+
+        if (!in_array($pedido->estado, ['pendiente_revision', 'borrador'], true)) {
+            return response()->json([
+                'message' => 'El pedido no está en estado válido para aprobar.'
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'observaciones' => ['nullable', 'string'],
+            'detalles' => ['nullable', 'array'],
+            'detalles.*.id' => ['required', 'integer', 'exists:pedido_detalles,id'],
+            'detalles.*.presentacion' => ['nullable', 'string', 'max:50'],
+            'detalles.*.cantidad' => ['nullable', 'numeric', 'min:0.01'],
+            'detalles.*.cantidad_base' => ['nullable', 'integer', 'min:1'],
+            'detalles.*.precio_unitario' => ['nullable', 'numeric', 'min:0'],
+            'detalles.*.subtotal' => ['nullable', 'numeric', 'min:0'],
+            'detalles.*.es_monto_variable' => ['nullable', Rule::in([0, 1, '0', '1', true, false])],
         ]);
 
         return DB::transaction(function () use ($pedido, $data) {
-
-            $totalPedido = 0;
-
-            foreach ($data['detalles'] as $d) {
-                $det = PedidoDetalle::where('pedido_id', $pedido->id)->where('id', (int)$d['id'])->firstOrFail();
-
-                $precio = (float)$d['precio_unitario'];
-                $totalLinea = $precio * (int)$det->cantidad_base;
-
-                $det->precio_variable = (bool)$d['precio_variable'];
-                $det->precio_sugerido_1 = $d['precio_sugerido_1'] ?? null;
-                $det->precio_sugerido_2 = $d['precio_sugerido_2'] ?? null;
-                $det->precio_sugerido_3 = $d['precio_sugerido_3'] ?? null;
-                $det->precio_unitario = $precio;
-                $det->total_linea = $totalLinea;
-                $det->save();
-
-                $totalPedido += $totalLinea;
+            if (array_key_exists('observaciones', $data)) {
+                $pedido->observaciones = $data['observaciones'];
             }
 
+            if (!empty($data['detalles'])) {
+                foreach ($data['detalles'] as $d) {
+                    $det = PedidoDetalle::query()
+                        ->where('pedido_id', $pedido->id)
+                        ->where('id', (int) $d['id'])
+                        ->firstOrFail();
+
+                    if (array_key_exists('presentacion', $d)) {
+                        $det->presentacion = $d['presentacion'];
+                    }
+
+                    if (array_key_exists('cantidad', $d)) {
+                        $det->cantidad = $d['cantidad'] !== null ? (float) $d['cantidad'] : null;
+                    }
+
+                    if (array_key_exists('cantidad_base', $d)) {
+                        $det->cantidad_base = (int) $d['cantidad_base'];
+                    }
+
+                    if (array_key_exists('precio_unitario', $d)) {
+                        $det->precio_unitario = (float) $d['precio_unitario'];
+                    }
+
+                    if (array_key_exists('subtotal', $d)) {
+                        $det->subtotal = (float) $d['subtotal'];
+                    } else {
+                        $det->subtotal = (float) $det->precio_unitario;
+                    }
+
+                    if (array_key_exists('es_monto_variable', $d)) {
+                        $det->es_monto_variable = !empty($d['es_monto_variable']) ? 1 : 0;
+                    }
+
+                    $det->save();
+                }
+            }
+
+            $pedido->total = (float) $pedido->detalles()->sum('subtotal');
             $pedido->estado = 'aprobado';
             $pedido->actualizado_en = now();
             $pedido->save();
 
-            $pedido->load(['cliente','vendedor','detalles.producto.imagenPrincipal']);
+            $this->loadPedidoRelations($pedido);
 
             return response()->json([
                 'message' => 'Pedido aprobado.',
-                'total' => $totalPedido,
-                'data' => $pedido
+                'data' => $this->pedidoResponse($pedido),
             ]);
         });
     }
 
-    // POST /api/pedidos/{pedido}/preparar (admin prepara y descuenta stock)
     public function preparar(Pedido $pedido, Request $request)
     {
-        if ($pedido->estado !== 'aprobado') {
-            return response()->json(['message' => 'Solo se puede preparar un pedido aprobado.'], 422);
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+        $userId = (int) ($user->id ?? 0);
+
+        if (!in_array($role, ['admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
         }
 
-        $data = $request->validate([
-            'ubicacion_origen_id' => 'required|integer|exists:ubicaciones,id', // de dónde sale (bodega/tienda)
-        ]);
+        if ($role === 'admin' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+            return response()->json([
+                'message' => 'No puedes preparar pedidos de otra sucursal.'
+            ], 403);
+        }
 
-        $userId = (int)($request->user()?->id ?? auth()->id() ?? 0);
-        $ubicacionOrigenId = (int)$data['ubicacion_origen_id'];
+        if ($pedido->estado !== 'aprobado') {
+            return response()->json([
+                'message' => 'Solo se puede preparar un pedido aprobado.'
+            ], 422);
+        }
 
-        return DB::transaction(function () use ($pedido, $userId, $ubicacionOrigenId) {
-
-            // por cada línea, creamos una "salida" que descuente stock
+        return DB::transaction(function () use ($pedido, $userId) {
             foreach ($pedido->detalles()->get() as $det) {
+                $precio = ProductoPrecio::query()
+                    ->where('producto_id', $det->producto_id)
+                    ->whereRaw('LOWER(presentacion) = ?', [mb_strtolower((string) $det->presentacion)])
+                    ->where('activo', true)
+                    ->first();
+
+                if (!$precio) {
+                    return response()->json([
+                        'message' => "No existe la presentación {$det->presentacion} para el producto {$det->producto_id}."
+                    ], 422);
+                }
+
+                $factor = (float) ($precio->factor_base ?? 1);
+                $cantidad = max(1, (int) round(((int) $det->cantidad_base) / max($factor, 1)));
+
                 $this->stockService->apply([
-                    'tipo' => 'salida', // enum real
-                    'ubicacion_origen_id' => $ubicacionOrigenId,
-                    'producto_id' => (int)$det->producto_id,
-                    'cantidad_base' => (int)$det->cantidad_base,
-                    'motivo' => "Salida por pedido {$pedido->codigo}",
+                    'tipo' => 'salida',
+                    'ubicacion_origen_id' => (int) $pedido->ubicacion_id,
+                    'producto_id' => (int) $det->producto_id,
+                    'presentacion' => $precio->presentacion,
+                    'cantidad' => $cantidad,
+                    'motivo' => "Salida por pedido #{$pedido->id}",
                     'referencia_tipo' => 'pedido',
-                    'referencia_id' => (int)$pedido->id,
+                    'referencia_id' => (int) $pedido->id,
                 ], $userId);
             }
 
-            $pedido->estado = 'preparado';
+            $pedido->estado = 'preparando';
             $pedido->actualizado_en = now();
             $pedido->save();
 
-            return response()->json(['message' => 'Pedido preparado y stock descontado.', 'data' => $pedido]);
+            $this->loadPedidoRelations($pedido);
+
+            return response()->json([
+                'message' => 'Pedido marcado como preparando.',
+                'data' => $this->pedidoResponse($pedido),
+            ]);
         });
     }
 
-    // POST /api/pedidos/{pedido}/entregar (vendedor marca entregado)
     public function entregar(Pedido $pedido, Request $request)
     {
-        if (!in_array($pedido->estado, ['preparado','en_ruta'], true)) {
-            return response()->json(['message' => 'Solo se puede entregar un pedido preparado o en ruta.'], 422);
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+        $vendedorAuthId = $this->resolveVendedorId($user);
+
+        if (!in_array($role, ['vendedor', 'admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
         }
 
-        $data = $request->validate([
-            'fecha_entrega' => 'nullable|date',
-        ]);
+        if ($role === 'admin' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+            return response()->json([
+                'message' => 'No puedes entregar pedidos de otra sucursal.'
+            ], 403);
+        }
+
+        if ($role === 'vendedor' && (!$vendedorAuthId || (int) $pedido->vendedor_id !== $vendedorAuthId)) {
+            return response()->json([
+                'message' => 'No puedes entregar pedidos de otro vendedor.'
+            ], 403);
+        }
+
+        if (!in_array($pedido->estado, ['preparando', 'aprobado'], true)) {
+            return response()->json([
+                'message' => 'Solo se puede entregar un pedido preparado.'
+            ], 422);
+        }
 
         $pedido->estado = 'entregado';
-        $pedido->fecha_entrega = $data['fecha_entrega'] ?? now()->toDateString();
-        $pedido->entregado_en = now();
         $pedido->actualizado_en = now();
+        $pedido->entregado_en = now();
         $pedido->save();
 
-        return response()->json(['message' => 'Pedido entregado.', 'data' => $pedido]);
-    }
+        $this->loadPedidoRelations($pedido);
 
-    // =========================
-    // Helpers
-    // =========================
+        return response()->json([
+            'message' => 'Pedido entregado.',
+            'data' => $this->pedidoResponse($pedido),
+        ]);
+    }
 
     private function generarCodigo(): string
     {
         return 'PED-' . now()->format('Ymd-His') . '-' . random_int(100, 999);
-    }
-
-    private function calcularCantidadBase(int $productoId, string $unidad, int $cantidad, ?int $cantidadBaseRequest): int
-    {
-        // Si el frontend ya manda cantidad_base, la respetamos
-        if ($cantidadBaseRequest !== null) {
-            return (int)$cantidadBaseRequest;
-        }
-
-        // Intentamos buscar factor en producto_unidades (si existe la unidad ahí)
-        $pu = ProductoUnidad::query()
-            ->where('producto_id', $productoId)
-            ->where('nombre', $unidad) // ajusta si tu columna se llama distinto
-            ->first();
-
-        $factor = $pu?->factor ?? 1; // ajusta si tu columna se llama distinto
-        return $cantidad * (int)$factor;
     }
 }

@@ -57,6 +57,7 @@ class StockService
             }
 
             $factor = (float) $precio->factor_base;
+
             if ($factor <= 0) {
                 throw ValidationException::withMessages([
                     'presentacion' => 'La presentación tiene un factor inválido.',
@@ -171,7 +172,12 @@ class StockService
         return $tipo;
     }
 
-    private function sumar(int $productoPrecioId, int $productoId, int $ubicacionId, int $qty, int $qtyBase): void
+    /**
+     * Busca el stock existente usando la combinación más segura:
+     * producto_precio_id + ubicacion_id
+     * y como respaldo producto_id + ubicacion_id.
+     */
+    private function buscarStock(int $productoPrecioId, int $productoId, int $ubicacionId): ?Stock
     {
         $stock = Stock::query()
             ->where('producto_precio_id', $productoPrecioId)
@@ -179,14 +185,34 @@ class StockService
             ->lockForUpdate()
             ->first();
 
+        if ($stock) {
+            return $stock;
+        }
+
+        return Stock::query()
+            ->where('producto_id', $productoId)
+            ->where('ubicacion_id', $ubicacionId)
+            ->lockForUpdate()
+            ->first();
+    }
+
+    private function sumar(int $productoPrecioId, int $productoId, int $ubicacionId, int $qty, int $qtyBase): void
+    {
+        $stock = $this->buscarStock($productoPrecioId, $productoId, $ubicacionId);
+
         if (!$stock) {
-            $stock = Stock::create([
-                'producto_id' => $productoId,
-                'producto_precio_id' => $productoPrecioId,
-                'ubicacion_id' => $ubicacionId,
-                'cantidad' => 0,
-                'cantidad_base' => 0,
-            ]);
+            $stock = new Stock();
+            $stock->producto_id = $productoId;
+            $stock->producto_precio_id = $productoPrecioId;
+            $stock->ubicacion_id = $ubicacionId;
+            $stock->cantidad = 0;
+            $stock->cantidad_base = 0;
+        } else {
+            // Si encontró una fila vieja por producto_id+ubicacion_id pero sin el precio correcto,
+            // la normalizamos para que quede consistente.
+            $stock->producto_id = $productoId;
+            $stock->producto_precio_id = $productoPrecioId;
+            $stock->ubicacion_id = $ubicacionId;
         }
 
         $stock->cantidad = (int) $stock->cantidad + $qty;
@@ -197,11 +223,7 @@ class StockService
 
     private function restar(int $productoPrecioId, int $productoId, int $ubicacionId, int $qty, int $qtyBase): void
     {
-        $stock = Stock::query()
-            ->where('producto_precio_id', $productoPrecioId)
-            ->where('ubicacion_id', $ubicacionId)
-            ->lockForUpdate()
-            ->first();
+        $stock = $this->buscarStock($productoPrecioId, $productoId, $ubicacionId);
 
         if (!$stock) {
             throw ValidationException::withMessages([
@@ -223,20 +245,19 @@ class StockService
 
     private function ajustarDelta(int $productoPrecioId, int $productoId, int $ubicacionId, int $qty, int $qtyBase): void
     {
-        $stock = Stock::query()
-            ->where('producto_precio_id', $productoPrecioId)
-            ->where('ubicacion_id', $ubicacionId)
-            ->lockForUpdate()
-            ->first();
+        $stock = $this->buscarStock($productoPrecioId, $productoId, $ubicacionId);
 
         if (!$stock) {
-            $stock = Stock::create([
-                'producto_id' => $productoId,
-                'producto_precio_id' => $productoPrecioId,
-                'ubicacion_id' => $ubicacionId,
-                'cantidad' => 0,
-                'cantidad_base' => 0,
-            ]);
+            $stock = new Stock();
+            $stock->producto_id = $productoId;
+            $stock->producto_precio_id = $productoPrecioId;
+            $stock->ubicacion_id = $ubicacionId;
+            $stock->cantidad = 0;
+            $stock->cantidad_base = 0;
+        } else {
+            $stock->producto_id = $productoId;
+            $stock->producto_precio_id = $productoPrecioId;
+            $stock->ubicacion_id = $ubicacionId;
         }
 
         $nuevo = (int) $stock->cantidad + $qty;

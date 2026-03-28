@@ -16,27 +16,33 @@ class Pedido extends Model
 
     protected $fillable = [
         'codigo',
+        'ubicacion_id',
         'cliente_id',
         'vendedor_id',
+        'ruta_id',
+        'zona_id',
         'estado',
         'fecha_pedido',
-        'notas',
+        'observaciones',
+        'total',
         'fecha_entrega',
         'entregado_en',
         'canal',
     ];
 
     protected $casts = [
-        'fecha_pedido'  => 'date',
-        'fecha_entrega' => 'date',
-        'entregado_en'  => 'datetime',
-        'creado_en'     => 'datetime',
-        'actualizado_en'=> 'datetime',
+        'ubicacion_id'   => 'int',
+        'cliente_id'     => 'int',
+        'vendedor_id'    => 'int',
+        'ruta_id'        => 'int',
+        'zona_id'        => 'int',
+        'total'          => 'decimal:2',
+        'fecha_pedido'   => 'date',
+        'fecha_entrega'  => 'date',
+        'entregado_en'   => 'datetime',
+        'creado_en'      => 'datetime',
+        'actualizado_en' => 'datetime',
     ];
-
-    // =========================
-    // Relaciones
-    // =========================
 
     public function detalles()
     {
@@ -50,8 +56,21 @@ class Pedido extends Model
 
     public function vendedor()
     {
-        return $this->belongsTo(Usuario::class, 'vendedor_id');
-        // Si tu vendedor es otra tabla (Vendedor.php), lo cambiamos.
-        // return $this->belongsTo(Vendedor::class, 'vendedor_id');
+        return $this->belongsTo(Vendedor::class, 'vendedor_id');
+    }
+
+    public function ruta()
+    {
+        return $this->belongsTo(Ruta::class, 'ruta_id');
+    }
+
+    public function zona()
+    {
+        return $this->belongsTo(Zona::class, 'zona_id');
+    }
+
+    public function ubicacion()
+    {
+        return $this->belongsTo(Ubicacion::class, 'ubicacion_id');
     }
 }

@@ -23,6 +23,7 @@ import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 function normalizeRole(r) {
   const x = (r || "").toString().trim().toLowerCase();
   if (x === "cajero") return "caja";
+  if (x === "superadmin") return "super_admin";
   return x;
 }
 
@@ -33,19 +34,21 @@ export default function Layout({ children }) {
 
   const logged = isLoggedIn();
   const me = getSession()?.user;
-  const rol = normalizeRole(me?.rol);
+  const rol = normalizeRole(me?.rol || me?.role);
 
-  const isAdmin = logged && (rol === "admin" || rol === "super_admin");
+  const isSuperAdmin = logged && rol === "super_admin";
+  const isAdmin = logged && rol === "admin";
+  const isAdminLike = logged && (rol === "admin" || rol === "super_admin");
   const isVendedor = logged && rol === "vendedor";
   const isCaja = logged && rol === "caja";
 
   const homeLink = useMemo(() => {
     if (!logged) return "/login";
-    if (isAdmin) return "/usuarios";
+    if (isAdminLike) return "/pedidos-admin";
     if (isCaja) return "/caja";
     if (isVendedor) return "/pedidos#crear-pedido";
     return "/login";
-  }, [logged, isAdmin, isCaja, isVendedor]);
+  }, [logged, isAdminLike, isCaja, isVendedor]);
 
   const vendedorEnPedidos = isVendedor && loc.pathname === "/pedidos";
   const vendedorVista = loc.hash === "#mis-pedidos" ? "mios" : "crear";
@@ -60,63 +63,63 @@ export default function Layout({ children }) {
       to: "/pedidos-admin",
       label: "Pedidos",
       icon: <ShoppingCart size={16} />,
-      show: isAdmin,
+      show: isAdminLike,
       active: loc.pathname.startsWith("/pedidos-admin"),
     },
     {
       to: "/usuarios",
       label: "Usuarios",
       icon: <Users size={16} />,
-      show: isAdmin,
+      show: isSuperAdmin,
       active: loc.pathname.startsWith("/usuarios"),
     },
     {
       to: "/vendedores",
       label: "Vendedores",
       icon: <UserCog size={16} />,
-      show: isAdmin,
+      show: isAdminLike,
       active: loc.pathname.startsWith("/vendedores"),
     },
     {
       to: "/zonas",
       label: "Zonas",
       icon: <MapPinned size={16} />,
-      show: isAdmin,
+      show: isAdminLike,
       active: loc.pathname.startsWith("/zonas"),
     },
     {
       to: "/rutas",
       label: "Rutas",
       icon: <Route size={16} />,
-      show: isAdmin,
+      show: isAdminLike,
       active: loc.pathname.startsWith("/rutas"),
     },
     {
       to: "/productos",
       label: "Productos",
       icon: <Package size={16} />,
-      show: isAdmin,
+      show: isAdminLike,
       active: loc.pathname.startsWith("/productos"),
     },
     {
       to: "/stock",
       label: "Inventario",
       icon: <Boxes size={16} />,
-      show: isAdmin,
+      show: isAdminLike,
       active: loc.pathname.startsWith("/stock"),
     },
     {
       to: "/movimientos-stock",
       label: "Movimientos",
       icon: <ArrowLeftRight size={16} />,
-      show: isAdmin,
+      show: isAdminLike,
       active: loc.pathname.startsWith("/movimientos-stock"),
     },
     {
       to: "/caja",
       label: "Caja",
       icon: <Wallet size={16} />,
-      show: logged && (isAdmin || isCaja),
+      show: logged && (isAdminLike || isCaja),
       active: loc.pathname.startsWith("/caja"),
     },
   ].filter((item) => item.show);
@@ -129,7 +132,7 @@ export default function Layout({ children }) {
             <div className="lux-brand-logo">P</div>
 
             <div className="lux-brand-copy">
-              <strong>Plastiquería</strong>
+              <strong>Plastimax</strong>
               <span>Panel administrativo</span>
             </div>
           </Link>
@@ -188,7 +191,7 @@ export default function Layout({ children }) {
           </div>
         </div>
 
-        {isAdmin && (
+        {isAdminLike && (
           <nav className="lux-admin-nav desktop-only">
             {adminLinks.map((item) => (
               <NavItem key={item.to} {...item} />

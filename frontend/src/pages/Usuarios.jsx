@@ -1,4 +1,3 @@
-// src/pages/Usuarios.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
@@ -24,6 +23,22 @@ function formatBackendError(err) {
     if (lines.length) return lines.join("\n");
   }
   return data?.message || err?.message || "Ocurrió un error";
+}
+
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap" aria-label="Cargando">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
 }
 
 export default function Usuarios() {
@@ -70,7 +85,6 @@ export default function Usuarios() {
       const res = await api.ubicacionesList();
       let list = Array.isArray(res) ? res : res?.data || [];
 
-      // Solo activas, por si quieres evitar asignar usuarios a sucursales desactivadas
       list = list.filter((u) => Number(u.activa) === 1 || u.activa === true);
 
       setUbicaciones(list);
@@ -100,12 +114,9 @@ export default function Usuarios() {
     if (!s) return items;
 
     return items.filter((u) => {
-      const ubicacionNombre =
-        u.ubicacion?.nombre ||
-        u.ubicacion_nombre ||
-        "";
-
-      const a = `${u.nombre || ""} ${u.usuario || ""} ${u.telefono || ""} ${u.rol || ""} ${ubicacionNombre}`.toLowerCase();
+      const ubicacionNombre = u.ubicacion?.nombre || u.ubicacion_nombre || "";
+      const a =
+        `${u.nombre || ""} ${u.usuario || ""} ${u.telefono || ""} ${u.rol || ""} ${ubicacionNombre}`.toLowerCase();
 
       return a.includes(s);
     });
@@ -225,8 +236,8 @@ export default function Usuarios() {
                 />
               </div>
 
-              <div className="muted small">
-                {loading ? "Cargando..." : `${filtered.length} usuario(s)`}
+              <div className="muted small users-count-box">
+                {loading ? <InlineLoader /> : `${filtered.length} usuario(s)`}
               </div>
 
               <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
@@ -270,8 +281,8 @@ export default function Usuarios() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan="7" className="muted">
-                        Cargando…
+                      <td colSpan="7" className="users-loader-cell">
+                        <TableLoader />
                       </td>
                     </tr>
                   ) : filtered.length === 0 ? (
@@ -288,9 +299,7 @@ export default function Usuarios() {
                           <span className="pill">{u.usuario}</span>
                         </td>
                         <td>{u.telefono || "—"}</td>
-                        <td>
-                          {u.ubicacion?.nombre || u.ubicacion_nombre || "—"}
-                        </td>
+                        <td>{u.ubicacion?.nombre || u.ubicacion_nombre || "—"}</td>
                         <td>
                           <span className="badge">{u.rol}</span>
                         </td>

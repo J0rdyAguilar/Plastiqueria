@@ -24,6 +24,31 @@ function formatBackendError(err) {
   return data?.message || err?.message || "Ocurrió un error";
 }
 
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap" aria-label="Cargando">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
+}
+
+function ModalLoader({ text = "Cargando..." }) {
+  return (
+    <div className="modal-loader-wrap" aria-label={text}>
+      <div className="modal-loader-ring"></div>
+      <div className="modal-loader-text">{text}</div>
+    </div>
+  );
+}
+
 export default function Vendedores() {
   const nav = useNavigate();
   const me = getSession()?.user;
@@ -54,9 +79,8 @@ export default function Vendedores() {
     setError("");
     setLoading(true);
     try {
-      // Puede venir paginado: {data:[]}
       const res = await vendedoresApi.list({ per_page: 100 });
-      const list = Array.isArray(res) ? res : (res?.data || []);
+      const list = Array.isArray(res) ? res : res?.data || [];
       setItems(list);
     } catch (err) {
       setError(formatBackendError(err));
@@ -70,7 +94,7 @@ export default function Vendedores() {
     setLoadingUsuarios(true);
     try {
       const res = await api.usuariosList();
-      const list = Array.isArray(res) ? res : (res?.data || []);
+      const list = Array.isArray(res) ? res : res?.data || [];
       const vend = list.filter((u) => u.rol === "vendedor" && !!u.activo);
       setUsuariosVend(vend);
     } catch (err) {
@@ -86,11 +110,10 @@ export default function Vendedores() {
     setRutaIds([]);
     setOpenRutas(true);
 
-    // 1) Catálogo de rutas
     setLoadingRutas(true);
     try {
       const res = await rutasApi.list({ per_page: 500 });
-      const list = Array.isArray(res) ? res : (res?.data || []);
+      const list = Array.isArray(res) ? res : res?.data || [];
       setRutas(list);
     } catch (err) {
       setError(formatBackendError(err));
@@ -98,13 +121,12 @@ export default function Vendedores() {
       setLoadingRutas(false);
     }
 
-    // 2) Traer rutas ya asignadas con show
     try {
       const full = await api.vendedoresShow(v.id);
       const ids = (full?.rutas || []).map((r) => r.id);
       setRutaIds(ids);
     } catch (err) {
-      // no bloquea; si falta endpoint show o falla, igual podés asignar
+      // no bloquea si falla
     }
   }
 
@@ -217,258 +239,263 @@ export default function Vendedores() {
     }
   }
 
-  // helpers UI
   function rutasResumen(v) {
     const rs = v.rutas || [];
     if (!rs.length) return "—";
-    // si tu backend trae ruta.zona, mostrará "Zona - Ruta"
     return rs
       .map((r) => (r?.zona?.nombre ? `${r.zona.nombre} - ${r.nombre}` : r.nombre))
       .join(", ");
   }
 
   return (
-   
-      <div className="page">
-        <header className="topbar">
-          <div>
-            <h2>Vendedores</h2>
-            <p className="muted">
-              Sesión: <b>{me?.nombre || me?.usuario || "—"}</b> ({me?.rol || "—"})
-            </p>
+    <div className="page">
+      <header className="topbar">
+        <div>
+          <h2>Vendedores</h2>
+          <p className="muted">
+            Sesión: <b>{me?.nombre || me?.usuario || "—"}</b> ({me?.rol || "—"})
+          </p>
+        </div>
+
+        <div className="topbar-actions">
+          <button className="btn" onClick={load} disabled={loading || busy}>
+            Recargar
+          </button>
+          <button className="btn primary" onClick={openCreate} disabled={busy}>
+            + Nuevo
+          </button>
+        </div>
+      </header>
+
+      <div className="card pad">
+        <div className="row">
+          <div className="search">
+            <input
+              placeholder="Buscar por nombre, usuario, teléfono, código o ruta…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
           </div>
 
-          <div className="topbar-actions">
-            <button className="btn" onClick={load} disabled={loading || busy}>
-              Recargar
-            </button>
-            <button className="btn primary" onClick={openCreate} disabled={busy}>
-              + Nuevo
-            </button>
-          </div>
-        </header>
-
-        <div className="card pad">
-          <div className="row">
-            <div className="search">
-              <input
-                placeholder="Buscar por nombre, usuario, teléfono, código o ruta…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-            </div>
-            <div className="muted small">
-              {loading ? "Cargando..." : `${filtered.length} vendedor(es)`}
-            </div>
-          </div>
-
-          {error ? (
-            <div className="alert" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
-              {error}
-            </div>
-          ) : null}
-
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Nombre</th>
-                  <th>Usuario</th>
-                  <th>Teléfono</th>
-                  <th>Código</th>
-                  <th>Rutas</th>
-                  <th>Activo</th>
-                  <th className="right">Acciones</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan="7" className="muted">
-                      Cargando…
-                    </td>
-                  </tr>
-                ) : filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan="7" className="muted">
-                      Sin resultados
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((v) => {
-                    const u = v.usuario || {};
-                    const activoUsuario = !!u.activo;
-
-                    return (
-                      <tr key={v.id}>
-                        <td>{u.nombre || "—"}</td>
-                        <td>
-                          <span className="pill">{u.usuario || "—"}</span>
-                        </td>
-                        <td>{u.telefono || "—"}</td>
-                        <td>{v.codigo || "—"}</td>
-                        <td style={{ maxWidth: 380, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {rutasResumen(v)}
-                        </td>
-                        <td>
-                          {activoUsuario ? (
-                            <span className="dot ok">Activo</span>
-                          ) : (
-                            <span className="dot off">Inactivo</span>
-                          )}
-                        </td>
-                        <td className="right">
-                          <button className="btn sm" onClick={() => abrirAsignarRutas(v)} disabled={busy}>
-                            Rutas
-                          </button>
-                          <button className="btn sm" onClick={() => openEdit(v)} disabled={busy}>
-                            Editar
-                          </button>
-                          <button className="btn sm danger" onClick={() => del(v)} disabled={busy}>
-                            Eliminar
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+          <div className="muted small users-count-box">
+            {loading ? <InlineLoader /> : `${filtered.length} vendedor(es)`}
           </div>
         </div>
 
-        {/* MODAL CREAR/EDITAR */}
-        {open ? (
-          <div className="modal-backdrop" onMouseDown={() => !busy && setOpen(false)}>
-            <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="modal-head">
-                <div>
-                  <h3>{editing ? "Editar vendedor" : "Nuevo vendedor"}</h3>
-                  <p className="muted small">
-                    {editing
-                      ? "Actualiza el código del vendedor."
-                      : "Crea un vendedor vinculado a un usuario con rol vendedor."}
-                  </p>
-                </div>
-                <button className="iconbtn" onClick={() => !busy && setOpen(false)}>
-                  ✕
-                </button>
-              </div>
-
-              {error ? (
-                <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
-                  {error}
-                </div>
-              ) : null}
-
-              <form onSubmit={save} className="grid">
-                {!editing ? (
-                  <div className="field">
-                    <label>Usuario (rol vendedor)</label>
-
-                    <select
-                      value={form.usuario_id}
-                      onChange={(e) => setForm({ ...form, usuario_id: e.target.value })}
-                      disabled={loadingUsuarios}
-                    >
-                      <option value="">
-                        {loadingUsuarios ? "Cargando usuarios..." : "Seleccione un usuario vendedor..."}
-                      </option>
-                      {usuariosVend.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.nombre} ({u.usuario})
-                        </option>
-                      ))}
-                    </select>
-
-                    <p className="hint" style={{ marginTop: 6 }}>
-                      Solo aparecen usuarios con rol <b>vendedor</b> y activos.
-                    </p>
-                  </div>
-                ) : null}
-
-                <div className="field">
-                  <label>Código</label>
-                  <input
-                    value={form.codigo}
-                    onChange={(e) => setForm({ ...form, codigo: e.target.value })}
-                    placeholder="Ej: VEND-001"
-                  />
-                </div>
-
-                <div className="modal-actions">
-                  <button type="button" className="btn" onClick={() => !busy && setOpen(false)}>
-                    Cancelar
-                  </button>
-                  <button className="btn primary" disabled={busy}>
-                    {busy ? "Guardando..." : "Guardar"}
-                  </button>
-                </div>
-              </form>
-            </div>
+        {error ? (
+          <div className="alert" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
+            {error}
           </div>
         ) : null}
 
-        {/* MODAL ASIGNAR RUTAS */}
-        {openRutas ? (
-          <div className="modal-backdrop" onMouseDown={() => !busy && setOpenRutas(false)}>
-            <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="modal-head">
-                <div>
-                  <h3>Asignar rutas</h3>
-                  <p className="muted small">
-                    Vendedor:{" "}
-                    <b>{vendedorRutas?.usuario?.nombre || vendedorRutas?.usuario?.usuario || "—"}</b>
-                  </p>
-                </div>
-                <button className="iconbtn" onClick={() => !busy && setOpenRutas(false)}>
-                  ✕
-                </button>
-              </div>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Usuario</th>
+                <th>Teléfono</th>
+                <th>Código</th>
+                <th>Rutas</th>
+                <th>Activo</th>
+                <th className="right">Acciones</th>
+              </tr>
+            </thead>
 
-              {error ? (
-                <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
-                  {error}
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan="7" className="users-loader-cell">
+                    <TableLoader />
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="muted">
+                    Sin resultados
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((v) => {
+                  const u = v.usuario || {};
+                  const activoUsuario = !!u.activo;
+
+                  return (
+                    <tr key={v.id}>
+                      <td>{u.nombre || "—"}</td>
+                      <td>
+                        <span className="pill">{u.usuario || "—"}</span>
+                      </td>
+                      <td>{u.telefono || "—"}</td>
+                      <td>{v.codigo || "—"}</td>
+                      <td
+                        style={{
+                          maxWidth: 380,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {rutasResumen(v)}
+                      </td>
+                      <td>
+                        {activoUsuario ? (
+                          <span className="dot ok">Activo</span>
+                        ) : (
+                          <span className="dot off">Inactivo</span>
+                        )}
+                      </td>
+                      <td className="right">
+                        <button className="btn sm" onClick={() => abrirAsignarRutas(v)} disabled={busy}>
+                          Rutas
+                        </button>
+                        <button className="btn sm" onClick={() => openEdit(v)} disabled={busy}>
+                          Editar
+                        </button>
+                        <button className="btn sm danger" onClick={() => del(v)} disabled={busy}>
+                          Eliminar
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {open ? (
+        <div className="modal-backdrop" onMouseDown={() => !busy && setOpen(false)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h3>{editing ? "Editar vendedor" : "Nuevo vendedor"}</h3>
+                <p className="muted small">
+                  {editing
+                    ? "Actualiza el código del vendedor."
+                    : "Crea un vendedor vinculado a un usuario con rol vendedor."}
+                </p>
+              </div>
+              <button className="iconbtn" onClick={() => !busy && setOpen(false)}>
+                ✕
+              </button>
+            </div>
+
+            {error ? (
+              <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
+                {error}
+              </div>
+            ) : null}
+
+            <form onSubmit={save} className="grid">
+              {!editing ? (
+                <div className="field">
+                  <label>Usuario (rol vendedor)</label>
+
+                  {loadingUsuarios ? (
+                    <ModalLoader text="Cargando usuarios..." />
+                  ) : (
+                    <>
+                      <select
+                        value={form.usuario_id}
+                        onChange={(e) => setForm({ ...form, usuario_id: e.target.value })}
+                      >
+                        <option value="">Seleccione un usuario vendedor...</option>
+                        {usuariosVend.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.nombre} ({u.usuario})
+                          </option>
+                        ))}
+                      </select>
+
+                      <p className="hint" style={{ marginTop: 6 }}>
+                        Solo aparecen usuarios con rol <b>vendedor</b> y activos.
+                      </p>
+                    </>
+                  )}
                 </div>
               ) : null}
 
-              <div className="card pad" style={{ marginTop: 10 }}>
-                {loadingRutas ? (
-                  <div className="muted">Cargando rutas…</div>
-                ) : rutas.length === 0 ? (
-                  <div className="muted">No hay rutas creadas.</div>
-                ) : (
-                  <div className="routes-list">
-                    {rutas.map((r) => (
-                      <label key={r.id} className="row" style={{ alignItems: "center", gap: 10 }}>
-                        <input
-                          type="checkbox"
-                          className="route-check"
-                          checked={rutaIds.includes(r.id)}
-                          onChange={() => toggleRuta(r.id)}
-                          disabled={busy}
-                        />
-                        <span className="route-name">{r.nombre}</span>
-                        {r.zona?.nombre ? <span className="route-zone">{r.zona.nombre}</span> : null}
-                      </label>
-                    ))}
-                  </div>
-                )}
+              <div className="field">
+                <label>Código</label>
+                <input
+                  value={form.codigo}
+                  onChange={(e) => setForm({ ...form, codigo: e.target.value })}
+                  placeholder="Ej: VEND-001"
+                />
               </div>
 
               <div className="modal-actions">
-                <button type="button" className="btn" onClick={() => !busy && setOpenRutas(false)}>
+                <button type="button" className="btn" onClick={() => !busy && setOpen(false)}>
                   Cancelar
                 </button>
-                <button className="btn primary" onClick={guardarRutas} disabled={busy || loadingRutas}>
-                  {busy ? "Guardando..." : "Guardar rutas"}
+                <button className="btn primary" disabled={busy || loadingUsuarios}>
+                  {busy ? "Guardando..." : "Guardar"}
                 </button>
               </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {openRutas ? (
+        <div className="modal-backdrop" onMouseDown={() => !busy && setOpenRutas(false)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h3>Asignar rutas</h3>
+                <p className="muted small">
+                  Vendedor:{" "}
+                  <b>{vendedorRutas?.usuario?.nombre || vendedorRutas?.usuario?.usuario || "—"}</b>
+                </p>
+              </div>
+              <button className="iconbtn" onClick={() => !busy && setOpenRutas(false)}>
+                ✕
+              </button>
+            </div>
+
+            {error ? (
+              <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
+                {error}
+              </div>
+            ) : null}
+
+            <div className="card pad" style={{ marginTop: 10 }}>
+              {loadingRutas ? (
+                <ModalLoader text="Cargando rutas..." />
+              ) : rutas.length === 0 ? (
+                <div className="muted">No hay rutas creadas.</div>
+              ) : (
+                <div className="routes-list">
+                  {rutas.map((r) => (
+                    <label key={r.id} className="row" style={{ alignItems: "center", gap: 10 }}>
+                      <input
+                        type="checkbox"
+                        className="route-check"
+                        checked={rutaIds.includes(r.id)}
+                        onChange={() => toggleRuta(r.id)}
+                        disabled={busy}
+                      />
+                      <span className="route-name">{r.nombre}</span>
+                      {r.zona?.nombre ? <span className="route-zone">{r.zona.nombre}</span> : null}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => !busy && setOpenRutas(false)}>
+                Cancelar
+              </button>
+              <button className="btn primary" onClick={guardarRutas} disabled={busy || loadingRutas}>
+                {busy ? "Guardando..." : "Guardar rutas"}
+              </button>
             </div>
           </div>
-        ) : null}
-      </div>
-    
+        </div>
+      ) : null}
+    </div>
   );
 }

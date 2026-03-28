@@ -3,9 +3,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { getSession } from "../lib/auth";
 import { useNavigate } from "react-router-dom";
+import { notify } from "../lib/notify";
 
 function formatBackendError(err) {
-  const data = err?.data;
+  const data = err?.data || err?.response?.data;
+
   if (data?.errors && typeof data.errors === "object") {
     const lines = [];
     for (const [k, arr] of Object.entries(data.errors)) {
@@ -13,6 +15,7 @@ function formatBackendError(err) {
     }
     if (lines.length) return lines.join("\n");
   }
+
   return data?.message || err?.message || "Ocurrió un error";
 }
 
@@ -30,7 +33,6 @@ export default function Caja() {
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   const [actual, setActual] = useState(null);
   const [historial, setHistorial] = useState([]);
@@ -43,15 +45,13 @@ export default function Caja() {
 
   const isAbierta = !!actual && !actual?.cerrado_en;
 
-  async function load() {
-    setError("");
+  async function load(showToastError = false) {
     setLoading(true);
+
     try {
-      // actual
       const r1 = await api.cajaActual({ ubicacion_id: Number(ubicacionId) });
       setActual(r1?.data || null);
 
-      // historial
       const r2 = await api.cajaHistorial({
         ubicacion_id: Number(ubicacionId),
         per_page: 20,
@@ -60,16 +60,24 @@ export default function Caja() {
       const list = Array.isArray(r2) ? r2 : r2?.data || [];
       setHistorial(list);
     } catch (err) {
-      setError(formatBackendError(err));
-      if (err?.status === 401) nav("/login", { replace: true });
+      const message = formatBackendError(err);
+
+      if (err?.status === 401 || err?.response?.status === 401) {
+        notify.error("Tu sesión venció. Vuelve a iniciar sesión.");
+        nav("/login", { replace: true });
+        return;
+      }
+
+      if (showToastError) {
+        notify.error(message, "No se pudo cargar la caja");
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  // ✅ cargar al inicio
   useEffect(() => {
-    load();
+    load(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -88,16 +96,24 @@ export default function Caja() {
   async function abrirCaja(e) {
     e.preventDefault();
     setBusy(true);
-    setError("");
+
     try {
-      await api.cajaAbrir({
-        ubicacion_id: Number(ubicacionId),
-        efectivo_inicial: Number(efectivoInicial),
-        notas: (notasAbrir || "").trim() || null,
-      });
-      await load();
+      await notify.promise(
+        api.cajaAbrir({
+          ubicacion_id: Number(ubicacionId),
+          efectivo_inicial: Number(efectivoInicial),
+          notas: (notasAbrir || "").trim() || null,
+        }),
+        {
+          loading: "Abriendo caja...",
+          success: "Caja abierta correctamente",
+          error: "No se pudo abrir la caja",
+        }
+      );
+
+      await load(false);
     } catch (err) {
-      setError(formatBackendError(err));
+      console.error(err);
     } finally {
       setBusy(false);
     }
@@ -106,16 +122,24 @@ export default function Caja() {
   async function cerrarCaja(e) {
     e.preventDefault();
     setBusy(true);
-    setError("");
+
     try {
-      await api.cajaCerrar({
-        ubicacion_id: Number(ubicacionId),
-        efectivo_final: Number(efectivoFinal),
-        notas: (notasCerrar || "").trim() || null,
-      });
-      await load();
+      await notify.promise(
+        api.cajaCerrar({
+          ubicacion_id: Number(ubicacionId),
+          efectivo_final: Number(efectivoFinal),
+          notas: (notasCerrar || "").trim() || null,
+        }),
+        {
+          loading: "Cerrando caja...",
+          success: "Caja cerrada correctamente",
+          error: "No se pudo cerrar la caja",
+        }
+      );
+
+      await load(false);
     } catch (err) {
-      setError(formatBackendError(err));
+      console.error(err);
     } finally {
       setBusy(false);
     }
@@ -123,7 +147,6 @@ export default function Caja() {
 
   return (
     <div className="page">
-      {/* ✅ Encabezado de la página (SIN duplicar el header del Layout global) */}
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div>
           <h2 style={{ margin: 0 }}>Caja</h2>
@@ -145,20 +168,17 @@ export default function Caja() {
             />
           </div>
 
-          <button className="btn" onClick={load} disabled={loading || busy}>
+          <button
+            className="btn"
+            onClick={() => load(true)}
+            disabled={loading || busy}
+          >
             Refrescar
           </button>
         </div>
       </div>
 
-      {error ? (
-        <div className="alert" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
-          {error}
-        </div>
-      ) : null}
-
       <div className="grid-2" style={{ marginTop: 14 }}>
-        {/* ====== Caja actual ====== */}
         <div className="card pad">
           <div className="card-head">
             <div>
@@ -199,7 +219,9 @@ export default function Caja() {
             </div>
             <div className="kv-row">
               <span className="muted">Efectivo final</span>
-              <span className="pill">{resumen?.efectivo_final ? money(resumen.efectivo_final) : "—"}</span>
+              <span className="pill">
+                {resumen?.efectivo_final != null ? money(resumen.efectivo_final) : "—"}
+              </span>
             </div>
             <div className="kv-row">
               <span className="muted">Notas</span>
@@ -208,7 +230,6 @@ export default function Caja() {
           </div>
         </div>
 
-        {/* ====== Acciones abrir/cerrar ====== */}
         <div className="card pad">
           <div className="card-head">
             <div>
@@ -220,7 +241,6 @@ export default function Caja() {
           </div>
 
           <div className="split-forms">
-            {/* Abrir */}
             <form onSubmit={abrirCaja} className="form-card">
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <b>Abrir caja</b>
@@ -260,7 +280,6 @@ export default function Caja() {
               ) : null}
             </form>
 
-            {/* Cerrar */}
             <form onSubmit={cerrarCaja} className="form-card">
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <b>Cerrar caja</b>
@@ -307,7 +326,6 @@ export default function Caja() {
         </div>
       </div>
 
-      {/* ====== Historial ====== */}
       <div className="card pad" style={{ marginTop: 14 }}>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <div>
@@ -364,7 +382,13 @@ export default function Caja() {
                         )}
                       </td>
                       <td className="small">{c.notas || "—"}</td>
-                      <td>{abierta ? <span className="badge ok">Abierta</span> : <span className="badge">Cerrada</span>}</td>
+                      <td>
+                        {abierta ? (
+                          <span className="badge ok">Abierta</span>
+                        ) : (
+                          <span className="badge">Cerrada</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })

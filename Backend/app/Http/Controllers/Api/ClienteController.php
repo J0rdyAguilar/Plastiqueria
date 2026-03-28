@@ -6,190 +6,255 @@ use App\Http\Controllers\Controller;
 use App\Models\Cliente;
 use App\Models\Vendedor;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 
 class ClienteController extends Controller
 {
-    // GET /api/clientes?q=&ruta_id=&zona_id=&activo=1&vendedor_id=&per_page=10
+    private function roleOf($user): string
+    {
+        $r = strtolower((string) ($user->rol ?? $user->role ?? ''));
+
+        if ($r === 'superadmin') return 'super_admin';
+        if ($r === 'cajero') return 'caja';
+
+        return $r;
+    }
+
+    private function resolveVendedorId($user): ?int
+    {
+        if (!empty($user->vendedor_id)) {
+            return (int) $user->vendedor_id;
+        }
+
+        $userId = (int) ($user->id ?? 0);
+        if ($userId <= 0) return null;
+
+        $vend = Vendedor::query()
+            ->where('usuario_id', $userId)
+            ->first();
+
+        return $vend ? (int) $vend->id : null;
+    }
+
     public function index(Request $request)
     {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $vendedorAuthId = $this->resolveVendedorId($user);
+
         $q = trim((string) $request->query('q', ''));
-        $rutaId = $request->query('ruta_id');
-        $zonaId = $request->query('zona_id');
         $activo = $request->query('activo');
         $vendedorId = $request->query('vendedor_id');
-        $perPage = (int) $request->query('per_page', 10);
-        $perPage = max(1, min($perPage, 200));
 
         $query = Cliente::query()
             ->with([
-                'ruta:id,nombre,zona_id',
+                'ruta:id,nombre',
                 'zona:id,nombre',
-            ]);
+            ])
+            ->orderBy('nombre');
+
+        if ($role === 'super_admin' || $role === 'admin') {
+            if ($vendedorId) {
+                $query->whereHas('vendedores', function ($sub) use ($vendedorId) {
+                    $sub->where('vendedores.id', (int) $vendedorId)
+                        ->where('vendedor_clientes.activo', 1);
+                });
+            }
+        } elseif ($role === 'vendedor') {
+            if (!$vendedorAuthId) {
+                return response()->json([
+                    'message' => 'No se encontró vendedor relacionado a este usuario.'
+                ], 403);
+            }
+
+            $query->whereHas('vendedores', function ($sub) use ($vendedorAuthId) {
+                $sub->where('vendedores.id', (int) $vendedorAuthId)
+                    ->where('vendedor_clientes.activo', 1);
+            });
+        } else {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
 
         if ($q !== '') {
-            $query->where(function ($w) use ($q) {
-                $w->where('nombre', 'like', "%{$q}%")
-                  ->orWhere('propietario', 'like', "%{$q}%")
-                  ->orWhere('telefono', 'like', "%{$q}%")
-                  ->orWhere('direccion', 'like', "%{$q}%");
+            $query->where(function ($sub) use ($q) {
+                $sub->where('nombre', 'like', "%{$q}%")
+                    ->orWhere('propietario', 'like', "%{$q}%")
+                    ->orWhere('telefono', 'like', "%{$q}%")
+                    ->orWhere('direccion', 'like', "%{$q}%")
+                    ->orWhere('referencia', 'like', "%{$q}%");
             });
-        }
-
-        if ($rutaId) {
-            $query->where('ruta_id', $rutaId);
-        }
-
-        if ($zonaId) {
-            $query->where('zona_id', $zonaId);
         }
 
         if ($activo !== null && $activo !== '') {
             $query->where('activo', (int) $activo);
         }
 
-        if ($vendedorId) {
-            $query->whereHas('vendedores', function ($q) use ($vendedorId) {
-                $q->where('vendedores.id', $vendedorId)
-                  ->where('vendedor_clientes.activo', 1);
-            });
-        }
+        $page = $query->paginate((int) $request->query('per_page', 20));
 
-        $items = $query
-            ->orderBy('nombre')
-            ->paginate($perPage)
-            ->through(function ($c) {
-                return [
-                    'id' => $c->id,
-                    'nombre' => $c->nombre,
-                    'propietario' => $c->propietario,
-                    'telefono' => $c->telefono,
-                    'direccion' => $c->direccion,
-                    'referencia' => $c->referencia,
-                    'lat' => $c->lat,
-                    'lng' => $c->lng,
-                    'activo' => $c->activo,
-                    'ruta_id' => $c->ruta_id,
-                    'ruta_nombre' => $c->ruta?->nombre,
-                    'zona_id' => $c->zona_id,
-                    'zona_nombre' => $c->zona?->nombre,
-                    'creado_en' => optional($c->creado_en)?->format('Y-m-d H:i:s'),
-                ];
-            });
-
-        return response()->json($items);
+        return response()->json($page);
     }
 
-    // POST /api/clientes
-    public function store(Request $request)
+    public function show(Cliente $cliente, Request $request)
     {
-        $data = $request->validate([
-            'nombre' => ['required', 'string', 'max:160'],
-            'propietario' => ['nullable', 'string', 'max:160'],
-            'telefono' => ['nullable', 'string', 'max:50'],
-            'zona_id' => ['required', 'integer', Rule::exists('zonas', 'id')],
-            'ruta_id' => ['required', 'integer', Rule::exists('rutas', 'id')],
-            'direccion' => ['nullable', 'string'],
-            'referencia' => ['nullable', 'string'],
-            'lat' => ['nullable', 'numeric'],
-            'lng' => ['nullable', 'numeric'],
-            'activo' => ['nullable', 'boolean'],
-            'vendedor_id' => ['nullable', 'integer', Rule::exists('vendedores', 'id')],
-        ]);
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $vendedorAuthId = $this->resolveVendedorId($user);
 
-        return DB::transaction(function () use ($data) {
-            $cliente = Cliente::create([
-                'nombre' => trim($data['nombre']),
-                'propietario' => $data['propietario'] ?? null,
-                'telefono' => $data['telefono'] ?? null,
-                'zona_id' => $data['zona_id'],
-                'ruta_id' => $data['ruta_id'],
-                'direccion' => $data['direccion'] ?? null,
-                'referencia' => $data['referencia'] ?? null,
-                'lat' => $data['lat'] ?? null,
-                'lng' => $data['lng'] ?? null,
-                'activo' => array_key_exists('activo', $data) ? (int) $data['activo'] : 1,
-            ]);
-
-            if (!empty($data['vendedor_id'])) {
-                $vendedor = Vendedor::findOrFail($data['vendedor_id']);
-
-                $vendedor->clientes()->syncWithoutDetaching([
-                    $cliente->id => [
-                        'asignado_en' => now(),
-                        'activo' => 1,
-                    ]
-                ]);
+        if ($role === 'vendedor') {
+            if (!$vendedorAuthId) {
+                return response()->json(['message' => 'No autorizado.'], 403);
             }
 
-            return response()->json([
-                'message' => 'Cliente creado correctamente.',
-                'data' => $cliente->load([
-                    'ruta:id,nombre,zona_id',
-                    'zona:id,nombre',
-                ]),
-            ], 201);
-        });
+            $permitido = $cliente->vendedores()
+                ->where('vendedores.id', $vendedorAuthId)
+                ->where('vendedor_clientes.activo', 1)
+                ->exists();
+
+            if (!$permitido) {
+                return response()->json(['message' => 'No autorizado.'], 403);
+            }
+        }
+
+        $cliente->load([
+            'ruta:id,nombre',
+            'zona:id,nombre',
+        ]);
+
+        return response()->json([
+            'data' => $cliente,
+        ]);
     }
 
-    // GET /api/clientes/{cliente}
-    public function show(Cliente $cliente)
+    public function store(Request $request)
     {
-        return response()->json(
-            $cliente->load([
-                'ruta:id,nombre,zona_id',
-                'zona:id,nombre',
-            ])
-        );
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $vendedorAuthId = $this->resolveVendedorId($user);
+
+        if (!in_array($role, ['super_admin', 'admin', 'vendedor'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        $data = $request->validate([
+            'nombre' => ['required', 'string', 'max:150'],
+            'propietario' => ['nullable', 'string', 'max:150'],
+            'telefono' => ['nullable', 'string', 'max:50'],
+            'ruta_id' => ['required', 'integer', 'exists:rutas,id'],
+            'zona_id' => ['required', 'integer', 'exists:zonas,id'],
+            'direccion' => ['nullable', 'string', 'max:255'],
+            'referencia' => ['nullable', 'string', 'max:255'],
+            'activo' => ['nullable', 'boolean'],
+            'vendedor_id' => ['nullable', 'integer'],
+        ]);
+
+        if ($role === 'vendedor' && !$vendedorAuthId) {
+            return response()->json([
+                'message' => 'No se encontró vendedor relacionado a este usuario.'
+            ], 403);
+        }
+
+        $cliente = Cliente::create([
+            'nombre' => trim((string) $data['nombre']),
+            'propietario' => trim((string) ($data['propietario'] ?? '')),
+            'telefono' => trim((string) ($data['telefono'] ?? '')),
+            'ruta_id' => (int) $data['ruta_id'],
+            'zona_id' => (int) $data['zona_id'],
+            'direccion' => trim((string) ($data['direccion'] ?? 'Sin dirección')),
+            'referencia' => trim((string) ($data['referencia'] ?? '')),
+            'activo' => array_key_exists('activo', $data) ? (bool) $data['activo'] : true,
+            'creado_en' => now(),
+            'actualizado_en' => now(),
+        ]);
+
+        $vendedorRelacionId = null;
+
+        if ($role === 'vendedor') {
+            $vendedorRelacionId = (int) $vendedorAuthId;
+        } elseif (!empty($data['vendedor_id'])) {
+            $vendedorRelacionId = (int) $data['vendedor_id'];
+        } elseif ($vendedorAuthId) {
+            $vendedorRelacionId = (int) $vendedorAuthId;
+        }
+
+        if ($vendedorRelacionId) {
+            $yaExiste = $cliente->vendedores()
+                ->where('vendedores.id', $vendedorRelacionId)
+                ->exists();
+
+            if (!$yaExiste) {
+                $cliente->vendedores()->attach($vendedorRelacionId, [
+                    'asignado_en' => now(),
+                    'activo' => 1,
+                ]);
+            }
+        }
+
+        $cliente->load([
+            'ruta:id,nombre',
+            'zona:id,nombre',
+        ]);
+
+        return response()->json([
+            'message' => 'Cliente creado correctamente.',
+            'data' => $cliente,
+        ], 201);
     }
 
-    // PUT /api/clientes/{cliente}
     public function update(Request $request, Cliente $cliente)
     {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+
+        if (!in_array($role, ['super_admin', 'admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
         $data = $request->validate([
-            'nombre' => ['required', 'string', 'max:160'],
-            'propietario' => ['nullable', 'string', 'max:160'],
+            'nombre' => ['required', 'string', 'max:150'],
+            'propietario' => ['nullable', 'string', 'max:150'],
             'telefono' => ['nullable', 'string', 'max:50'],
-            'zona_id' => ['required', 'integer', Rule::exists('zonas', 'id')],
-            'ruta_id' => ['required', 'integer', Rule::exists('rutas', 'id')],
-            'direccion' => ['nullable', 'string'],
-            'referencia' => ['nullable', 'string'],
-            'lat' => ['nullable', 'numeric'],
-            'lng' => ['nullable', 'numeric'],
+            'ruta_id' => ['required', 'integer', 'exists:rutas,id'],
+            'zona_id' => ['required', 'integer', 'exists:zonas,id'],
+            'direccion' => ['nullable', 'string', 'max:255'],
+            'referencia' => ['nullable', 'string', 'max:255'],
             'activo' => ['nullable', 'boolean'],
         ]);
 
         $cliente->update([
-            'nombre' => trim($data['nombre']),
-            'propietario' => $data['propietario'] ?? null,
-            'telefono' => $data['telefono'] ?? null,
-            'zona_id' => $data['zona_id'],
-            'ruta_id' => $data['ruta_id'],
-            'direccion' => $data['direccion'] ?? null,
-            'referencia' => $data['referencia'] ?? null,
-            'lat' => $data['lat'] ?? null,
-            'lng' => $data['lng'] ?? null,
-            'activo' => array_key_exists('activo', $data) ? (int) $data['activo'] : $cliente->activo,
+            'nombre' => trim((string) $data['nombre']),
+            'propietario' => trim((string) ($data['propietario'] ?? '')),
+            'telefono' => trim((string) ($data['telefono'] ?? '')),
+            'ruta_id' => (int) $data['ruta_id'],
+            'zona_id' => (int) $data['zona_id'],
+            'direccion' => trim((string) ($data['direccion'] ?? 'Sin dirección')),
+            'referencia' => trim((string) ($data['referencia'] ?? '')),
+            'activo' => array_key_exists('activo', $data) ? (bool) $data['activo'] : $cliente->activo,
+            'actualizado_en' => now(),
+        ]);
+
+        $cliente->load([
+            'ruta:id,nombre',
+            'zona:id,nombre',
         ]);
 
         return response()->json([
             'message' => 'Cliente actualizado correctamente.',
-            'data' => $cliente->fresh()->load([
-                'ruta:id,nombre,zona_id',
-                'zona:id,nombre',
-            ]),
+            'data' => $cliente,
         ]);
     }
 
-    // DELETE /api/clientes/{cliente}
-    public function destroy(Cliente $cliente)
+    public function destroy(Cliente $cliente, Request $request)
     {
-        $cliente->vendedores()->detach();
+        $user = $request->user();
+        $role = $this->roleOf($user);
+
+        if (!in_array($role, ['super_admin', 'admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
         $cliente->delete();
 
         return response()->json([
-            'message' => 'Cliente eliminado correctamente.'
+            'message' => 'Cliente eliminado.',
         ]);
     }
 }

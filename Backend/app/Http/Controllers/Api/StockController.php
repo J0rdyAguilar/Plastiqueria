@@ -10,9 +10,14 @@ class StockController extends Controller
 {
     public function index(Request $request)
     {
+        $user = $request->user();
+
         $q = trim((string) $request->query('q', ''));
         $ubicacionId = $request->query('ubicacion_id');
         $perPage = (int) $request->query('per_page', 20);
+
+        // Ajusta esto si tu campo se llama distinto
+        $role = strtolower((string) ($user->role ?? $user->rol ?? ''));
 
         $query = Stock::query()->with([
             'producto:id,sku,nombre',
@@ -20,8 +25,22 @@ class StockController extends Controller
             'ubicacion:id,nombre,tipo',
         ]);
 
-        if ($ubicacionId) {
-            $query->where('ubicacion_id', $ubicacionId);
+        // Superadmin sí puede elegir cualquier ubicación
+        if ($role === 'superadmin') {
+            if (!empty($ubicacionId)) {
+                $query->where('ubicacion_id', $ubicacionId);
+            }
+        } else {
+            // Los demás solo su propia sucursal
+            $userUbicacionId = $user->ubicacion_id ?? null;
+
+            if (!$userUbicacionId) {
+                return response()->json([
+                    'message' => 'El usuario no tiene una sucursal asignada.'
+                ], 403);
+            }
+
+            $query->where('ubicacion_id', $userUbicacionId);
         }
 
         if ($q !== '') {

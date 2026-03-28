@@ -16,32 +16,22 @@ class PedidoDetalle extends Model
     protected $fillable = [
         'pedido_id',
         'producto_id',
-        'unidad',
-        'cantidad',
+        'presentacion',
         'cantidad_base',
-        'precio_variable',
-        'precio_sugerido_1',
-        'precio_sugerido_2',
-        'precio_sugerido_3',
         'precio_unitario',
-        'total_linea',
+        'subtotal',
+        'es_monto_variable',
     ];
 
     protected $casts = [
-        'cantidad'          => 'int',
+        'pedido_id'         => 'int',
+        'producto_id'       => 'int',
         'cantidad_base'     => 'int',
-        'precio_variable'   => 'bool',
-        'precio_sugerido_1' => 'decimal:2',
-        'precio_sugerido_2' => 'decimal:2',
-        'precio_sugerido_3' => 'decimal:2',
         'precio_unitario'   => 'decimal:2',
-        'total_linea'       => 'decimal:2',
+        'subtotal'          => 'decimal:2',
+        'es_monto_variable' => 'bool',
         'creado_en'         => 'datetime',
     ];
-
-    // =========================
-    // Relaciones
-    // =========================
 
     public function pedido()
     {

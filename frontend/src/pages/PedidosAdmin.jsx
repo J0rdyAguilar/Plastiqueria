@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { pedidosAdminApi } from "../lib/pedidosAdmin";
+import { notify } from "../lib/notify";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -27,6 +28,7 @@ function badgeStyle(estado) {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 700,
+    textTransform: "capitalize",
   };
 
   switch (estado) {
@@ -41,6 +43,17 @@ function badgeStyle(estado) {
     default:
       return { ...base, background: "#eef2ff", color: "#3730a3" };
   }
+}
+
+function estadoLabel(estado) {
+  return String(estado || "").replaceAll("_", " ");
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
 }
 
 export default function PedidosAdmin() {
@@ -65,7 +78,7 @@ export default function PedidosAdmin() {
       setItems(res?.data || []);
     } catch (err) {
       console.error(err);
-      alert("No se pudieron cargar los pedidos.");
+      notify.error(err, "No se pudieron cargar los pedidos.");
     } finally {
       setLoading(false);
     }
@@ -87,7 +100,7 @@ export default function PedidosAdmin() {
         cantidad_base: num(d.cantidad_base),
         precio_unitario: num(d.precio_unitario),
         subtotal: num(d.subtotal),
-        es_monto_variable: false,
+        es_monto_variable: !!d.es_monto_variable,
         sugeridos: [
           num(d.precio_unitario),
           num(d.precio_unitario) + 2,
@@ -131,10 +144,10 @@ export default function PedidosAdmin() {
       });
 
       await loadPedidos();
-      alert("Pedido actualizado correctamente.");
+      notify.success("Pedido actualizado correctamente.");
     } catch (err) {
       console.error(err);
-      alert(err?.response?.data?.message || "No se pudo actualizar el pedido.");
+      notify.error(err, "No se pudo actualizar el pedido.");
     } finally {
       setSaving(false);
     }
@@ -146,11 +159,11 @@ export default function PedidosAdmin() {
 
     try {
       await pedidosAdminApi.aprobar(pedidoActivo.id);
-      alert("Pedido aprobado.");
+      notify.success("Pedido aprobado correctamente.");
       await loadPedidos();
     } catch (err) {
       console.error(err);
-      alert("No se pudo aprobar el pedido.");
+      notify.error(err, "No se pudo aprobar el pedido.");
     }
   }
 
@@ -158,11 +171,11 @@ export default function PedidosAdmin() {
     if (!pedidoActivo) return;
     try {
       await pedidosAdminApi.preparar(pedidoActivo.id);
-      alert("Pedido marcado como preparando.");
+      notify.success("Pedido marcado como preparando.");
       await loadPedidos();
     } catch (err) {
       console.error(err);
-      alert("No se pudo cambiar el estado.");
+      notify.error(err, "No se pudo actualizar el pedido.");
     }
   }
 
@@ -170,16 +183,205 @@ export default function PedidosAdmin() {
     if (!pedidoActivo) return;
     try {
       await pedidosAdminApi.entregar(pedidoActivo.id);
-      alert("Pedido entregado.");
+      notify.success("Pedido marcado como entregado.");
       await loadPedidos();
     } catch (err) {
       console.error(err);
-      alert("No se pudo cambiar el estado.");
+      notify.error(err, "No se pudo actualizar el pedido.");
     }
   }
 
-  function imprimir() {
-    window.print();
+  function imprimirTicket() {
+    if (!pedidoActivo) {
+      notify.error("Selecciona un pedido para imprimir.");
+      return;
+    }
+
+    const detalles = lineasEdit.length > 0 ? lineasEdit : pedidoActivo?.detalles || [];
+    const totalTicket =
+      lineasEdit.length > 0
+        ? total
+        : (pedidoActivo?.detalles || []).reduce((acc, d) => acc + num(d.subtotal), 0);
+
+    const html = `
+      <!doctype html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Ticket Pedido #${pedidoActivo.id}</title>
+        <style>
+          * { box-sizing: border-box; }
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff;
+            color: #111827;
+            font-family: Arial, Helvetica, sans-serif;
+          }
+          body {
+            padding: 12px;
+          }
+          .ticket {
+            width: 80mm;
+            margin: 0 auto;
+          }
+          .center { text-align: center; }
+          .title {
+            font-size: 20px;
+            font-weight: 800;
+            margin-bottom: 2px;
+          }
+          .subtitle {
+            font-size: 12px;
+            color: #4b5563;
+            margin-bottom: 10px;
+          }
+          .box {
+            border-top: 1px dashed #9ca3af;
+            border-bottom: 1px dashed #9ca3af;
+            padding: 8px 0;
+            margin: 8px 0;
+          }
+          .row {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin: 4px 0;
+            font-size: 12px;
+          }
+          .label {
+            color: #4b5563;
+          }
+          .line-item {
+            padding: 7px 0;
+            border-bottom: 1px dashed #d1d5db;
+          }
+          .prod {
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 4px;
+          }
+          .muted {
+            color: #6b7280;
+            font-size: 11px;
+          }
+          .totals {
+            margin-top: 10px;
+            border-top: 2px solid #111827;
+            padding-top: 8px;
+          }
+          .total-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: 800;
+          }
+          .footer {
+            margin-top: 14px;
+            text-align: center;
+            font-size: 11px;
+            color: #6b7280;
+          }
+          @media print {
+            body {
+              padding: 0;
+            }
+            .ticket {
+              width: 80mm;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="ticket">
+          <div class="center">
+            <div class="title">PLASTIMAX</div>
+            <div class="subtitle">Ticket de pedido</div>
+          </div>
+
+          <div class="box">
+            <div class="row"><span class="label">Pedido:</span><strong>#${pedidoActivo.id}</strong></div>
+            <div class="row"><span class="label">Fecha:</span><strong>${formatDate(
+              pedidoActivo.creado_en
+            )}</strong></div>
+            <div class="row"><span class="label">Estado:</span><strong>${estadoLabel(
+              pedidoActivo.estado
+            )}</strong></div>
+            <div class="row"><span class="label">Cliente:</span><strong>${
+              pedidoActivo.cliente_nombre || "—"
+            }</strong></div>
+            <div class="row"><span class="label">Vendedor:</span><strong>${
+              pedidoActivo.vendedor_nombre || "—"
+            }</strong></div>
+          </div>
+
+          <div>
+            ${detalles
+              .map(
+                (d) => `
+              <div class="line-item">
+                <div class="prod">${d.producto_nombre || `Producto #${d.producto_id}`}</div>
+                <div class="row">
+                  <span class="muted">${d.cantidad_base} x ${d.presentacion || "unidad"}</span>
+                  <strong>${money(d.precio_unitario)}</strong>
+                </div>
+                <div class="row">
+                  <span class="muted">Subtotal</span>
+                  <strong>${money(d.subtotal)}</strong>
+                </div>
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+
+          ${
+            observaciones
+              ? `
+            <div class="box">
+              <div style="font-size:12px;font-weight:700;margin-bottom:4px;">Observaciones</div>
+              <div style="font-size:12px;">${String(observaciones)
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")}</div>
+            </div>
+          `
+              : ""
+          }
+
+          <div class="totals">
+            <div class="total-row">
+              <span>Total</span>
+              <span>${money(totalTicket)}</span>
+            </div>
+          </div>
+
+          <div class="footer">
+            Impreso el ${new Date().toLocaleString()}<br/>
+            Gracias por su pedido
+          </div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            window.print();
+            window.onafterprint = function() {
+              window.close();
+            };
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    const win = window.open("", "_blank", "width=420,height=760");
+    if (!win) {
+      notify.error("El navegador bloqueó la ventana de impresión.");
+      return;
+    }
+
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
   }
 
   return (
@@ -245,7 +447,7 @@ export default function PedidosAdmin() {
                       </div>
 
                       <div style={{ textAlign: "right" }}>
-                        <div style={badgeStyle(item.estado)}>{item.estado}</div>
+                        <div style={badgeStyle(item.estado)}>{estadoLabel(item.estado)}</div>
                         <div style={{ marginTop: 8, fontWeight: 800 }}>{money(item.total)}</div>
                       </div>
                     </div>
@@ -265,9 +467,18 @@ export default function PedidosAdmin() {
             ) : (
               <>
                 <div style={{ display: "grid", gap: 10 }}>
-                  <div><b>Cliente:</b> {pedidoActivo.cliente_nombre}</div>
-                  <div><b>Vendedor:</b> {pedidoActivo.vendedor_nombre}</div>
-                  <div><b>Estado:</b> <span style={badgeStyle(pedidoActivo.estado)}>{pedidoActivo.estado}</span></div>
+                  <div>
+                    <b>Cliente:</b> {pedidoActivo.cliente_nombre}
+                  </div>
+                  <div>
+                    <b>Vendedor:</b> {pedidoActivo.vendedor_nombre}
+                  </div>
+                  <div>
+                    <b>Estado:</b>{" "}
+                    <span style={badgeStyle(pedidoActivo.estado)}>
+                      {estadoLabel(pedidoActivo.estado)}
+                    </span>
+                  </div>
                 </div>
 
                 <div style={{ marginTop: 14 }}>
@@ -305,7 +516,9 @@ export default function PedidosAdmin() {
                             style={inputStyle}
                           >
                             {PRESENTACIONES.map((p) => (
-                              <option key={p} value={p}>{p}</option>
+                              <option key={p} value={p}>
+                                {p}
+                              </option>
                             ))}
                           </select>
                         </div>
@@ -351,13 +564,17 @@ export default function PedidosAdmin() {
                       </div>
 
                       <div style={{ marginTop: 10 }}>
-                        <div className="muted" style={{ marginBottom: 6 }}>Precios sugeridos</div>
+                        <div className="muted" style={{ marginBottom: 6 }}>
+                          Precios sugeridos
+                        </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {l.sugeridos.map((p) => (
                             <button
                               key={p}
                               type="button"
-                              onClick={() => setLinea(l.id, { precio_unitario: p, es_monto_variable: true })}
+                              onClick={() =>
+                                setLinea(l.id, { precio_unitario: p, es_monto_variable: true })
+                              }
                               style={suggestBtn}
                             >
                               {money(p)}
@@ -397,8 +614,8 @@ export default function PedidosAdmin() {
                     Marcar entregado
                   </button>
 
-                  <button onClick={imprimir} style={printBtn}>
-                    Imprimir listado
+                  <button onClick={imprimirTicket} style={printBtn}>
+                    Imprimir ticket
                   </button>
                 </div>
               </>

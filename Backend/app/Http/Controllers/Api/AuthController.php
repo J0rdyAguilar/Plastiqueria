@@ -27,9 +27,6 @@ class AuthController extends Controller
             return response()->json(['message' => 'Usuario inactivo'], 403);
         }
 
-        // (opcional) borrar tokens viejos para evitar que acumulen
-        // $user->tokens()->delete();
-
         $token = $user->createToken('api')->plainTextToken;
 
         return response()->json([
@@ -40,7 +37,12 @@ class AuthController extends Controller
                 'usuario' => $user->usuario,
                 'telefono' => $user->telefono,
                 'rol' => $user->rol,
-                'activo' => (bool)$user->activo,
+                'activo' => (bool) $user->activo,
+
+                // IMPORTANTE: mandar la sucursal/ubicación del usuario
+                'ubicacion_id' => $user->ubicacion_id ?? null,
+                'sucursal_id' => $user->sucursal_id ?? null,
+
                 'creado_en' => $user->creado_en ?? null,
                 'actualizado_en' => $user->actualizado_en ?? null,
             ],
@@ -51,11 +53,11 @@ class AuthController extends Controller
     public function logout(Request $request)
     {
         $user = $request->user();
+
         if (!$user) {
             return response()->json(['message' => 'No autenticado'], 401);
         }
 
-        // borra SOLO el token actual
         $request->user()->currentAccessToken()?->delete();
 
         return response()->json(['message' => 'Sesión cerrada']);
@@ -77,7 +79,12 @@ class AuthController extends Controller
                 'usuario' => $user->usuario,
                 'telefono' => $user->telefono,
                 'rol' => $user->rol,
-                'activo' => (bool)$user->activo,
+                'activo' => (bool) $user->activo,
+
+                // IMPORTANTE: mandar la sucursal/ubicación del usuario
+                'ubicacion_id' => $user->ubicacion_id ?? null,
+                'sucursal_id' => $user->sucursal_id ?? null,
+
                 'creado_en' => $user->creado_en ?? null,
                 'actualizado_en' => $user->actualizado_en ?? null,
             ],

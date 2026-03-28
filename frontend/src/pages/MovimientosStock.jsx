@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { movimientosStockApi } from "../lib/stock";
 import { ubicacionesApi } from "../lib/ubicaciones";
 import { productosApi } from "../lib/productos";
+import { notify } from "../lib/notify";
+import { getSession } from "../lib/auth";
 
 const TIPOS = [
   { value: "", label: "Todos" },
@@ -10,27 +12,6 @@ const TIPOS = [
   { value: "traslado", label: "Traslado" },
   { value: "ajuste", label: "Ajuste" },
 ];
-
-function formatApiError(e) {
-  const data = e?.response?.data;
-
-  if (typeof data?.message === "string" && data.message.trim()) {
-    return data.message;
-  }
-
-  if (data?.errors && typeof data.errors === "object") {
-    const firstKey = Object.keys(data.errors)[0];
-    const firstValue = data.errors[firstKey];
-    if (Array.isArray(firstValue) && firstValue.length) {
-      return firstValue[0];
-    }
-    if (typeof firstValue === "string") {
-      return firstValue;
-    }
-  }
-
-  return e?.message || "Error cargando movimientos";
-}
 
 function normalizarPrecios(precios = []) {
   if (!Array.isArray(precios)) return [];
@@ -46,7 +27,39 @@ function normalizarPrecios(precios = []) {
     .filter((p) => p.presentacion && p.factor_base > 0);
 }
 
+function getErrorMessage(error) {
+  const data = error?.response?.data;
+
+  if (data?.errors && typeof data.errors === "object") {
+    const firstKey = Object.keys(data.errors)[0];
+    const firstValue = firstKey ? data.errors[firstKey] : null;
+
+    if (Array.isArray(firstValue) && firstValue[0]) return firstValue[0];
+    if (typeof firstValue === "string" && firstValue.trim()) return firstValue;
+  }
+
+  if (data?.message && String(data.message).trim()) return data.message;
+
+  return error?.message || "No se pudo aplicar el movimiento";
+}
+
+function toNullableNumber(value) {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  if (text === "") return undefined;
+
+  const n = Number(text);
+  return Number.isNaN(n) ? undefined : n;
+}
+
 export default function MovimientosStock() {
+  const session = getSession();
+  const user = session?.user || {};
+
+  const role = String(user?.role || user?.rol || "").toLowerCase();
+  const isSuperAdmin = role === "superadmin";
+  const userUbicacionId = String(user?.ubicacion_id || user?.sucursal_id || "");
+
   const [tipo, setTipo] = useState("");
   const [ubicacionId, setUbicacionId] = useState("");
   const [productoId, setProductoId] = useState("");
@@ -59,7 +72,6 @@ export default function MovimientosStock() {
   const [perPage] = useState(10);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
@@ -73,7 +85,6 @@ export default function MovimientosStock() {
   });
 
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState("");
 
   const [productoSearch, setProductoSearch] = useState("");
   const [productoOptions, setProductoOptions] = useState([]);
@@ -92,24 +103,75 @@ export default function MovimientosStock() {
   );
 
   const presentacionSeleccionada = useMemo(() => {
-    return presentaciones.find(
-      (p) => p.presentacion.toLowerCase() === String(form.presentacion || "").toLowerCase()
-    ) || null;
+    return (
+      presentaciones.find(
+        (p) =>
+          p.presentacion.toLowerCase() ===
+          String(form.presentacion || "").toLowerCase()
+      ) || null
+    );
   }, [presentaciones, form.presentacion]);
+
+  const ubicacionPropia = useMemo(() => {
+    return ubicaciones.find((u) => String(u.id) === userUbicacionId) || null;
+  }, [ubicaciones, userUbicacionId]);
+
+  const ubicacionesDisponiblesFiltro = useMemo(() => {
+    if (isSuperAdmin) return ubicaciones;
+    return ubicacionPropia ? [ubicacionPropia] : [];
+  }, [isSuperAdmin, ubicaciones, ubicacionPropia]);
+
+  const ubicacionesOrigenModal = useMemo(() => {
+    if (isSuperAdmin) return ubicaciones;
+    return ubicacionPropia ? [ubicacionPropia] : [];
+  }, [isSuperAdmin, ubicaciones, ubicacionPropia]);
+
+  const ubicacionesDestinoModal = useMemo(() => {
+    if (isSuperAdmin) {
+      if (form.tipo === "traslado" && form.ubicacion_origen_id) {
+        return ubicaciones.filter(
+          (u) => String(u.id) !== String(form.ubicacion_origen_id)
+        );
+      }
+      return ubicaciones;
+    }
+
+    if (form.tipo === "traslado") {
+      return ubicaciones.filter((u) => String(u.id) !== userUbicacionId);
+    }
+
+    if (form.tipo === "entrada") {
+      return ubicacionPropia ? [ubicacionPropia] : [];
+    }
+
+    return [];
+  }, [
+    isSuperAdmin,
+    ubicaciones,
+    ubicacionPropia,
+    form.tipo,
+    form.ubicacion_origen_id,
+    userUbicacionId,
+  ]);
 
   async function loadUbicaciones() {
     try {
       const res = await ubicacionesApi.list({ per_page: 200, activa: 1 });
       const arr = res?.data ?? res ?? [];
       setUbicaciones(arr);
+
+      if (!isSuperAdmin && userUbicacionId) {
+        const propia = arr.find((u) => String(u.id) === userUbicacionId);
+        if (propia) setUbicacionId(String(propia.id));
+      }
     } catch (e) {
       console.error(e);
+      notify.error(getErrorMessage(e));
     }
   }
 
-  async function load(p = page) {
+  async function load(p = page, forcedUbicacionId = ubicacionId) {
     setLoading(true);
-    setError("");
 
     try {
       const payload = {
@@ -118,7 +180,7 @@ export default function MovimientosStock() {
       };
 
       if (tipo) payload.tipo = tipo;
-      if (ubicacionId) payload.ubicacion_id = ubicacionId;
+      if (forcedUbicacionId) payload.ubicacion_id = forcedUbicacionId;
       if (productoId) payload.producto_id = productoId;
 
       const res = await movimientosStockApi.list(payload);
@@ -130,7 +192,8 @@ export default function MovimientosStock() {
         total: res?.total || 0,
       });
     } catch (e) {
-      setError(formatApiError(e));
+      console.error("ERROR CARGANDO MOVIMIENTOS:", e?.response?.data || e);
+      notify.error(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -167,8 +230,18 @@ export default function MovimientosStock() {
 
   useEffect(() => {
     loadUbicaciones();
-    load(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!isSuperAdmin && userUbicacionId) {
+      setUbicacionId(userUbicacionId);
+      load(1, userUbicacionId);
+    } else {
+      load(1, ubicacionId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin, userUbicacionId]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -178,55 +251,103 @@ export default function MovimientosStock() {
     return () => clearTimeout(t);
   }, [productoSearch]);
 
+  useEffect(() => {
+    if (!open) return;
+    if (!userUbicacionId && !isSuperAdmin) return;
+
+    if (isSuperAdmin) {
+      if (form.tipo === "entrada") {
+        setForm((s) => ({ ...s, ubicacion_origen_id: "" }));
+      }
+
+      if (form.tipo === "salida" || form.tipo === "ajuste") {
+        setForm((s) => ({ ...s, ubicacion_destino_id: "" }));
+      }
+
+      if (form.tipo === "traslado") {
+        setForm((s) => ({
+          ...s,
+          ubicacion_destino_id:
+            s.ubicacion_origen_id && s.ubicacion_origen_id === s.ubicacion_destino_id
+              ? ""
+              : s.ubicacion_destino_id,
+        }));
+      }
+
+      return;
+    }
+
+    if (form.tipo === "entrada") {
+      setForm((s) => ({
+        ...s,
+        ubicacion_origen_id: "",
+        ubicacion_destino_id: userUbicacionId,
+      }));
+    }
+
+    if (form.tipo === "salida" || form.tipo === "ajuste") {
+      setForm((s) => ({
+        ...s,
+        ubicacion_origen_id: userUbicacionId,
+        ubicacion_destino_id: "",
+      }));
+    }
+
+    if (form.tipo === "traslado") {
+      setForm((s) => ({
+        ...s,
+        ubicacion_origen_id: userUbicacionId,
+        ubicacion_destino_id:
+          String(s.ubicacion_destino_id) === String(userUbicacionId)
+            ? ""
+            : s.ubicacion_destino_id,
+      }));
+    }
+  }, [form.tipo, open, isSuperAdmin, userUbicacionId]);
+
   async function onCreate(e) {
     e.preventDefault();
     setSaving(true);
-    setMsg("");
-    setError("");
 
     try {
+      if (!isSuperAdmin && !userUbicacionId) {
+        throw new Error("Tu usuario no tiene sucursal asignada.");
+      }
+
       const payload = {
         tipo: form.tipo,
-        producto_id: Number(form.producto_id),
+        producto_id: toNullableNumber(form.producto_id),
         presentacion: form.presentacion,
-        cantidad: Number(form.cantidad),
+        cantidad: toNullableNumber(form.cantidad),
         motivo: form.motivo || undefined,
-        ubicacion_origen_id: needsOrigen ? Number(form.ubicacion_origen_id) : undefined,
-        ubicacion_destino_id: needsDestino ? Number(form.ubicacion_destino_id) : undefined,
+        ubicacion_origen_id: needsOrigen
+          ? toNullableNumber(form.ubicacion_origen_id)
+          : undefined,
+        ubicacion_destino_id: needsDestino
+          ? toNullableNumber(form.ubicacion_destino_id)
+          : undefined,
       };
 
       Object.keys(payload).forEach((k) => {
-        if (
-          payload[k] === undefined ||
-          payload[k] === null ||
-          payload[k] === "" ||
-          Number.isNaN(payload[k])
-        ) {
+        if (payload[k] === undefined || payload[k] === null || payload[k] === "") {
           delete payload[k];
         }
       });
 
+      console.log("SESSION USER:", session?.user);
+      console.log("FORM MOVIMIENTO:", form);
+      console.log("PAYLOAD MOVIMIENTO:", payload);
+
       await movimientosStockApi.create(payload);
 
-      setMsg("Movimiento aplicado correctamente.");
-      setOpen(false);
-      setForm({
-        tipo: "entrada",
-        producto_id: "",
-        presentacion: "",
-        cantidad: "",
-        ubicacion_origen_id: "",
-        ubicacion_destino_id: "",
-        motivo: "",
-      });
-      setProductoSearch("");
-      setProductoOptions([]);
-      setSelectedProducto(null);
-      setPresentaciones([]);
+      notify.success("Movimiento aplicado correctamente");
+
+      resetModal();
       setPage(1);
-      await load(1);
+      await load(1, isSuperAdmin ? ubicacionId : userUbicacionId);
     } catch (e) {
-      setError(formatApiError(e));
+      console.error("ERROR MOVIMIENTO:", e?.response?.data || e);
+      notify.error(getErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -264,6 +385,25 @@ export default function MovimientosStock() {
     setPresentaciones([]);
   }
 
+  function openModal() {
+    setOpen(true);
+
+    setForm({
+      tipo: "entrada",
+      producto_id: "",
+      presentacion: "",
+      cantidad: "",
+      ubicacion_origen_id: "",
+      ubicacion_destino_id: !isSuperAdmin ? userUbicacionId || "" : "",
+      motivo: "",
+    });
+
+    setProductoSearch("");
+    setProductoOptions([]);
+    setSelectedProducto(null);
+    setPresentaciones([]);
+  }
+
   const canPrev = (meta?.current_page || 1) > 1;
   const canNext = (meta?.current_page || 1) < (meta?.last_page || 1);
 
@@ -274,14 +414,8 @@ export default function MovimientosStock() {
           <h2>Movimientos de Stock</h2>
           <div className="muted">Entradas, salidas, traslados y ajustes</div>
         </div>
-        <button
-          className="btn primary"
-          onClick={() => {
-            setMsg("");
-            setError("");
-            setOpen(true);
-          }}
-        >
+
+        <button className="btn primary" onClick={openModal}>
           + Nuevo movimiento
         </button>
       </div>
@@ -301,14 +435,26 @@ export default function MovimientosStock() {
 
           <div className="field">
             <label>Ubicación (origen/destino)</label>
-            <select value={ubicacionId} onChange={(e) => setUbicacionId(e.target.value)}>
-              <option value="">Todas</option>
-              {ubicaciones.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.nombre} ({u.tipo})
-                </option>
-              ))}
-            </select>
+            {isSuperAdmin ? (
+              <select value={ubicacionId} onChange={(e) => setUbicacionId(e.target.value)}>
+                <option value="">Todas</option>
+                {ubicacionesDisponiblesFiltro.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nombre} ({u.tipo})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={
+                  ubicacionPropia
+                    ? `${ubicacionPropia.nombre} (${ubicacionPropia.tipo})`
+                    : "Sucursal asignada"
+                }
+                disabled
+                readOnly
+              />
+            )}
           </div>
 
           <div className="field">
@@ -327,7 +473,7 @@ export default function MovimientosStock() {
               className="btn"
               onClick={() => {
                 setPage(1);
-                load(1);
+                load(1, isSuperAdmin ? ubicacionId : userUbicacionId);
               }}
               disabled={loading}
             >
@@ -335,9 +481,6 @@ export default function MovimientosStock() {
             </button>
           </div>
         </div>
-
-        {msg && <div className="alert alert-success">{msg}</div>}
-        {error && <div className="alert alert-danger">{error}</div>}
 
         <div className="table-wrap">
           <table className="table">
@@ -391,6 +534,7 @@ export default function MovimientosStock() {
             <div className="muted">
               Página {meta.current_page} de {meta.last_page} · Total {meta.total}
             </div>
+
             <div className="row gap">
               <button
                 className="btn"
@@ -398,18 +542,19 @@ export default function MovimientosStock() {
                 onClick={() => {
                   const p = page - 1;
                   setPage(p);
-                  load(p);
+                  load(p, isSuperAdmin ? ubicacionId : userUbicacionId);
                 }}
               >
                 Anterior
               </button>
+
               <button
                 className="btn"
                 disabled={!canNext || loading}
                 onClick={() => {
                   const p = page + 1;
                   setPage(p);
-                  load(p);
+                  load(p, isSuperAdmin ? ubicacionId : userUbicacionId);
                 }}
               >
                 Siguiente
@@ -439,8 +584,20 @@ export default function MovimientosStock() {
                       setForm((s) => ({
                         ...s,
                         tipo: e.target.value,
-                        ubicacion_origen_id: "",
-                        ubicacion_destino_id: "",
+                        ubicacion_origen_id:
+                          e.target.value === "salida" ||
+                          e.target.value === "ajuste" ||
+                          e.target.value === "traslado"
+                            ? isSuperAdmin
+                              ? ""
+                              : userUbicacionId
+                            : "",
+                        ubicacion_destino_id:
+                          e.target.value === "entrada"
+                            ? isSuperAdmin
+                              ? ""
+                              : userUbicacionId
+                            : "",
                       }))
                     }
                   >
@@ -472,8 +629,7 @@ export default function MovimientosStock() {
 
                   {form.producto_id && selectedProducto ? (
                     <div className="muted" style={{ marginTop: 6 }}>
-                      Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} -{" "}
-                      {selectedProducto.nombre}
+                      Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} - {selectedProducto.nombre}
                     </div>
                   ) : null}
 
@@ -509,8 +665,7 @@ export default function MovimientosStock() {
                             cursor: "pointer",
                           }}
                         >
-                          <b>{p.sku || "(sin sku)"}</b> - {p.nombre}{" "}
-                          <span className="muted">#{p.id}</span>
+                          <b>{p.sku || "(sin sku)"}</b> - {p.nombre} <span className="muted">#{p.id}</span>
                         </button>
                       ))}
                     </div>
@@ -568,11 +723,11 @@ export default function MovimientosStock() {
                     fontSize: 14,
                   }}
                 >
-                  <b>Equivalencia:</b>{" "}
-                  {form.cantidad || 0} × {presentacionSeleccionada.presentacion} × factor{" "}
+                  <b>Equivalencia:</b> {form.cantidad || 0} × {presentacionSeleccionada.presentacion} × factor{" "}
                   {presentacionSeleccionada.factor_base} ={" "}
                   <b>
-                    {Number(form.cantidad || 0) * Number(presentacionSeleccionada.factor_base || 0)}
+                    {Number(form.cantidad || 0) *
+                      Number(presentacionSeleccionada.factor_base || 0)}
                   </b>{" "}
                   en unidad base
                 </div>
@@ -582,40 +737,74 @@ export default function MovimientosStock() {
                 {needsOrigen && (
                   <div className="field grow">
                     <label>Ubicación origen</label>
-                    <select
-                      required
-                      value={form.ubicacion_origen_id}
-                      onChange={(e) =>
-                        setForm((s) => ({ ...s, ubicacion_origen_id: e.target.value }))
-                      }
-                    >
-                      <option value="">Seleccione...</option>
-                      {ubicaciones.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.nombre} ({u.tipo})
-                        </option>
-                      ))}
-                    </select>
+
+                    {isSuperAdmin ? (
+                      <select
+                        required
+                        value={form.ubicacion_origen_id}
+                        onChange={(e) =>
+                          setForm((s) => ({
+                            ...s,
+                            ubicacion_origen_id: e.target.value,
+                            ubicacion_destino_id:
+                              form.tipo === "traslado" &&
+                              e.target.value === s.ubicacion_destino_id
+                                ? ""
+                                : s.ubicacion_destino_id,
+                          }))
+                        }
+                      >
+                        <option value="">Seleccione...</option>
+                        {ubicacionesOrigenModal.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.nombre} ({u.tipo})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={
+                          ubicacionPropia
+                            ? `${ubicacionPropia.nombre} (${ubicacionPropia.tipo})`
+                            : "Sucursal asignada"
+                        }
+                        disabled
+                        readOnly
+                      />
+                    )}
                   </div>
                 )}
 
                 {needsDestino && (
                   <div className="field grow">
                     <label>Ubicación destino</label>
-                    <select
-                      required
-                      value={form.ubicacion_destino_id}
-                      onChange={(e) =>
-                        setForm((s) => ({ ...s, ubicacion_destino_id: e.target.value }))
-                      }
-                    >
-                      <option value="">Seleccione...</option>
-                      {ubicaciones.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.nombre} ({u.tipo})
-                        </option>
-                      ))}
-                    </select>
+
+                    {!isSuperAdmin && form.tipo === "entrada" ? (
+                      <input
+                        value={
+                          ubicacionPropia
+                            ? `${ubicacionPropia.nombre} (${ubicacionPropia.tipo})`
+                            : "Sucursal asignada"
+                        }
+                        disabled
+                        readOnly
+                      />
+                    ) : (
+                      <select
+                        required
+                        value={form.ubicacion_destino_id}
+                        onChange={(e) =>
+                          setForm((s) => ({ ...s, ubicacion_destino_id: e.target.value }))
+                        }
+                      >
+                        <option value="">Seleccione...</option>
+                        {ubicacionesDestinoModal.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.nombre} ({u.tipo})
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                 )}
               </div>
@@ -638,13 +827,18 @@ export default function MovimientosStock() {
                 >
                   Cancelar
                 </button>
+
                 <button
                   className="btn primary"
                   disabled={
                     saving ||
                     !form.producto_id ||
                     !form.presentacion ||
-                    !form.cantidad
+                    !form.cantidad ||
+                    (!isSuperAdmin && !userUbicacionId) ||
+                    (needsOrigen && isSuperAdmin && !form.ubicacion_origen_id) ||
+                    (needsDestino && form.tipo === "traslado" && !form.ubicacion_destino_id) ||
+                    (needsDestino && form.tipo === "entrada" && isSuperAdmin && !form.ubicacion_destino_id)
                   }
                 >
                   {saving ? "Guardando..." : "Aplicar"}

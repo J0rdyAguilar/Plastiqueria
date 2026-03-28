@@ -5,7 +5,6 @@ use App\Http\Controllers\Api\VentaController;
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/ventas/pedido-vendedor', [VentaController::class, 'storePedidoVendedor']);
-
     Route::get('/ventas/pedidos-vendedor', [VentaController::class, 'indexPedidosVendedor']);
 
     Route::get('/ventas/pedidos-admin', [VentaController::class, 'indexPedidosAdmin']);
