@@ -3,8 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\StockController;
 
-// Lectura de stock: admin, super_admin y vendedor
-Route::middleware(['auth:sanctum', 'role:admin,super_admin,vendedor'])->group(function () {
+// Lectura de stock: admin, super_admin, vendedor y vendedor_tienda
+Route::middleware(['auth:sanctum', 'role:admin,super_admin,vendedor,vendedor-tienda'])->group(function () {
     Route::get('/stock', [StockController::class, 'index']);
 });
 

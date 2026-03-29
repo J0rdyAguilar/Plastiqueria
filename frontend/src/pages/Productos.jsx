@@ -1,5 +1,5 @@
 // src/pages/Productos.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { productosApi } from "../api/productos";
 
 function fullImg(url) {
@@ -42,6 +42,7 @@ export default function Productos() {
   const [q, setQ] = useState("");
   const [activo, setActivo] = useState("");
   const [loading, setLoading] = useState(false);
+  const [typing, setTyping] = useState(false);
   const [error, setError] = useState("");
 
   const [items, setItems] = useState([]);
@@ -50,9 +51,14 @@ export default function Productos() {
   const [openForm, setOpenForm] = useState(false);
   const [editing, setEditing] = useState(null);
 
-  async function fetchData(page = 1) {
-    setLoading(true);
+  const firstLoadRef = useRef(true);
+
+  async function fetchData(page = 1, opts = {}) {
+    const { silent = false } = opts;
+
+    if (!silent) setLoading(true);
     setError("");
+
     try {
       const data = await productosApi.list({
         q: q || undefined,
@@ -67,7 +73,7 @@ export default function Productos() {
     } catch (e) {
       setError(e?.response?.data?.message || e?.message || "Error cargando productos");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -75,6 +81,26 @@ export default function Productos() {
     fetchData(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (firstLoadRef.current) {
+      firstLoadRef.current = false;
+      return;
+    }
+
+    setTyping(true);
+
+    const timer = setTimeout(async () => {
+      await fetchData(1, { silent: false });
+      setTyping(false);
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      setTyping(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, activo]);
 
   function onNew() {
     setEditing(null);
@@ -99,77 +125,140 @@ export default function Productos() {
 
   function renderPrecios(row) {
     const precios = Array.isArray(row?.precios) ? row.precios : [];
-    if (!precios.length) return <span className="muted small">Sin precios</span>;
+    if (!precios.length) return <span className="empty-prices">Sin precios configurados</span>;
 
     return (
       <div className="price-list">
         {precios.map((p, idx) => (
           <div className="price-chip" key={p.id ?? `${p.presentacion}-${idx}`}>
-            <strong>{presentacionLabel(p.presentacion)}</strong>
-            <span>{money(p.precio)}</span>
-            <small>factor: {Number(p.factor_base || 0)}</small>
+            <div className="price-chip-top">
+              <strong>{presentacionLabel(p.presentacion)}</strong>
+              <span className="price-factor">x{Number(p.factor_base || 0)}</span>
+            </div>
+            <span className="price-chip-value">{money(p.precio)}</span>
           </div>
         ))}
       </div>
     );
   }
 
+  const isBusy = loading || typing;
+
   return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <h1 className="title">Productos</h1>
-          <p className="muted">Crea, edita y administra catálogo con precios por presentación.</p>
+    <div className="products-page">
+      <section className="products-hero">
+        <div className="products-hero-top">
+          <div className="products-hero-title">
+            <h1>Productos</h1>
+            <p>
+              Administra tu catálogo, busca rápido entre cientos de productos y controla
+              precios por presentación de una forma más clara y elegante.
+            </p>
+          </div>
+
+          <div className="products-hero-actions">
+            <button className="btn btn-primary btn-lg" onClick={onNew}>
+              + Nuevo producto
+            </button>
+          </div>
         </div>
 
-        <button className="btn btn-primary" onClick={onNew}>
-          + Nuevo producto
-        </button>
-      </div>
-
-      <div className="card">
-        <div className="filters">
-          <input
-            className="input"
-            placeholder="Buscar por nombre o SKU..."
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-
-          <select className="input" value={activo} onChange={(e) => setActivo(e.target.value)}>
-            <option value="">Todos</option>
-            <option value="1">Activos</option>
-            <option value="0">Inactivos</option>
-          </select>
-
-          <button className="btn" onClick={() => fetchData(1)} disabled={loading}>
-            Buscar
-          </button>
-
-          <button
-            className="btn btn-ghost"
-            onClick={() => {
-              setQ("");
-              setActivo("");
-              setTimeout(() => fetchData(1), 0);
-            }}
-            disabled={loading}
-          >
-            Limpiar
-          </button>
+        <div className="products-stats">
+          <div className="stat-card">
+            <span>Total visibles</span>
+            <strong>{items?.length || 0}</strong>
+          </div>
+          <div className="stat-card">
+            <span>Página actual</span>
+            <strong>{meta?.current_page || 1}</strong>
+          </div>
+          <div className="stat-card">
+            <span>Total páginas</span>
+            <strong>{meta?.last_page || 1}</strong>
+          </div>
         </div>
 
-        {error ? <div className="alert alert-danger">{error}</div> : null}
+        <div className="search-panel">
+          <div className="search-grid">
+            <div className="search-main">
+              <label>Buscador inteligente</label>
+              <div className="search-input-wrap">
+                <span className="search-icon">⌕</span>
 
-        <div className="table-wrap">
-          <table className="table">
+                <input
+                  className="input search-input"
+                  placeholder="Busca por nombre, SKU o descripción..."
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+
+                {typing ? <span className="search-mini-loader" /> : null}
+
+                {!typing && q ? (
+                  <button
+                    type="button"
+                    className="clear-search"
+                    onClick={() => setQ("")}
+                    aria-label="Limpiar búsqueda"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="search-filter">
+              <label>Estado</label>
+              <select
+                className="input search-select"
+                value={activo}
+                onChange={(e) => setActivo(e.target.value)}
+              >
+                <option value="">Todos</option>
+                <option value="1">Activos</option>
+                <option value="0">Inactivos</option>
+              </select>
+            </div>
+
+            <div className="search-actions">
+              <button className="btn btn-primary" onClick={() => fetchData(1)} disabled={isBusy}>
+                {typing ? "Buscando..." : "Buscar"}
+              </button>
+
+              <button
+                className="btn btn-soft"
+                onClick={() => {
+                  setQ("");
+                  setActivo("");
+                }}
+                disabled={isBusy}
+              >
+                Limpiar
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {error ? <div className="alert alert-danger">{error}</div> : null}
+
+      <section className="products-table-card">
+        <div className="table-card-head">
+          <div>
+            <h2>Listado de productos</h2>
+            <p>Vista optimizada para manejar muchos productos sin que se vea saturado.</p>
+          </div>
+        </div>
+
+        <div className="table-wrap pro-table-wrap">
+          <table className="table pro-table">
             <thead>
               <tr>
-                <th style={{ width: 70 }}>Imagen</th>
-                <th>SKU</th>
-                <th>Nombre</th>
-                <th style={{ minWidth: 320 }}>Precios</th>
-                <th style={{ width: 120 }}>Activo</th>
+                <th style={{ width: 90 }}>Imagen</th>
+                <th style={{ width: 150 }}>SKU</th>
+                <th>Producto</th>
+                <th style={{ minWidth: 360 }}>Precios</th>
+                <th style={{ width: 120 }}>Estado</th>
                 <th style={{ width: 210 }}>Acciones</th>
               </tr>
             </thead>
@@ -177,45 +266,51 @@ export default function Productos() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="muted">
-                    Cargando...
+                  <td colSpan={6}>
+                    <div className="table-loader-wrap">
+                      <div className="table-loader-ring" />
+                    </div>
                   </td>
                 </tr>
               ) : items?.length ? (
                 items.map((row) => (
                   <tr key={row.id}>
                     <td>
-                      <div className="thumb">
+                      <div className="thumb thumb-lg">
                         {row?.imagen_principal?.url ? (
                           <img src={fullImg(row.imagen_principal.url)} alt={row.nombre} />
                         ) : (
-                          <div className="thumb-ph">—</div>
+                          <div className="thumb-ph">Sin imagen</div>
                         )}
                       </div>
                     </td>
 
-                    <td className="mono">{row.sku || "—"}</td>
+                    <td>
+                      <div className="sku-badge">{row.sku || "—"}</div>
+                    </td>
 
                     <td>
-                      <div className="name">{row.nombre}</div>
-                      <div className="muted small">{row.descripcion || ""}</div>
-                      <div className="muted tiny">Unidad base: {presentacionLabel(row.unidad_base)}</div>
+                      <div className="product-name">{row.nombre}</div>
+                      <div className="product-desc">{row.descripcion || "Sin descripción"}</div>
+                      <div className="product-meta">
+                        Unidad base: <strong>{presentacionLabel(row.unidad_base)}</strong>
+                      </div>
                     </td>
 
                     <td>{renderPrecios(row)}</td>
 
                     <td>
-                      <span className={row.activo ? "pill pill-ok" : "pill"}>
-                        {row.activo ? "Sí" : "No"}
+                      <span className={row.activo ? "status-pill status-active" : "status-pill status-inactive"}>
+                        {row.activo ? "Activo" : "Inactivo"}
                       </span>
                     </td>
 
                     <td>
                       <div className="actions">
-                        <button className="btn btn-sm" onClick={() => onEdit(row)}>
+                        <button className="btn btn-edit btn-sm" onClick={() => onEdit(row)}>
                           Editar
                         </button>
-                        <button className="btn btn-sm btn-danger" onClick={() => onDelete(row)}>
+                        <button className="btn btn-delete btn-sm" onClick={() => onDelete(row)}>
                           Eliminar
                         </button>
                       </div>
@@ -224,8 +319,12 @@ export default function Productos() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6} className="muted">
-                    Sin productos.
+                  <td colSpan={6}>
+                    <div className="empty-state">
+                      <div className="empty-state-icon">📦</div>
+                      <h3>No hay productos</h3>
+                      <p>Agrega tu primer producto o ajusta los filtros de búsqueda.</p>
+                    </div>
                   </td>
                 </tr>
               )}
@@ -234,27 +333,29 @@ export default function Productos() {
         </div>
 
         {meta?.last_page > 1 ? (
-          <div className="pager">
+          <div className="pager pro-pager">
             <button
-              className="btn"
-              disabled={loading || meta.current_page <= 1}
+              className="btn btn-soft"
+              disabled={isBusy || meta.current_page <= 1}
               onClick={() => fetchData(meta.current_page - 1)}
             >
-              Anterior
+              ← Anterior
             </button>
-            <span className="muted small">
-              Página {meta.current_page} de {meta.last_page}
-            </span>
+
+            <div className="pager-info">
+              Página <strong>{meta.current_page}</strong> de <strong>{meta.last_page}</strong>
+            </div>
+
             <button
-              className="btn"
-              disabled={loading || meta.current_page >= meta.last_page}
+              className="btn btn-soft"
+              disabled={isBusy || meta.current_page >= meta.last_page}
               onClick={() => fetchData(meta.current_page + 1)}
             >
-              Siguiente
+              Siguiente →
             </button>
           </div>
         ) : null}
-      </div>
+      </section>
 
       {openForm ? (
         <ProductoModal
@@ -400,7 +501,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
           <div>
             <h2 className="modal-title">{isEdit ? "Editar producto" : "Nuevo producto"}</h2>
             <p className="muted small">
-              Llena los datos básicos, agrega precios por presentación y opcionalmente sube imagen.
+              Llena los datos básicos, agrega precios por presentación y sube una imagen si lo deseas.
             </p>
           </div>
           <button className="iconbtn" onClick={onClose} aria-label="Cerrar">
@@ -489,7 +590,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
                   <div>
                     <h3 className="subttl">Precios por presentación</h3>
                     <p className="muted tiny">
-                      Aquí defines cuánto vale cada presentación y cuánto descuenta del stock base.
+                      Configura cada presentación sin que se repita y define su factor base.
                     </p>
                   </div>
 
@@ -577,7 +678,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
                           <td>
                             <button
                               type="button"
-                              className="btn btn-sm btn-danger"
+                              className="btn btn-delete btn-sm"
                               onClick={() => removePrecioRow(index)}
                               disabled={precios.length === 1 || saving}
                             >
@@ -592,20 +693,20 @@ function ProductoModal({ initial, onClose, onSaved }) {
 
                 <div className="price-help">
                   <div className="helper-card">
-                    <strong>Ejemplo:</strong>
-                    <span>Unidad = factor 1</span>
+                    <strong>Unidad</strong>
+                    <span>factor 1</span>
                   </div>
                   <div className="helper-card">
-                    <strong>Docena:</strong>
+                    <strong>Docena</strong>
                     <span>factor 12</span>
                   </div>
                   <div className="helper-card">
-                    <strong>Paquete:</strong>
-                    <span>depende del producto</span>
+                    <strong>Paquete</strong>
+                    <span>según producto</span>
                   </div>
                   <div className="helper-card">
-                    <strong>Fardo:</strong>
-                    <span>depende del producto</span>
+                    <strong>Fardo</strong>
+                    <span>según producto</span>
                   </div>
                 </div>
               </div>
@@ -613,7 +714,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
           </div>
 
           <div className="modal-actions">
-            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>
+            <button type="button" className="btn btn-soft" onClick={onClose} disabled={saving}>
               Cancelar
             </button>
             <button className="btn btn-primary" disabled={saving}>
@@ -627,184 +728,443 @@ function ProductoModal({ initial, onClose, onSaved }) {
 }
 
 const styles = `
-.page{
-  max-width:1280px;
-  margin:0 auto;
-  padding:18px;
-}
-.page-header{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:16px;
-  margin-bottom:14px;
-}
-.title{
-  margin:0;
-  font-size:26px;
-}
-.muted{
-  color:#6b7280;
-  margin:4px 0 0;
-}
-.small{
-  font-size:12px;
-}
-.tiny{
-  font-size:11px;
+:root{
+  --bg:#f4f7fb;
+  --card:#ffffff;
+  --card-2:rgba(255,255,255,.84);
+  --line:#e6ebf3;
+  --line-2:rgba(15,23,42,.08);
+  --text:#0f172a;
+  --muted:#64748b;
+  --primary:#4f46e5;
+  --primary-2:#6366f1;
+  --primary-soft:rgba(79,70,229,.10);
+  --success:#16a34a;
+  --success-soft:rgba(22,163,74,.12);
+  --danger:#ef4444;
+  --danger-soft:rgba(239,68,68,.10);
+  --shadow-sm:0 10px 25px rgba(15,23,42,.05);
+  --shadow-md:0 18px 40px rgba(15,23,42,.08);
+  --shadow-lg:0 24px 65px rgba(15,23,42,.12);
+  --radius-xl:28px;
+  --radius-lg:20px;
+  --radius-md:16px;
+  --radius-sm:12px;
 }
 
-.card{
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:14px;
-  padding:14px;
-  box-shadow:0 1px 2px rgba(0,0,0,.04);
+*{
+  box-sizing:border-box;
 }
-.filters{
+
+.products-page{
+  max-width:1380px;
+  margin:0 auto;
+  padding:22px;
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+  color:var(--text);
+}
+
+.products-hero{
+  position:relative;
+  overflow:hidden;
+  border-radius:var(--radius-xl);
+  padding:24px;
+  background:
+    radial-gradient(circle at top right, rgba(99,102,241,.16), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(56,189,248,.10), transparent 24%),
+    linear-gradient(180deg, #f8fbff 0%, #eef2ff 100%);
+  border:1px solid rgba(99,102,241,.12);
+  box-shadow:var(--shadow-md);
+}
+
+.products-hero-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:16px;
+  flex-wrap:wrap;
+}
+
+.products-hero-title h1{
+  margin:0;
+  font-size:34px;
+  letter-spacing:-.03em;
+  line-height:1.05;
+}
+
+.products-hero-title p{
+  margin:10px 0 0;
+  max-width:760px;
+  color:var(--muted);
+  font-size:14px;
+  line-height:1.6;
+}
+
+.products-hero-actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.products-stats{
+  margin-top:18px;
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.stat-card{
+  min-width:140px;
+  padding:14px 16px;
+  border-radius:18px;
+  background:rgba(255,255,255,.76);
+  border:1px solid rgba(255,255,255,.95);
+  backdrop-filter:blur(10px);
+  box-shadow:var(--shadow-sm);
+}
+
+.stat-card span{
+  display:block;
+  font-size:12px;
+  color:var(--muted);
+  font-weight:700;
+}
+
+.stat-card strong{
+  display:block;
+  margin-top:6px;
+  font-size:24px;
+  line-height:1;
+}
+
+.search-panel{
+  margin-top:18px;
+  padding:18px;
+  border-radius:22px;
+  background:rgba(255,255,255,.72);
+  border:1px solid rgba(255,255,255,.92);
+  box-shadow:var(--shadow-sm);
+  backdrop-filter:blur(12px);
+}
+
+.search-grid{
+  display:grid;
+  grid-template-columns:minmax(320px,1.9fr) minmax(180px,.8fr) auto;
+  gap:14px;
+  align-items:end;
+}
+
+.search-main,
+.search-filter{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.search-main label,
+.search-filter label{
+  margin:0;
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  color:var(--muted);
+  font-weight:800;
+}
+
+.search-input-wrap{
+  position:relative;
+}
+
+.search-icon{
+  position:absolute;
+  left:16px;
+  top:50%;
+  transform:translateY(-50%);
+  color:#94a3b8;
+  font-size:18px;
+  pointer-events:none;
+}
+
+.search-input{
+  padding-left:48px !important;
+  padding-right:48px !important;
+  height:56px;
+  border-radius:18px !important;
+  font-size:15px;
+  background:rgba(255,255,255,.92);
+  border:1px solid rgba(148,163,184,.22) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.65);
+}
+
+.search-input::placeholder{
+  color:#94a3b8;
+}
+
+.clear-search{
+  position:absolute;
+  right:12px;
+  top:50%;
+  transform:translateY(-50%);
+  width:28px;
+  height:28px;
+  border:none;
+  border-radius:999px;
+  background:#eef2ff;
+  color:#4f46e5;
+  font-weight:900;
+  cursor:pointer;
+}
+
+.search-mini-loader{
+  position:absolute;
+  right:14px;
+  top:50%;
+  transform:translateY(-50%);
+  width:22px;
+  height:22px;
+  border-radius:999px;
+  border:2.5px solid rgba(79,70,229,.15);
+  border-top-color:#4f46e5;
+  animation:spin .7s linear infinite;
+}
+
+.search-select{
+  height:56px;
+  border-radius:18px !important;
+  background:rgba(255,255,255,.92);
+}
+
+.search-actions{
   display:flex;
   gap:10px;
-  align-items:center;
   flex-wrap:wrap;
-  margin-bottom:12px;
 }
 
-.table-wrap{
-  overflow:auto;
-  border-radius:12px;
-  border:1px solid #eef2f7;
+.products-table-card{
+  background:rgba(255,255,255,.90);
+  border:1px solid rgba(226,232,240,.95);
+  border-radius:26px;
+  padding:18px;
+  box-shadow:var(--shadow-md);
 }
-.table{
+
+.table-card-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+  margin-bottom:14px;
+}
+
+.table-card-head h2{
+  margin:0;
+  font-size:20px;
+  letter-spacing:-.02em;
+}
+
+.table-card-head p{
+  margin:6px 0 0;
+  color:var(--muted);
+  font-size:13px;
+}
+
+.pro-table-wrap{
+  overflow:auto;
+  border-radius:22px;
+  border:1px solid #edf2f7;
+  background:linear-gradient(180deg, #fff 0%, #fcfdff 100%);
+}
+
+.pro-table{
   width:100%;
+  min-width:1120px;
   border-collapse:separate;
   border-spacing:0;
-  min-width:1100px;
 }
-.table th,
-.table td{
-  padding:10px 12px;
-  border-bottom:1px solid #eef2f7;
+
+.pro-table th,
+.pro-table td{
+  padding:14px 14px;
+  border-bottom:1px solid #edf2f7;
   text-align:left;
   vertical-align:middle;
 }
-.table th{
-  font-size:12px;
+
+.pro-table th{
+  position:sticky;
+  top:0;
+  z-index:1;
+  font-size:11px;
   text-transform:uppercase;
-  letter-spacing:.06em;
-  color:#6b7280;
-  background:#fafafa;
+  letter-spacing:.12em;
+  color:#64748b;
+  background:linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  font-weight:900;
 }
-.table tr:last-child td{
+
+.pro-table tbody tr{
+  transition:.18s ease;
+}
+
+.pro-table tbody tr:hover{
+  background:#fafcff;
+}
+
+.pro-table tbody tr:last-child td{
   border-bottom:none;
 }
 
 .input{
   width:100%;
-  padding:10px 12px;
+  padding:11px 13px;
   border:1px solid #e5e7eb;
-  border-radius:10px;
+  border-radius:12px;
   outline:none;
   background:#fff;
+  color:var(--text);
+  transition:.2s ease;
 }
+
 .input:focus{
   border-color:#c7d2fe;
-  box-shadow:0 0 0 3px rgba(99,102,241,.15);
+  box-shadow:0 0 0 4px rgba(99,102,241,.12);
 }
 
 .btn{
-  padding:10px 12px;
-  border-radius:10px;
-  border:1px solid #e5e7eb;
-  background:#fff;
+  border:none;
+  outline:none;
   cursor:pointer;
+  transition:.18s ease;
+  font-weight:800;
+  border-radius:14px;
+  padding:11px 14px;
 }
-.btn:hover{
-  background:#fafafa;
-}
+
 .btn:disabled{
   opacity:.6;
   cursor:not-allowed;
 }
-.btn-sm{
-  padding:8px 10px;
-  border-radius:10px;
-}
-.btn-primary{
-  background:#4f46e5;
-  color:#fff;
-  border-color:#4f46e5;
-}
-.btn-primary:hover{
-  background:#4338ca;
-}
-.btn-danger{
-  background:#ef4444;
-  color:#fff;
-  border-color:#ef4444;
-}
-.btn-danger:hover{
-  background:#dc2626;
-}
-.btn-ghost{
-  background:#fff;
+
+.btn-lg{
+  height:48px;
+  padding:0 18px;
+  border-radius:16px;
 }
 
-.actions{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
+.btn-sm{
+  padding:9px 12px;
+  border-radius:12px;
+  font-size:13px;
 }
-.pill{
-  display:inline-flex;
-  align-items:center;
-  padding:6px 10px;
-  border-radius:999px;
-  background:#f3f4f6;
-  font-size:12px;
+
+.btn-primary{
+  background:linear-gradient(135deg, var(--primary), var(--primary-2));
+  color:#fff;
+  box-shadow:0 10px 24px rgba(79,70,229,.24);
 }
-.pill-ok{
-  background:#ecfdf5;
-  color:#065f46;
-  border:1px solid #a7f3d0;
+
+.btn-primary:hover{
+  transform:translateY(-1px);
+  filter:brightness(1.02);
+}
+
+.btn-soft{
+  background:#f8fafc;
+  color:#334155;
+  border:1px solid #e2e8f0;
+}
+
+.btn-soft:hover{
+  background:#f1f5f9;
+}
+
+.btn-edit{
+  background:#eef2ff;
+  color:#4338ca;
+  border:1px solid rgba(99,102,241,.18);
+}
+
+.btn-edit:hover{
+  background:#e0e7ff;
+}
+
+.btn-delete{
+  background:#fff1f2;
+  color:#dc2626;
+  border:1px solid rgba(239,68,68,.16);
+}
+
+.btn-delete:hover{
+  background:#ffe4e6;
 }
 
 .thumb{
-  width:46px;
-  height:46px;
-  border-radius:12px;
-  border:1px solid #e5e7eb;
   overflow:hidden;
   display:grid;
   place-items:center;
-  background:#fafafa;
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
 }
+
+.thumb-lg{
+  width:62px;
+  height:62px;
+  border-radius:16px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.9);
+}
+
 .thumb img{
   width:100%;
   height:100%;
   object-fit:cover;
   display:block;
 }
+
 .thumb-ph{
-  color:#9ca3af;
-  font-size:14px;
+  font-size:11px;
+  color:#94a3b8;
+  text-align:center;
+  padding:8px;
 }
 
-.alert{
-  padding:10px 12px;
-  border-radius:12px;
-  margin:10px 0;
-}
-.alert-danger{
-  background:#fef2f2;
-  border:1px solid #fecaca;
-  color:#991b1b;
+.sku-badge{
+  display:inline-flex;
+  align-items:center;
+  min-height:36px;
+  padding:0 12px;
+  border-radius:999px;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  font-size:12px;
+  color:#334155;
+  font-weight:700;
 }
 
-.name{
-  font-weight:600;
+.product-name{
+  font-size:15px;
+  font-weight:900;
+  color:#0f172a;
+  line-height:1.25;
 }
-.mono{
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+.product-desc{
+  margin-top:4px;
+  font-size:13px;
+  line-height:1.45;
+  color:#64748b;
+}
+
+.product-meta{
+  margin-top:8px;
+  font-size:12px;
+  color:#64748b;
+}
+
+.product-meta strong{
+  color:#334155;
 }
 
 .price-list{
@@ -812,112 +1172,261 @@ const styles = `
   flex-wrap:wrap;
   gap:8px;
 }
+
 .price-chip{
-  display:flex;
-  flex-direction:column;
-  gap:2px;
-  padding:8px 10px;
-  border:1px solid #e5e7eb;
-  background:#fafafa;
-  border-radius:12px;
-  min-width:110px;
-}
-.price-chip strong{
-  font-size:12px;
-}
-.price-chip span{
-  font-size:13px;
-  font-weight:700;
-  color:#111827;
-}
-.price-chip small{
-  color:#6b7280;
-  font-size:11px;
+  min-width:120px;
+  padding:10px 11px;
+  border-radius:16px;
+  border:1px solid #e8edf5;
+  background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow:0 5px 16px rgba(15,23,42,.04);
 }
 
-.pager{
+.price-chip-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+}
+
+.price-chip strong{
+  font-size:12px;
+  color:#334155;
+}
+
+.price-factor{
+  font-size:11px;
+  color:#6366f1;
+  background:#eef2ff;
+  border-radius:999px;
+  padding:3px 7px;
+  font-weight:800;
+}
+
+.price-chip-value{
+  display:block;
+  margin-top:7px;
+  font-size:15px;
+  font-weight:900;
+  color:#0f172a;
+}
+
+.empty-prices{
+  display:inline-flex;
+  align-items:center;
+  min-height:40px;
+  padding:0 14px;
+  border-radius:999px;
+  background:#f8fafc;
+  border:1px dashed #cbd5e1;
+  color:#64748b;
+  font-size:12px;
+  font-weight:700;
+}
+
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:92px;
+  min-height:34px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:900;
+  border:1px solid transparent;
+}
+
+.status-active{
+  background:var(--success-soft);
+  color:#166534;
+  border-color:rgba(34,197,94,.22);
+}
+
+.status-inactive{
+  background:#f8fafc;
+  color:#64748b;
+  border-color:#e2e8f0;
+}
+
+.actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.alert{
+  padding:12px 14px;
+  border-radius:16px;
+  font-weight:700;
+}
+
+.alert-danger{
+  background:#fff1f2;
+  border:1px solid #fecdd3;
+  color:#b91c1c;
+}
+
+.empty-state{
+  padding:44px 20px;
+  text-align:center;
+}
+
+.empty-state-icon{
+  font-size:36px;
+  margin-bottom:12px;
+}
+
+.empty-state h3{
+  margin:0;
+  font-size:18px;
+}
+
+.empty-state p{
+  margin:8px 0 0;
+  color:var(--muted);
+}
+
+.pro-pager{
   display:flex;
   justify-content:flex-end;
   align-items:center;
   gap:12px;
-  margin-top:12px;
+  margin-top:16px;
+  flex-wrap:wrap;
 }
 
-/* modal */
-.modal-backdrop{
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.35);
+.pager-info{
+  padding:10px 14px;
+  border-radius:999px;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  color:#475569;
+  font-size:13px;
+  font-weight:700;
+}
+
+.table-loader-wrap{
+  min-height:220px;
   display:flex;
   align-items:center;
   justify-content:center;
-  padding:16px;
-  z-index:50;
 }
+
+.table-loader-ring{
+  width:50px;
+  height:50px;
+  border-radius:999px;
+  border:4px solid rgba(79,70,229,.12);
+  border-top-color:#4f46e5;
+  animation:spin .75s linear infinite;
+}
+
+.modal-backdrop{
+  position:fixed;
+  inset:0;
+  background:rgba(2,6,23,.45);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:18px;
+  z-index:100;
+  backdrop-filter:blur(3px);
+}
+
 .modal{
   width:min(760px, 100%);
-  max-height:calc(100vh - 32px);
+  max-height:calc(100vh - 36px);
   overflow:auto;
   background:#fff;
-  border-radius:16px;
-  border:1px solid #e5e7eb;
-  box-shadow:0 15px 30px rgba(0,0,0,.18);
-  padding:14px;
+  border-radius:24px;
+  border:1px solid rgba(226,232,240,.9);
+  box-shadow:var(--shadow-lg);
+  padding:18px;
 }
+
 .modal-lg{
-  width:min(1100px, 100%);
+  width:min(1120px, 100%);
 }
+
 .modal-header{
   display:flex;
   align-items:flex-start;
   justify-content:space-between;
   gap:12px;
-  margin-bottom:10px;
+  margin-bottom:12px;
 }
+
 .modal-title{
   margin:0;
-  font-size:18px;
+  font-size:22px;
+  letter-spacing:-.02em;
 }
+
+.muted{
+  color:#64748b;
+  margin:4px 0 0;
+}
+
+.small{
+  font-size:12px;
+}
+
+.tiny{
+  font-size:11px;
+}
+
 .iconbtn{
-  width:38px;
-  height:38px;
-  border-radius:12px;
+  width:42px;
+  height:42px;
+  border-radius:14px;
   border:1px solid #e5e7eb;
   background:#fff;
   cursor:pointer;
+  font-weight:900;
 }
+
 .iconbtn:hover{
-  background:#fafafa;
+  background:#f8fafc;
 }
 
 .form{
   margin-top:10px;
 }
+
 .grid{
   display:grid;
   grid-template-columns:1fr 1fr;
-  gap:12px;
+  gap:14px;
 }
+
 .col-2{
   grid-column:span 2;
 }
+
 .label{
   display:block;
   font-size:12px;
-  color:#6b7280;
-  margin:0 0 6px;
+  color:#64748b;
+  margin:0 0 7px;
+  font-weight:800;
+  letter-spacing:.04em;
 }
+
 .row{
   display:flex;
   align-items:center;
   gap:10px;
 }
+
 .check{
   display:flex;
   align-items:center;
   gap:10px;
   user-select:none;
+  font-weight:700;
+  color:#334155;
 }
+
 .center-check{
   justify-content:center;
 }
@@ -926,88 +1435,145 @@ const styles = `
   display:flex;
   justify-content:flex-end;
   gap:10px;
-  margin-top:12px;
+  margin-top:16px;
+  flex-wrap:wrap;
 }
 
 .price-box{
-  border:1px solid #e5e7eb;
-  border-radius:14px;
-  padding:12px;
-  background:#fcfcfd;
+  border:1px solid #e8edf5;
+  border-radius:22px;
+  padding:14px;
+  background:linear-gradient(180deg, #fcfdff 0%, #f8fafc 100%);
 }
+
 .price-box-head{
   display:flex;
   align-items:flex-start;
   justify-content:space-between;
   gap:12px;
   margin-bottom:12px;
+  flex-wrap:wrap;
 }
+
 .subttl{
   margin:0;
-  font-size:16px;
+  font-size:17px;
+  letter-spacing:-.01em;
 }
+
 .price-editor-wrap{
   overflow:auto;
-  border-radius:12px;
-  border:1px solid #eef2f7;
+  border-radius:18px;
+  border:1px solid #edf2f7;
   background:#fff;
 }
+
 .price-editor{
   width:100%;
   border-collapse:separate;
   border-spacing:0;
   min-width:760px;
 }
+
 .price-editor th,
 .price-editor td{
-  padding:10px;
-  border-bottom:1px solid #eef2f7;
+  padding:11px;
+  border-bottom:1px solid #edf2f7;
   text-align:left;
   vertical-align:middle;
 }
+
 .price-editor th{
-  font-size:12px;
+  font-size:11px;
   text-transform:uppercase;
-  letter-spacing:.04em;
-  color:#6b7280;
-  background:#fafafa;
+  letter-spacing:.1em;
+  color:#64748b;
+  background:#f8fafc;
+  font-weight:900;
 }
+
 .price-editor tr:last-child td{
   border-bottom:none;
 }
+
 .price-help{
   display:flex;
   flex-wrap:wrap;
   gap:8px;
   margin-top:12px;
 }
+
 .helper-card{
   display:flex;
   flex-direction:column;
-  gap:2px;
-  padding:8px 10px;
-  border:1px dashed #d1d5db;
-  border-radius:12px;
+  gap:4px;
+  padding:10px 12px;
+  border:1px dashed #cbd5e1;
+  border-radius:14px;
   background:#fff;
 }
+
 .helper-card strong{
   font-size:12px;
-}
-.helper-card span{
-  font-size:12px;
-  color:#6b7280;
+  color:#0f172a;
 }
 
-@media (max-width: 900px){
+.helper-card span{
+  font-size:12px;
+  color:#64748b;
+}
+
+@keyframes spin{
+  to{ transform:rotate(360deg); }
+}
+
+@media (max-width: 980px){
+  .search-grid{
+    grid-template-columns:1fr;
+  }
+
+  .search-actions{
+    width:100%;
+  }
+
+  .search-actions .btn{
+    flex:1;
+  }
+
   .grid{
     grid-template-columns:1fr;
   }
+
   .col-2{
     grid-column:span 1;
   }
-  .page-header{
+}
+
+@media (max-width: 700px){
+  .products-page{
+    padding:14px;
+  }
+
+  .products-hero{
+    padding:18px;
+    border-radius:22px;
+  }
+
+  .products-hero-title h1{
+    font-size:28px;
+  }
+
+  .products-stats{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+  }
+
+  .table-card-head{
     flex-direction:column;
-    align-items:stretch;
+  }
+
+  .pro-pager{
+    justify-content:center;
   }
 }
 `;

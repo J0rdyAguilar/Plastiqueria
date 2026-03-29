@@ -144,6 +144,31 @@ async function fetchProductosConPrecios({ q = "", per_page = 500 }) {
   return [];
 }
 
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap" aria-label="Cargando">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
+}
+
+function ModalLoader({ text = "Cargando..." }) {
+  return (
+    <div className="modal-loader-wrap" aria-label={text}>
+      <div className="modal-loader-ring"></div>
+      <div className="modal-loader-text">{text}</div>
+    </div>
+  );
+}
+
 export default function Pedidos() {
   const session = getSession();
   const me = session?.user || {};
@@ -158,6 +183,8 @@ export default function Pedidos() {
   const [vista, setVista] = useState(getVistaFromHash(location.hash));
 
   const [loadingInit, setLoadingInit] = useState(true);
+  const [loadingProductos, setLoadingProductos] = useState(false);
+  const [guardandoCliente, setGuardandoCliente] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
 
@@ -259,6 +286,7 @@ export default function Pedidos() {
 
   async function loadProductos() {
     try {
+      setLoadingProductos(true);
       setError("");
 
       const productosRows = await fetchProductosConPrecios({ q, per_page: 500 });
@@ -311,6 +339,8 @@ export default function Pedidos() {
     } catch (err) {
       console.error(err);
       setError("No se pudieron cargar los productos.");
+    } finally {
+      setLoadingProductos(false);
     }
   }
 
@@ -324,10 +354,7 @@ export default function Pedidos() {
         per_page: 20,
       });
 
-      console.log("RESPUESTA MIS PEDIDOS:", res);
-
       const pedidos = extractArray(res).map(normalizarPedido).filter(Boolean);
-
       setMisPedidos(pedidos);
     } catch (err) {
       console.error("mis pedidos ERROR", err?.response?.data || err);
@@ -504,6 +531,8 @@ export default function Pedidos() {
     }
 
     try {
+      setGuardandoCliente(true);
+
       const effectiveUbicacionId = isVendedor ? userUbicacionId : ubicacionId;
 
       const payload = {
@@ -524,8 +553,6 @@ export default function Pedidos() {
           delete payload[k];
         }
       });
-
-      console.log("PAYLOAD CREAR CLIENTE:", payload);
 
       const res = await clientesApi.create(payload);
       const creado = normalizarCliente(res?.data?.data || res?.data || res);
@@ -563,6 +590,8 @@ export default function Pedidos() {
     } catch (err) {
       console.error("ERROR CREANDO CLIENTE:", err?.response?.data || err);
       notify.error(getErrorMessage(err, "No se pudo crear el cliente"));
+    } finally {
+      setGuardandoCliente(false);
     }
   }
 
@@ -610,13 +639,10 @@ export default function Pedidos() {
       }
     });
 
-    console.log("PAYLOAD PEDIDO:", payload);
-
     try {
       setEnviando(true);
 
-      const res = await pedidosApi.createPedidoVendedor(payload);
-      console.log("PEDIDO CREADO:", res);
+      await pedidosApi.createPedidoVendedor(payload);
 
       notify.success("Pedido enviado al administrador");
 
@@ -637,7 +663,9 @@ export default function Pedidos() {
   if (loadingInit) {
     return (
       <div className="page">
-        <div className="card pad">Cargando datos...</div>
+        <div className="card pad">
+          <ModalLoader text="Cargando datos..." />
+        </div>
       </div>
     );
   }
@@ -696,6 +724,7 @@ export default function Pedidos() {
                         value={ubicacionId}
                         onChange={(e) => setUbicacionId(e.target.value)}
                         style={inputStyle}
+                        disabled={enviando || guardandoCliente}
                       >
                         <option value="">Selecciona sucursal</option>
                         {ubicaciones.map((u) => (
@@ -735,6 +764,7 @@ export default function Pedidos() {
                       type="button"
                       onClick={() => setMostrarNuevoCliente((v) => !v)}
                       style={miniBtn}
+                      disabled={guardandoCliente || enviando}
                     >
                       {mostrarNuevoCliente ? "Cancelar" : "Nuevo cliente"}
                     </button>
@@ -749,6 +779,7 @@ export default function Pedidos() {
                         value={clienteId}
                         onChange={(e) => setClienteId(e.target.value)}
                         style={inputStyle}
+                        disabled={guardandoCliente || enviando}
                       >
                         <option value="">Selecciona cliente</option>
                         {clientes.map((c) => (
@@ -757,6 +788,10 @@ export default function Pedidos() {
                           </option>
                         ))}
                       </select>
+                    </div>
+                  ) : guardandoCliente ? (
+                    <div style={{ marginTop: 12 }}>
+                      <ModalLoader text="Guardando cliente..." />
                     </div>
                   ) : (
                     <div
@@ -874,8 +909,8 @@ export default function Pedidos() {
                       </div>
 
                       <div style={{ gridColumn: "1 / -1" }}>
-                        <button type="button" onClick={handleCrearCliente} style={saveBtn}>
-                          Guardar cliente
+                        <button type="button" onClick={handleCrearCliente} style={saveBtn} disabled={guardandoCliente}>
+                          {guardandoCliente ? <InlineLoader /> : "Guardar cliente"}
                         </button>
                       </div>
                     </div>
@@ -923,6 +958,7 @@ export default function Pedidos() {
                     onChange={(e) => setObservaciones(e.target.value)}
                     rows={3}
                     style={{ ...inputStyle, resize: "vertical" }}
+                    disabled={enviando}
                   />
                 </div>
               </div>
@@ -946,15 +982,18 @@ export default function Pedidos() {
                       onChange={(e) => setQ(e.target.value)}
                       placeholder="Buscar por nombre o código..."
                       style={{ ...inputStyle, maxWidth: 320 }}
+                      disabled={loadingProductos || enviando}
                     />
-                    <button type="button" onClick={loadProductos} style={miniBtn}>
-                      Buscar
+                    <button type="button" onClick={loadProductos} style={miniBtn} disabled={loadingProductos || enviando}>
+                      {loadingProductos ? <InlineLoader /> : "Buscar"}
                     </button>
                   </div>
                 </div>
 
                 <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-                  {productosFiltrados.map((producto) => {
+                  {loadingProductos ? (
+                    <TableLoader />
+                  ) : productosFiltrados.map((producto) => {
                     const linea = ensureLinea(producto);
                     const subtotal = getSubtotal(producto);
 
@@ -965,6 +1004,7 @@ export default function Pedidos() {
                           border: "1px solid #e5e7eb",
                           borderRadius: 12,
                           padding: 14,
+                          opacity: enviando ? 0.7 : 1,
                         }}
                       >
                         <div
@@ -1004,6 +1044,7 @@ export default function Pedidos() {
                               value={linea.presentacion}
                               onChange={(e) => changePresentacion(producto, e.target.value)}
                               style={inputStyle}
+                              disabled={enviando}
                             >
                               {(producto.presentaciones || []).map((p) => (
                                 <option key={p.tipo} value={p.tipo}>
@@ -1024,6 +1065,7 @@ export default function Pedidos() {
                               value={linea.cantidad}
                               onChange={(e) => changeCantidad(producto, e.target.value)}
                               style={inputStyle}
+                              disabled={enviando}
                             />
                           </div>
 
@@ -1037,7 +1079,7 @@ export default function Pedidos() {
                               step="0.01"
                               value={linea.usaMontoVariable ? linea.montoVariable : linea.precioBase}
                               onChange={(e) => setMontoVariable(producto, e.target.value)}
-                              disabled={!linea.usaMontoVariable}
+                              disabled={!linea.usaMontoVariable || enviando}
                               style={{
                                 ...inputStyle,
                                 background: linea.usaMontoVariable ? "#fff" : "#f7f7f7",
@@ -1052,6 +1094,7 @@ export default function Pedidos() {
                               type="checkbox"
                               checked={!!linea.usaMontoVariable}
                               onChange={(e) => toggleMontoVariable(producto, e.target.checked)}
+                              disabled={enviando}
                             />
                             <span>Usar monto variable</span>
                           </label>
@@ -1060,7 +1103,7 @@ export default function Pedidos() {
                     );
                   })}
 
-                  {productosFiltrados.length === 0 && (
+                  {!loadingProductos && productosFiltrados.length === 0 && (
                     <div className="muted">No se encontraron productos.</div>
                   )}
                 </div>
@@ -1140,16 +1183,12 @@ export default function Pedidos() {
                   type="submit"
                   disabled={enviando || (isVendedor && !userUbicacionId)}
                   style={{
-                    width: "100%",
-                    marginTop: 14,
-                    border: 0,
-                    borderRadius: 10,
-                    padding: "12px 14px",
-                    fontWeight: 700,
+                    ...submitBtn,
                     cursor: enviando ? "not-allowed" : "pointer",
+                    opacity: enviando ? 0.85 : 1,
                   }}
                 >
-                  {enviando ? "Enviando..." : "Enviar pedido al admin"}
+                  {enviando ? <InlineLoader /> : "Enviar pedido al admin"}
                 </button>
               </div>
             </div>
@@ -1179,6 +1218,7 @@ export default function Pedidos() {
                 value={estadoFiltroPedidos}
                 onChange={(e) => setEstadoFiltroPedidos(e.target.value)}
                 style={inputStyle}
+                disabled={loadingMisPedidos}
               >
                 <option value="">Todos los estados</option>
                 <option value="pendiente_revision">Pendiente revisión</option>
@@ -1190,7 +1230,7 @@ export default function Pedidos() {
           </div>
 
           {loadingMisPedidos ? (
-            <div className="muted">Cargando pedidos...</div>
+            <TableLoader />
           ) : misPedidos.length === 0 ? (
             <div className="muted">Aún no tienes pedidos registrados.</div>
           ) : (
@@ -1294,4 +1334,22 @@ const saveBtn = {
   padding: "12px 14px",
   cursor: "pointer",
   fontWeight: 700,
+  minHeight: 44,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "100%",
+};
+
+const submitBtn = {
+  width: "100%",
+  marginTop: 14,
+  border: 0,
+  borderRadius: 10,
+  padding: "12px 14px",
+  fontWeight: 700,
+  minHeight: 46,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
 };

@@ -29,6 +29,35 @@ function extractList(res) {
   return [];
 }
 
+/* ================= LOADER ================= */
+
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
+}
+
+function ModalLoader({ text = "Cargando..." }) {
+  return (
+    <div className="modal-loader-wrap">
+      <div className="modal-loader-ring"></div>
+      <div className="modal-loader-text">{text}</div>
+    </div>
+  );
+}
+
+/* ================= COMPONENTE ================= */
+
 export default function Rutas() {
   const nav = useNavigate();
   const me = getSession()?.user;
@@ -78,7 +107,6 @@ export default function Rutas() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
@@ -87,7 +115,7 @@ export default function Rutas() {
 
     return items.filter((r) => {
       const z = r.zona || {};
-      const text = `${r.nombre || ""} ${z.nombre || ""} ${r.zona_id || ""}`.toLowerCase();
+      const text = `${r.nombre || ""} ${z.nombre || ""}`.toLowerCase();
       return text.includes(s);
     });
   }, [items, q]);
@@ -98,9 +126,7 @@ export default function Rutas() {
     setOpen(true);
     setError("");
 
-    if (zonas.length === 0) {
-      await loadZonas();
-    }
+    if (zonas.length === 0) await loadZonas();
   }
 
   async function openEdit(r) {
@@ -112,9 +138,7 @@ export default function Rutas() {
     setOpen(true);
     setError("");
 
-    if (zonas.length === 0) {
-      await loadZonas();
-    }
+    if (zonas.length === 0) await loadZonas();
   }
 
   async function save(e) {
@@ -128,13 +152,8 @@ export default function Rutas() {
         nombre: form.nombre.trim(),
       };
 
-      if (!payload.zona_id) {
-        throw new Error("Debes seleccionar una zona.");
-      }
-
-      if (!payload.nombre) {
-        throw new Error("El nombre es obligatorio.");
-      }
+      if (!payload.zona_id) throw new Error("Debes seleccionar una zona.");
+      if (!payload.nombre) throw new Error("El nombre es obligatorio.");
 
       if (editing?.id) {
         await rutasApi.update(editing.id, payload);
@@ -180,8 +199,9 @@ export default function Rutas() {
 
         <div className="topbar-actions">
           <button className="btn" onClick={load} disabled={loading || busy}>
-            Recargar
+            {loading ? <InlineLoader /> : "Recargar"}
           </button>
+
           <button className="btn primary" onClick={openCreate} disabled={busy}>
             + Nueva ruta
           </button>
@@ -195,19 +215,20 @@ export default function Rutas() {
               placeholder="Buscar por ruta o zona…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              disabled={busy}
             />
           </div>
 
-          <div className="muted small">
-            {loading ? "Cargando..." : `${filtered.length} ruta(s)`}
+          <div className="muted small users-count-box">
+            {loading ? <InlineLoader /> : `${filtered.length} ruta(s)`}
           </div>
         </div>
 
-        {error ? (
+        {error && (
           <div className="alert" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
             {error}
           </div>
-        ) : null}
+        )}
 
         <div className="table-wrap">
           <table className="table">
@@ -222,35 +243,26 @@ export default function Rutas() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="3" className="muted">
-                    Cargando…
+                  <td colSpan="3" className="users-loader-cell">
+                    <TableLoader />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan="3" className="muted">
-                    Sin resultados
-                  </td>
+                  <td colSpan="3" className="muted">Sin resultados</td>
                 </tr>
               ) : (
                 filtered.map((r) => (
                   <tr key={r.id}>
                     <td>{r.zona?.nombre || `Zona #${r.zona_id}`}</td>
                     <td>{r.nombre}</td>
+
                     <td className="right">
-                      <button
-                        className="btn sm"
-                        onClick={() => openEdit(r)}
-                        disabled={busy}
-                      >
+                      <button className="btn sm" onClick={() => openEdit(r)} disabled={busy}>
                         Editar
                       </button>
 
-                      <button
-                        className="btn sm danger"
-                        onClick={() => del(r)}
-                        disabled={busy}
-                      >
+                      <button className="btn sm danger" onClick={() => del(r)} disabled={busy}>
                         Eliminar
                       </button>
                     </td>
@@ -262,11 +274,8 @@ export default function Rutas() {
         </div>
       </div>
 
-      {open ? (
-        <div
-          className="modal-backdrop"
-          onMouseDown={() => !busy && setOpen(false)}
-        >
+      {open && (
+        <div className="modal-backdrop" onMouseDown={() => !busy && setOpen(false)}>
           <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <div>
@@ -274,70 +283,67 @@ export default function Rutas() {
                 <p className="muted small">Selecciona zona y define el nombre.</p>
               </div>
 
-              <button
-                className="iconbtn"
-                onClick={() => !busy && setOpen(false)}
-              >
+              <button className="iconbtn" onClick={() => !busy && setOpen(false)}>
                 ✕
               </button>
             </div>
 
-            {error ? (
+            {error && (
               <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
                 {error}
               </div>
-            ) : null}
+            )}
 
-            <form onSubmit={save} className="grid">
-              <div className="field">
-                <label>Zona</label>
-                <select
-                  value={form.zona_id}
-                  onChange={(e) =>
-                    setForm({ ...form, zona_id: e.target.value })
-                  }
-                  disabled={loadingZonas}
-                >
-                  <option value="">
-                    {loadingZonas ? "Cargando zonas..." : "Seleccione una zona..."}
-                  </option>
+            {busy ? (
+              <ModalLoader text="Guardando ruta..." />
+            ) : (
+              <form onSubmit={save} className="grid">
+                <div className="field">
+                  <label>Zona</label>
 
-                  {zonas.map((z) => (
-                    <option key={z.id} value={z.id}>
-                      {z.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  {loadingZonas ? (
+                    <ModalLoader text="Cargando zonas..." />
+                  ) : (
+                    <select
+                      value={form.zona_id}
+                      onChange={(e) => setForm({ ...form, zona_id: e.target.value })}
+                    >
+                      <option value="">Seleccione una zona...</option>
 
-              <div className="field">
-                <label>Nombre de ruta</label>
-                <input
-                  value={form.nombre}
-                  onChange={(e) =>
-                    setForm({ ...form, nombre: e.target.value })
-                  }
-                  placeholder="Ej: Zona 1 - Centro"
-                />
-              </div>
+                      {zonas.map((z) => (
+                        <option key={z.id} value={z.id}>
+                          {z.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
 
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => !busy && setOpen(false)}
-                >
-                  Cancelar
-                </button>
+                <div className="field">
+                  <label>Nombre de ruta</label>
+                  <input
+                    value={form.nombre}
+                    onChange={(e) =>
+                      setForm({ ...form, nombre: e.target.value })
+                    }
+                    placeholder="Ej: Zona 1 - Centro"
+                  />
+                </div>
 
-                <button className="btn primary" disabled={busy}>
-                  {busy ? "Guardando..." : "Guardar"}
-                </button>
-              </div>
-            </form>
+                <div className="modal-actions">
+                  <button type="button" className="btn" onClick={() => !busy && setOpen(false)}>
+                    Cancelar
+                  </button>
+
+                  <button className="btn primary">
+                    Guardar
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }

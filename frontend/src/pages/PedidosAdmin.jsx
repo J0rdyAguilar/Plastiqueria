@@ -22,6 +22,31 @@ const PRESENTACIONES = [
   "millar",
 ];
 
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap" aria-label="Cargando">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
+}
+
+function ModalLoader({ text = "Cargando..." }) {
+  return (
+    <div className="modal-loader-wrap" aria-label={text}>
+      <div className="modal-loader-ring"></div>
+      <div className="modal-loader-text">{text}</div>
+    </div>
+  );
+}
+
 function badgeStyle(estado) {
   const base = {
     display: "inline-block",
@@ -68,6 +93,7 @@ export default function PedidosAdmin() {
   const [observaciones, setObservaciones] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadingRuteros, setLoadingRuteros] = useState(false);
   const [ruteros, setRuteros] = useState([]);
   const [ruteroId, setRuteroId] = useState("");
 
@@ -121,6 +147,8 @@ export default function PedidosAdmin() {
 
   async function loadRuteros() {
     try {
+      setLoadingRuteros(true);
+
       const res = await usuariosApi.list({
         rol: "rutero",
         page: 1,
@@ -131,6 +159,8 @@ export default function PedidosAdmin() {
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudieron cargar los ruteros.");
+    } finally {
+      setLoadingRuteros(false);
     }
   }
 
@@ -208,27 +238,45 @@ export default function PedidosAdmin() {
 
   async function aprobarPedido() {
     if (!pedidoActivo) return;
-    await guardarCambios();
 
     try {
+      setSaving(true);
+
+      await pedidosAdminApi.actualizar(pedidoActivo.id, {
+        observaciones,
+        detalles: lineasEdit.map((l) => ({
+          id: l.id,
+          presentacion: l.presentacion,
+          cantidad_base: l.cantidad_base,
+          precio_unitario: l.precio_unitario,
+          subtotal: l.subtotal,
+          es_monto_variable: l.es_monto_variable ? 1 : 0,
+        })),
+      });
+
       await pedidosAdminApi.aprobar(pedidoActivo.id);
       notify.success("Pedido aprobado correctamente.");
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudo aprobar el pedido.");
+    } finally {
+      setSaving(false);
     }
   }
 
   async function prepararPedido() {
     if (!pedidoActivo) return;
     try {
+      setSaving(true);
       await pedidosAdminApi.preparar(pedidoActivo.id);
       notify.success("Pedido marcado como preparando.");
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudo actualizar el pedido.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -244,6 +292,8 @@ export default function PedidosAdmin() {
     }
 
     try {
+      setSaving(true);
+
       const res = await pedidosAdminApi.asignarRutero(pedidoActivo.id, {
         rutero_id: Number(ruteroId),
       });
@@ -285,18 +335,23 @@ export default function PedidosAdmin() {
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudo asignar el rutero.");
+    } finally {
+      setSaving(false);
     }
   }
 
   async function entregarPedido() {
     if (!pedidoActivo) return;
     try {
+      setSaving(true);
       await pedidosAdminApi.entregar(pedidoActivo.id);
       notify.success("Pedido marcado como entregado.");
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
       notify.error(err, "No se pudo actualizar el pedido.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -515,9 +570,15 @@ export default function PedidosAdmin() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 style={inputStyle}
+                disabled={loading || saving}
               />
 
-              <select value={estado} onChange={(e) => setEstado(e.target.value)} style={inputStyle}>
+              <select
+                value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+                style={inputStyle}
+                disabled={loading || saving}
+              >
                 <option value="">Todos los estados</option>
                 <option value="pendiente_revision">Pendiente revisión</option>
                 <option value="aprobado">Aprobado</option>
@@ -526,17 +587,30 @@ export default function PedidosAdmin() {
                 <option value="entregado">Entregado</option>
               </select>
 
-              <button onClick={() => loadPedidos()} style={primaryBtn}>
-                Buscar
+              <button onClick={() => loadPedidos()} style={primaryBtn} disabled={loading || saving}>
+                {loading ? <InlineLoader /> : "Buscar"}
               </button>
             </div>
           </div>
 
           <div className="card pad">
-            <h3 style={{ marginTop: 0 }}>Listado de pedidos</h3>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Listado de pedidos</h3>
+              <div className="muted small">
+                {loading ? <InlineLoader /> : `${items.length} pedido(s)`}
+              </div>
+            </div>
 
             {loading ? (
-              <div className="muted">Cargando pedidos...</div>
+              <TableLoader />
             ) : items.length === 0 ? (
               <div className="muted">No hay pedidos.</div>
             ) : (
@@ -544,12 +618,13 @@ export default function PedidosAdmin() {
                 {items.map((item) => (
                   <div
                     key={item.id}
-                    onClick={() => seleccionarPedido(item)}
+                    onClick={() => !saving && seleccionarPedido(item)}
                     style={{
                       border: pedidoActivo?.id === item.id ? "2px solid #111827" : "1px solid #e5e7eb",
                       borderRadius: 12,
                       padding: 14,
-                      cursor: "pointer",
+                      cursor: saving ? "not-allowed" : "pointer",
+                      opacity: saving ? 0.7 : 1,
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
@@ -580,6 +655,8 @@ export default function PedidosAdmin() {
 
             {!pedidoActivo ? (
               <div className="muted">Selecciona un pedido para ver su detalle.</div>
+            ) : saving ? (
+              <ModalLoader text="Procesando pedido..." />
             ) : (
               <>
                 <div style={{ display: "grid", gap: 10 }}>
@@ -610,6 +687,7 @@ export default function PedidosAdmin() {
                     value={observaciones}
                     onChange={(e) => setObservaciones(e.target.value)}
                     style={{ ...inputStyle, resize: "vertical" }}
+                    disabled={saving}
                   />
                 </div>
 
@@ -634,6 +712,7 @@ export default function PedidosAdmin() {
                             value={l.presentacion}
                             onChange={(e) => setLinea(l.id, { presentacion: e.target.value })}
                             style={inputStyle}
+                            disabled={saving}
                           >
                             {PRESENTACIONES.map((p) => (
                               <option key={p} value={p}>
@@ -654,6 +733,7 @@ export default function PedidosAdmin() {
                             value={l.cantidad_base}
                             onChange={(e) => setLinea(l.id, { cantidad_base: num(e.target.value) })}
                             style={inputStyle}
+                            disabled={saving}
                           />
                         </div>
 
@@ -668,6 +748,7 @@ export default function PedidosAdmin() {
                             value={l.precio_unitario}
                             onChange={(e) => setLinea(l.id, { precio_unitario: num(e.target.value) })}
                             style={inputStyle}
+                            disabled={saving}
                           />
                         </div>
                       </div>
@@ -678,6 +759,7 @@ export default function PedidosAdmin() {
                             type="checkbox"
                             checked={!!l.es_monto_variable}
                             onChange={(e) => setLinea(l.id, { es_monto_variable: e.target.checked })}
+                            disabled={saving}
                           />
                           <span>Habilitar monto variable</span>
                         </label>
@@ -696,6 +778,7 @@ export default function PedidosAdmin() {
                                 setLinea(l.id, { precio_unitario: p, es_monto_variable: true })
                               }
                               style={suggestBtn}
+                              disabled={saving}
                             >
                               {money(p)}
                             </button>
@@ -723,45 +806,53 @@ export default function PedidosAdmin() {
                       Asignar rutero
                     </label>
 
-                    <select
-                      value={ruteroId}
-                      onChange={(e) => setRuteroId(e.target.value)}
-                      style={inputStyle}
-                    >
-                      <option value="">Seleccionar rutero</option>
-                      {ruteros.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.nombre || r.usuario || `Rutero #${r.id}`}
-                        </option>
-                      ))}
-                    </select>
+                    {loadingRuteros ? (
+                      <ModalLoader text="Cargando ruteros..." />
+                    ) : (
+                      <>
+                        <select
+                          value={ruteroId}
+                          onChange={(e) => setRuteroId(e.target.value)}
+                          style={inputStyle}
+                          disabled={saving}
+                        >
+                          <option value="">Seleccionar rutero</option>
+                          {ruteros.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.nombre || r.usuario || `Rutero #${r.id}`}
+                            </option>
+                          ))}
+                        </select>
 
-                    <button
-                      type="button"
-                      onClick={asignarRutero}
-                      style={{ ...primaryBtn, marginTop: 8, width: "100%" }}
-                    >
-                      Asignar rutero
-                    </button>
+                        <button
+                          type="button"
+                          onClick={asignarRutero}
+                          style={{ ...primaryBtn, marginTop: 8, width: "100%" }}
+                          disabled={saving || loadingRuteros}
+                        >
+                          {saving ? "Asignando..." : "Asignar rutero"}
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   <button onClick={guardarCambios} disabled={saving} style={primaryBtn}>
-                    Guardar cambios
+                    {saving ? "Guardando..." : "Guardar cambios"}
                   </button>
 
-                  <button onClick={aprobarPedido} style={secondaryBtn}>
-                    Aprobar pedido
+                  <button onClick={aprobarPedido} disabled={saving} style={secondaryBtn}>
+                    {saving ? "Procesando..." : "Aprobar pedido"}
                   </button>
 
-                  <button onClick={prepararPedido} style={secondaryBtn}>
-                    Marcar preparando
+                  <button onClick={prepararPedido} disabled={saving} style={secondaryBtn}>
+                    {saving ? "Procesando..." : "Marcar preparando"}
                   </button>
 
-                  <button onClick={entregarPedido} style={secondaryBtn}>
-                    Marcar entregado
+                  <button onClick={entregarPedido} disabled={saving} style={secondaryBtn}>
+                    {saving ? "Procesando..." : "Marcar entregado"}
                   </button>
 
-                  <button onClick={imprimirTicket} style={printBtn}>
+                  <button onClick={imprimirTicket} disabled={saving} style={printBtn}>
                     Imprimir ticket
                   </button>
                 </div>

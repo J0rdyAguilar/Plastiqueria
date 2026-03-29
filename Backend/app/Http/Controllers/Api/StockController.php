@@ -16,8 +16,12 @@ class StockController extends Controller
         $ubicacionId = $request->query('ubicacion_id');
         $perPage = (int) $request->query('per_page', 20);
 
-        // Ajusta esto si tu campo se llama distinto
         $role = strtolower((string) ($user->role ?? $user->rol ?? ''));
+        $role = str_replace(['-', ' '], '_', $role);
+
+        if ($role === 'superadmin') {
+            $role = 'super_admin';
+        }
 
         $query = Stock::query()->with([
             'producto:id,sku,nombre',
@@ -25,13 +29,11 @@ class StockController extends Controller
             'ubicacion:id,nombre,tipo',
         ]);
 
-        // Superadmin sí puede elegir cualquier ubicación
-        if ($role === 'superadmin') {
+        if ($role === 'super_admin') {
             if (!empty($ubicacionId)) {
                 $query->where('ubicacion_id', $ubicacionId);
             }
         } else {
-            // Los demás solo su propia sucursal
             $userUbicacionId = $user->ubicacion_id ?? null;
 
             if (!$userUbicacionId) {
@@ -47,11 +49,8 @@ class StockController extends Controller
             $query->where(function ($w) use ($q) {
                 $w->whereHas('producto', function ($sub) use ($q) {
                     $sub->where('nombre', 'like', "%{$q}%")
-                        ->orWhere('sku', 'like', "%{$q}%");
-
-                    if (is_numeric($q)) {
-                        $sub->orWhere('id', (int) $q);
-                    }
+                        ->orWhere('sku', 'like', "%{$q}%")
+                        ->orWhere('id', 'like', "%{$q}%");
                 })->orWhereHas('productoPrecio', function ($sub) use ($q) {
                     $sub->where('presentacion', 'like', "%{$q}%");
                 });
@@ -66,7 +65,7 @@ class StockController extends Controller
                 return [
                     'id' => $s->id,
                     'ubicacion_id' => $s->ubicacion_id,
-                    'producto_id' => $s->producto_id,
+                    'producto_id' => (string) $s->producto_id,
                     'producto_precio_id' => $s->producto_precio_id,
                     'producto_nombre' => $s->producto?->nombre,
                     'producto_sku' => $s->producto?->sku,

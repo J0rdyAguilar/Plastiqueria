@@ -39,6 +39,31 @@ function getStockBadge(cantidad) {
   };
 }
 
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap" aria-label="Cargando">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
+}
+
+function ModalLoader({ text = "Cargando..." }) {
+  return (
+    <div className="modal-loader-wrap" aria-label={text}>
+      <div className="modal-loader-ring"></div>
+      <div className="modal-loader-text">{text}</div>
+    </div>
+  );
+}
+
 export default function Stock() {
   const session = getSession();
   const user = session?.user || {};
@@ -58,10 +83,13 @@ export default function Stock() {
   const [perPage] = useState(20);
 
   const [loading, setLoading] = useState(false);
+  const [loadingUbicaciones, setLoadingUbicaciones] = useState(true);
   const [error, setError] = useState("");
 
   async function loadUbicaciones() {
     try {
+      setLoadingUbicaciones(true);
+
       const res = await ubicacionesApi.list({ per_page: 200, activa: 1 });
       const arr = res?.data ?? res ?? [];
 
@@ -85,6 +113,8 @@ export default function Stock() {
     } catch (e) {
       console.error(e);
       setError("No se pudieron cargar las ubicaciones.");
+    } finally {
+      setLoadingUbicaciones(false);
     }
   }
 
@@ -168,17 +198,17 @@ export default function Stock() {
       >
         <div style={miniCard}>
           <div className="muted" style={{ fontSize: 12 }}>Filas visibles</div>
-          <div style={miniValue}>{resumen.totalFilas}</div>
+          <div style={miniValue}>{loading ? <InlineLoader /> : resumen.totalFilas}</div>
         </div>
 
         <div style={miniCard}>
           <div className="muted" style={{ fontSize: 12 }}>Cantidad total</div>
-          <div style={miniValue}>{formatNumber(resumen.totalCantidad)}</div>
+          <div style={miniValue}>{loading ? <InlineLoader /> : formatNumber(resumen.totalCantidad)}</div>
         </div>
 
         <div style={miniCard}>
           <div className="muted" style={{ fontSize: 12 }}>Agotados</div>
-          <div style={miniValue}>{resumen.agotados}</div>
+          <div style={miniValue}>{loading ? <InlineLoader /> : resumen.agotados}</div>
         </div>
       </div>
 
@@ -195,8 +225,14 @@ export default function Stock() {
           <div className="field">
             <label>Ubicación</label>
 
-            {isSuperAdmin ? (
-              <select value={ubicacionId} onChange={(e) => setUbicacionId(e.target.value)}>
+            {loadingUbicaciones ? (
+              <ModalLoader text="Cargando ubicaciones..." />
+            ) : isSuperAdmin ? (
+              <select
+                value={ubicacionId}
+                onChange={(e) => setUbicacionId(e.target.value)}
+                disabled={loading || loadingUbicaciones}
+              >
                 {ubicaciones.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.nombre} ({u.tipo})
@@ -222,14 +258,19 @@ export default function Stock() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Nombre, SKU, ID o presentación..."
+              disabled={loading || loadingUbicaciones}
             />
           </div>
 
           <div className="field">
             <label>&nbsp;</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn" onClick={() => load(1, ubicacionId)} disabled={loading || !ubicacionId}>
-                {loading ? "Cargando..." : "Buscar"}
+              <button
+                className="btn"
+                onClick={() => load(1, ubicacionId)}
+                disabled={loading || loadingUbicaciones || !ubicacionId}
+              >
+                {loading ? <InlineLoader /> : "Buscar"}
               </button>
 
               <button
@@ -240,7 +281,7 @@ export default function Stock() {
                   setPage(1);
                   load(1, ubicacionId);
                 }}
-                disabled={loading}
+                disabled={loading || loadingUbicaciones}
               >
                 Limpiar
               </button>
@@ -273,46 +314,52 @@ export default function Stock() {
             </thead>
 
             <tbody>
-              {!loading && items.length === 0 && (
+              {loading ? (
+                <tr>
+                  <td colSpan="8" style={{ padding: 0 }}>
+                    <TableLoader />
+                  </td>
+                </tr>
+              ) : items.length === 0 ? (
                 <tr>
                   <td colSpan="8" style={{ padding: 18 }} className="muted">
                     No hay productos para mostrar.
                   </td>
                 </tr>
+              ) : (
+                items.map((it) => {
+                  const badge = getStockBadge(it.cantidad);
+
+                  return (
+                    <tr key={it.id} style={{ borderTop: "1px solid #eef2f7" }}>
+                      <td style={tdStyle}>{it.producto_sku || "-"}</td>
+                      <td style={tdStyleBold}>{it.producto_nombre || "-"}</td>
+                      <td style={tdStyle}>{it.presentacion || "-"}</td>
+                      <td style={tdStyle}>{formatNumber(it.factor_base)}</td>
+                      <td style={tdStyleBold}>{formatNumber(it.cantidad)}</td>
+                      <td style={tdStyle}>{formatNumber(it.cantidad_base)}</td>
+                      <td style={tdStyle}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            padding: "6px 10px",
+                            borderRadius: 999,
+                            background: badge.bg,
+                            color: badge.color,
+                            border: `1px solid ${badge.border}`,
+                            fontWeight: 700,
+                            fontSize: 12,
+                          }}
+                        >
+                          {badge.label}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>{it.actualizado_en || "-"}</td>
+                    </tr>
+                  );
+                })
               )}
-
-              {items.map((it) => {
-                const badge = getStockBadge(it.cantidad);
-
-                return (
-                  <tr key={it.id} style={{ borderTop: "1px solid #eef2f7" }}>
-                    <td style={tdStyle}>{it.producto_sku || "-"}</td>
-                    <td style={tdStyleBold}>{it.producto_nombre || "-"}</td>
-                    <td style={tdStyle}>{it.presentacion || "-"}</td>
-                    <td style={tdStyle}>{formatNumber(it.factor_base)}</td>
-                    <td style={tdStyleBold}>{formatNumber(it.cantidad)}</td>
-                    <td style={tdStyle}>{formatNumber(it.cantidad_base)}</td>
-                    <td style={tdStyle}>
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          padding: "6px 10px",
-                          borderRadius: 999,
-                          background: badge.bg,
-                          color: badge.color,
-                          border: `1px solid ${badge.border}`,
-                          fontWeight: 700,
-                          fontSize: 12,
-                        }}
-                      >
-                        {badge.label}
-                      </span>
-                    </td>
-                    <td style={tdStyle}>{it.actualizado_en || "-"}</td>
-                  </tr>
-                );
-              })}
             </tbody>
           </table>
         </div>
@@ -323,7 +370,11 @@ export default function Stock() {
             style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #e5e7eb" }}
           >
             <div className="muted">
-              Página {meta.current_page} de {meta.last_page} · Total {meta.total}
+              {loading ? (
+                <InlineLoader />
+              ) : (
+                <>Página {meta.current_page} de {meta.last_page} · Total {meta.total}</>
+              )}
             </div>
 
             <div className="row gap">
@@ -370,6 +421,9 @@ const miniValue = {
   fontSize: 24,
   fontWeight: 900,
   color: "#0f172a",
+  minHeight: 32,
+  display: "flex",
+  alignItems: "center",
 };
 
 const thStyle = {

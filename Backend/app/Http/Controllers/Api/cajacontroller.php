@@ -7,35 +7,61 @@ use App\Models\Caja;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class CajaController extends Controller
-{   // GET /api/v1/caja/actual?ubicacion_id=1
+{
     // GET /api/v1/caja/actual?ubicacion_id=1
     public function actual(Request $request)
     {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'No autenticado'], 401);
+        }
+
         $ubicacionId = $request->query('ubicacion_id');
 
-        $q = Caja::query()->whereNull('cerrado_en');
+        if (($ubicacionId === null || $ubicacionId === '') && !empty($user->ubicacion_id)) {
+            $ubicacionId = (int) $user->ubicacion_id;
+        }
+
+        $q = Caja::query()
+            ->with(['ubicacion'])
+            ->whereNull('cerrado_en');
 
         if ($ubicacionId !== null && $ubicacionId !== '') {
-            $q->where('ubicacion_id', (int)$ubicacionId);
+            $q->where('ubicacion_id', (int) $ubicacionId);
         }
 
         $caja = $q->orderByDesc('id')->first();
 
-        return response()->json(['data' => $caja]);
+        return response()->json([
+            'data' => $caja,
+        ]);
     }
 
     // GET /api/v1/caja/historial?ubicacion_id=1&per_page=15
     public function historial(Request $request)
     {
-        $ubicacionId = $request->query('ubicacion_id');
-        $perPage = max(1, min((int)$request->query('per_page', 15), 100));
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'No autenticado'], 401);
+        }
 
-        $q = Caja::query()->orderByDesc('id');
+        $ubicacionId = $request->query('ubicacion_id');
+
+        if (($ubicacionId === null || $ubicacionId === '') && !empty($user->ubicacion_id)) {
+            $ubicacionId = (int) $user->ubicacion_id;
+        }
+
+        $perPage = max(1, min((int) $request->query('per_page', 15), 100));
+
+        $q = Caja::query()
+            ->with(['ubicacion', 'usuarioApertura'])
+            ->orderByDesc('id');
 
         if ($ubicacionId !== null && $ubicacionId !== '') {
-            $q->where('ubicacion_id', (int)$ubicacionId);
+            $q->where('ubicacion_id', (int) $ubicacionId);
         }
 
         return response()->json($q->paginate($perPage));
@@ -45,19 +71,25 @@ class CajaController extends Controller
     public function abrir(Request $request)
     {
         $data = $request->validate([
-            'ubicacion_id' => ['required', 'integer'], // ✅ OJO: required (tu BD no permite null)
+            'ubicacion_id' => ['nullable', 'integer'],
             'efectivo_inicial' => ['required', 'numeric', 'min:0'],
             'notas' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $user = $request->user();
-        if (!$user) return response()->json(['message' => 'No autenticado'], 401);
+        if (!$user) {
+            return response()->json(['message' => 'No autenticado'], 401);
+        }
 
-        $ubicacionId = (int)$data['ubicacion_id'];
+        $ubicacionId = (int) ($data['ubicacion_id'] ?? $user->ubicacion_id ?? 0);
 
-        // 🔒 Transacción para evitar que 2 personas abran al mismo tiempo
+        if (!$ubicacionId) {
+            throw ValidationException::withMessages([
+                'ubicacion_id' => ['El usuario no tiene una sucursal asignada.'],
+            ]);
+        }
+
         return DB::transaction(function () use ($data, $user, $ubicacionId) {
-
             $abierta = Caja::query()
                 ->where('ubicacion_id', $ubicacionId)
                 ->whereNull('cerrado_en')
@@ -66,9 +98,9 @@ class CajaController extends Controller
 
             if ($abierta) {
                 return response()->json([
-                    'message' => 'Ya existe una caja abierta para esta ubicación.',
-                    'data' => $abierta,
-                ], 409); // ✅ Conflict
+                    'message' => 'Ya existe una caja abierta para esta sucursal.',
+                    'data' => $abierta->load('ubicacion'),
+                ], 409);
             }
 
             $caja = Caja::create([
@@ -83,7 +115,7 @@ class CajaController extends Controller
 
             return response()->json([
                 'message' => 'Caja abierta correctamente',
-                'data' => $caja,
+                'data' => $caja->load('ubicacion'),
             ], 201);
         });
     }
@@ -92,23 +124,33 @@ class CajaController extends Controller
     public function cerrar(Request $request)
     {
         $data = $request->validate([
-            'ubicacion_id' => ['required', 'integer'], // ✅ required
+            'ubicacion_id' => ['nullable', 'integer'],
             'efectivo_final' => ['required', 'numeric', 'min:0'],
             'notas' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $ubicacionId = (int)$data['ubicacion_id'];
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'No autenticado'], 401);
+        }
 
-        $q = Caja::query()
+        $ubicacionId = (int) ($data['ubicacion_id'] ?? $user->ubicacion_id ?? 0);
+
+        if (!$ubicacionId) {
+            throw ValidationException::withMessages([
+                'ubicacion_id' => ['El usuario no tiene una sucursal asignada.'],
+            ]);
+        }
+
+        $caja = Caja::query()
             ->where('ubicacion_id', $ubicacionId)
             ->whereNull('cerrado_en')
-            ->orderByDesc('id');
-
-        $caja = $q->first();
+            ->orderByDesc('id')
+            ->first();
 
         if (!$caja) {
             return response()->json([
-                'message' => 'No hay caja abierta para cerrar.',
+                'message' => 'No hay caja abierta para cerrar en esta sucursal.',
             ], 422);
         }
 
@@ -123,7 +165,7 @@ class CajaController extends Controller
 
         return response()->json([
             'message' => 'Caja cerrada correctamente',
-            'data' => $caja,
+            'data' => $caja->load('ubicacion'),
         ]);
     }
 }

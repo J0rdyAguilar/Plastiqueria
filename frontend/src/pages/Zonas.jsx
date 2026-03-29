@@ -21,6 +21,31 @@ function formatBackendError(err) {
   return data?.message || err?.message || "Ocurrió un error";
 }
 
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap" aria-label="Cargando">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
+}
+
+function ModalLoader({ text = "Cargando..." }) {
+  return (
+    <div className="modal-loader-wrap" aria-label={text}>
+      <div className="modal-loader-ring"></div>
+      <div className="modal-loader-text">{text}</div>
+    </div>
+  );
+}
+
 export default function Zonas() {
   const nav = useNavigate();
   const me = getSession()?.user;
@@ -35,9 +60,6 @@ export default function Zonas() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
-  // =========================
-  // CARGAR ZONAS (FIX IMPORTANTE)
-  // =========================
   async function load() {
     setError("");
     setLoading(true);
@@ -45,10 +67,6 @@ export default function Zonas() {
     try {
       const res = await zonasApi.list({ per_page: 200 });
 
-      // ✅ soporta:
-      // 1) array directo
-      // 2) { data: [] }
-      // 3) { data: { data: [] } } (Laravel paginado)
       const list =
         Array.isArray(res) ? res :
         Array.isArray(res?.data) ? res.data :
@@ -132,113 +150,118 @@ export default function Zonas() {
   }
 
   return (
-    
-      <div className="page">
-        <header className="topbar">
-          <div>
-            <h2>Zonas</h2>
-            <p className="muted">
-              Sesión: <b>{me?.nombre || me?.usuario || "—"}</b> ({me?.rol || "—"})
-            </p>
+    <div className="page">
+      <header className="topbar">
+        <div>
+          <h2>Zonas</h2>
+          <p className="muted">
+            Sesión: <b>{me?.nombre || me?.usuario || "—"}</b> ({me?.rol || "—"})
+          </p>
+        </div>
+
+        <div className="topbar-actions">
+          <button className="btn" onClick={load} disabled={loading || busy}>
+            {loading ? <InlineLoader /> : "Recargar"}
+          </button>
+          <button className="btn primary" onClick={openCreate} disabled={busy || loading}>
+            + Nueva zona
+          </button>
+        </div>
+      </header>
+
+      <div className="card pad">
+        <div className="row">
+          <div className="search">
+            <input
+              placeholder="Buscar zona…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              disabled={busy}
+            />
           </div>
-
-          <div className="topbar-actions">
-            <button className="btn" onClick={load} disabled={loading || busy}>
-              Recargar
-            </button>
-            <button className="btn primary" onClick={openCreate} disabled={busy}>
-              + Nueva zona
-            </button>
-          </div>
-        </header>
-
-        <div className="card pad">
-          <div className="row">
-            <div className="search">
-              <input
-                placeholder="Buscar zona…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-            </div>
-            <div className="muted small">
-              {loading ? "Cargando..." : `${filtered.length} zona(s)`}
-            </div>
-          </div>
-
-          {error ? (
-            <div className="alert" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
-              {error}
-            </div>
-          ) : null}
-
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Zona</th>
-                  <th className="right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan="2" className="muted">Cargando…</td>
-                  </tr>
-                ) : filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan="2" className="muted">Sin resultados</td>
-                  </tr>
-                ) : (
-                  filtered.map((z) => (
-                    <tr key={z.id}>
-                      <td>{z.nombre}</td>
-                      <td className="right">
-                        <button
-                          className="btn sm"
-                          onClick={() => openEdit(z)}
-                          disabled={busy}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          className="btn sm danger"
-                          onClick={() => del(z)}
-                          disabled={busy}
-                        >
-                          Eliminar
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          <div className="muted small users-count-box">
+            {loading ? <InlineLoader /> : `${filtered.length} zona(s)`}
           </div>
         </div>
 
-        {open ? (
-          <div className="modal-backdrop" onMouseDown={() => !busy && setOpen(false)}>
-            <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="modal-head">
-                <div>
-                  <h3>{editing ? "Editar zona" : "Nueva zona"}</h3>
-                  <p className="muted small">Define el nombre de la zona.</p>
-                </div>
-                <button
-                  className="iconbtn"
-                  onClick={() => !busy && setOpen(false)}
-                >
-                  ✕
-                </button>
+        {error ? (
+          <div className="alert" style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
+            {error}
+          </div>
+        ) : null}
+
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Zona</th>
+                <th className="right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan="2" className="users-loader-cell">
+                    <TableLoader />
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan="2" className="muted">Sin resultados</td>
+                </tr>
+              ) : (
+                filtered.map((z) => (
+                  <tr key={z.id}>
+                    <td>{z.nombre}</td>
+                    <td className="right">
+                      <button
+                        className="btn sm"
+                        onClick={() => openEdit(z)}
+                        disabled={busy}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="btn sm danger"
+                        onClick={() => del(z)}
+                        disabled={busy}
+                      >
+                        Eliminar
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {open ? (
+        <div className="modal-backdrop" onMouseDown={() => !busy && setOpen(false)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h3>{editing ? "Editar zona" : "Nueva zona"}</h3>
+                <p className="muted small">Define el nombre de la zona.</p>
               </div>
+              <button
+                className="iconbtn"
+                onClick={() => !busy && setOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
 
-              {error ? (
-                <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
-                  {error}
-                </div>
-              ) : null}
+            {error ? (
+              <div className="alert" style={{ whiteSpace: "pre-wrap" }}>
+                {error}
+              </div>
+            ) : null}
 
+            {busy ? (
+              <ModalLoader text="Guardando zona..." />
+            ) : (
               <form onSubmit={save} className="grid">
                 <div className="field">
                   <label>Nombre</label>
@@ -260,14 +283,14 @@ export default function Zonas() {
                     Cancelar
                   </button>
                   <button className="btn primary" disabled={busy}>
-                    {busy ? "Guardando..." : "Guardar"}
+                    Guardar
                   </button>
                 </div>
               </form>
-            </div>
+            )}
           </div>
-        ) : null}
-      </div>
-    
+        </div>
+      ) : null}
+    </div>
   );
 }

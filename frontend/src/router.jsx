@@ -12,9 +12,11 @@ import Caja from "./pages/Caja";
 import Productos from "./pages/Productos";
 import Stock from "./pages/Stock";
 import MovimientosStock from "./pages/MovimientosStock";
-import Pedidos from "./pages/Pedidos";
+import Pedidos from "./pages/pedidos";
 import PedidosAdmin from "./pages/PedidosAdmin";
 import VentaTienda from "./pages/VentaTienda";
+import RegistroVentasTienda from "./pages/RegistroVentasTienda";
+import PerfilUsuario from "./pages/PerfilUsuario";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 import { getSession, getToken } from "./lib/auth";
@@ -79,6 +81,14 @@ function RoleGuard({ roles = [], children }) {
 function Wrap({ roles, children }) {
   return (
     <ProtectedRoute>
+      <RoleGuard roles={roles}>{children}</RoleGuard>
+    </ProtectedRoute>
+  );
+}
+
+function WrapWithLayout({ roles, children }) {
+  return (
+    <ProtectedRoute>
       <RoleGuard roles={roles}>
         <Layout>{children}</Layout>
       </RoleGuard>
@@ -99,99 +109,117 @@ export const router = createBrowserRouter([
   {
     path: "/usuarios",
     element: (
-      <Wrap roles={["super_admin"]}>
+      <WrapWithLayout roles={["super_admin"]}>
         <Usuarios />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/vendedores",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin"]}>
         <Vendedores />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/pedidos-admin",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin"]}>
         <PedidosAdmin />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/zonas",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin"]}>
         <Zonas />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/rutas",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin"]}>
         <Rutas />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/productos",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin"]}>
         <Productos />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/stock",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin"]}>
         <Stock />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/movimientos-stock",
     element: (
-      <Wrap roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin"]}>
         <MovimientosStock />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/pedidos",
     element: (
-      <Wrap roles={["vendedor"]}>
+      <WrapWithLayout roles={["vendedor"]}>
         <Pedidos />
-      </Wrap>
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/ventas-tienda",
     element: (
-      <Wrap roles={["vendedor_tienda", "admin", "super_admin"]}>
+      <WrapWithLayout roles={["vendedor_tienda", "admin", "super_admin"]}>
         <VentaTienda />
-      </Wrap>
+      </WrapWithLayout>
+    ),
+  },
+
+  {
+    path: "/registro-ventas-tienda",
+    element: (
+      <WrapWithLayout roles={["vendedor_tienda", "admin", "super_admin"]}>
+        <RegistroVentasTienda />
+      </WrapWithLayout>
     ),
   },
 
   {
     path: "/caja",
     element: (
-      <Wrap roles={["admin", "super_admin", "caja"]}>
+      <WrapWithLayout roles={["admin", "super_admin", "caja"]}>
         <Caja />
-      </Wrap>
+      </WrapWithLayout>
+    ),
+  },
+
+  {
+    path: "/perfil",
+    element: (
+      <WrapWithLayout roles={["admin", "super_admin", "caja", "vendedor", "vendedor_tienda"]}>
+        <PerfilUsuario />
+      </WrapWithLayout>
     ),
   },
 

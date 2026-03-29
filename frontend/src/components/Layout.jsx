@@ -18,6 +18,7 @@ import {
   PlusCircle,
   ReceiptText,
   Store,
+  UserCircle2,
 } from "lucide-react";
 import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 
@@ -26,6 +27,15 @@ function normalizeRole(r) {
   if (x === "cajero") return "caja";
   if (x === "superadmin") return "super_admin";
   return x;
+}
+
+function prettyRole(role) {
+  if (role === "super_admin") return "Super Admin";
+  if (role === "admin") return "Administrador";
+  if (role === "vendedor") return "Vendedor";
+  if (role === "vendedor_tienda") return "Vendedor tienda";
+  if (role === "caja") return "Caja";
+  return role || "Usuario";
 }
 
 export default function Layout({ children }) {
@@ -61,6 +71,11 @@ export default function Layout({ children }) {
   function logout() {
     clearSession();
     nav("/login", { replace: true });
+  }
+
+  function goProfile() {
+    setMobileOpen(false);
+    nav("/perfil");
   }
 
   const adminLinks = [
@@ -128,6 +143,13 @@ export default function Layout({ children }) {
       active: loc.pathname.startsWith("/ventas-tienda"),
     },
     {
+      to: "/registro-ventas-tienda",
+      label: "Registro ventas",
+      icon: <ReceiptText size={16} />,
+      show: canAccessTienda,
+      active: loc.pathname.startsWith("/registro-ventas-tienda"),
+    },
+    {
       to: "/caja",
       label: "Caja",
       icon: <Wallet size={16} />,
@@ -139,9 +161,18 @@ export default function Layout({ children }) {
   return (
     <div className="lux-shell">
       <header className="lux-header">
+        <div className="lux-header-glow lux-header-glow--one" />
+        <div className="lux-header-glow lux-header-glow--two" />
+
         <div className="lux-header-row">
           <Link to={homeLink} className="lux-brand">
-            <div className="lux-brand-logo">P</div>
+            <div className="lux-brand-logo-wrap">
+              <img
+                src="/img/logo.png"
+                alt="Plastimax"
+                className="lux-brand-logo-img"
+              />
+            </div>
 
             <div className="lux-brand-copy">
               <strong>Plastimax</strong>
@@ -174,14 +205,21 @@ export default function Layout({ children }) {
 
             {logged ? (
               <div className="lux-user-box desktop-only">
-                <div className="lux-avatar">
-                  {(me?.nombre || me?.usuario || "U").charAt(0).toUpperCase()}
-                </div>
+                <button
+                  type="button"
+                  className="lux-user-profile-btn"
+                  onClick={goProfile}
+                  title="Ver perfil"
+                >
+                  <div className="lux-avatar">
+                    {(me?.nombre || me?.usuario || "U").charAt(0).toUpperCase()}
+                  </div>
 
-                <div className="lux-user-copy">
-                  <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
-                  <span>{rol || "—"}</span>
-                </div>
+                  <div className="lux-user-copy">
+                    <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
+                    <span>{prettyRole(rol)}</span>
+                  </div>
+                </button>
 
                 <button type="button" className="lux-logout" onClick={logout}>
                   <LogOut size={16} />
@@ -230,8 +268,21 @@ export default function Layout({ children }) {
 
                   <div className="lux-user-copy">
                     <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
-                    <span>{rol || "—"}</span>
+                    <span>{prettyRole(rol)}</span>
                   </div>
+                </div>
+              )}
+
+              {logged && (
+                <div className="lux-mobile-group">
+                  <button
+                    type="button"
+                    className={`lux-mobile-link ${loc.pathname === "/perfil" ? "is-active" : ""}`}
+                    onClick={goProfile}
+                  >
+                    <UserCircle2 size={16} />
+                    Mi perfil
+                  </button>
                 </div>
               )}
 

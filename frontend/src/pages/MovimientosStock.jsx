@@ -52,6 +52,38 @@ function toNullableNumber(value) {
   return Number.isNaN(n) ? undefined : n;
 }
 
+function esUbicacionBodega(u) {
+  const tipo = String(u?.tipo || "").toLowerCase().trim();
+  const nombre = String(u?.nombre || "").toLowerCase().trim();
+
+  return tipo === "bodega" || nombre.includes("bodega");
+}
+
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader"></span>
+    </div>
+  );
+}
+
+function TableLoader() {
+  return (
+    <div className="table-loader-wrap" aria-label="Cargando">
+      <div className="table-loader-ring"></div>
+    </div>
+  );
+}
+
+function ModalLoader({ text = "Cargando..." }) {
+  return (
+    <div className="modal-loader-wrap" aria-label={text}>
+      <div className="modal-loader-ring"></div>
+      <div className="modal-loader-text">{text}</div>
+    </div>
+  );
+}
+
 export default function MovimientosStock() {
   const session = getSession();
   const user = session?.user || {};
@@ -137,7 +169,12 @@ export default function MovimientosStock() {
     }
 
     if (form.tipo === "traslado") {
-      return ubicaciones.filter((u) => String(u.id) !== userUbicacionId);
+      return ubicaciones.filter((u) => {
+        const esPropia = String(u.id) === String(userUbicacionId);
+        const esBodega = esUbicacionBodega(u);
+
+        return !esPropia && !esBodega;
+      });
     }
 
     if (form.tipo === "entrada") {
@@ -334,10 +371,6 @@ export default function MovimientosStock() {
         }
       });
 
-      console.log("SESSION USER:", session?.user);
-      console.log("FORM MOVIMIENTO:", form);
-      console.log("PAYLOAD MOVIMIENTO:", payload);
-
       await movimientosStockApi.create(payload);
 
       notify.success("Movimiento aplicado correctamente");
@@ -415,7 +448,7 @@ export default function MovimientosStock() {
           <div className="muted">Entradas, salidas, traslados y ajustes</div>
         </div>
 
-        <button className="btn primary" onClick={openModal}>
+        <button className="btn primary" onClick={openModal} disabled={saving}>
           + Nuevo movimiento
         </button>
       </div>
@@ -424,7 +457,7 @@ export default function MovimientosStock() {
         <div className="row gap">
           <div className="field">
             <label>Tipo</label>
-            <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)} disabled={loading}>
               {TIPOS.map((t) => (
                 <option key={t.value} value={t.value}>
                   {t.label}
@@ -436,7 +469,11 @@ export default function MovimientosStock() {
           <div className="field">
             <label>Ubicación (origen/destino)</label>
             {isSuperAdmin ? (
-              <select value={ubicacionId} onChange={(e) => setUbicacionId(e.target.value)}>
+              <select
+                value={ubicacionId}
+                onChange={(e) => setUbicacionId(e.target.value)}
+                disabled={loading}
+              >
                 <option value="">Todas</option>
                 {ubicacionesDisponiblesFiltro.map((u) => (
                   <option key={u.id} value={u.id}>
@@ -463,6 +500,7 @@ export default function MovimientosStock() {
               value={productoId}
               onChange={(e) => setProductoId(e.target.value)}
               placeholder="Ej: 10"
+              disabled={loading}
             />
           </div>
 
@@ -477,7 +515,7 @@ export default function MovimientosStock() {
               }}
               disabled={loading}
             >
-              {loading ? "Cargando..." : "Filtrar"}
+              {loading ? <InlineLoader /> : "Filtrar"}
             </button>
           </div>
         </div>
@@ -499,32 +537,38 @@ export default function MovimientosStock() {
               </tr>
             </thead>
             <tbody>
-              {!loading && items.length === 0 && (
+              {loading ? (
+                <tr>
+                  <td colSpan="10" className="users-loader-cell">
+                    <TableLoader />
+                  </td>
+                </tr>
+              ) : items.length === 0 ? (
                 <tr>
                   <td colSpan="10" className="muted">
                     No hay movimientos.
                   </td>
                 </tr>
+              ) : (
+                items.map((m) => (
+                  <tr key={m.id}>
+                    <td className="muted">{m.creado_en}</td>
+                    <td>{m.tipo}</td>
+                    <td>{m.producto_nombre || m.producto?.nombre || m.producto_id}</td>
+                    <td>{m.presentacion || "-"}</td>
+                    <td className="right">{m.cantidad ?? "-"}</td>
+                    <td className="right">{m.factor_aplicado ?? "-"}</td>
+                    <td className="right">{m.cantidad_base}</td>
+                    <td className="muted">
+                      {m.ubicacion_origen_nombre || m.ubicacion_origen_id || "-"}
+                    </td>
+                    <td className="muted">
+                      {m.ubicacion_destino_nombre || m.ubicacion_destino_id || "-"}
+                    </td>
+                    <td className="muted">{m.motivo || "-"}</td>
+                  </tr>
+                ))
               )}
-
-              {items.map((m) => (
-                <tr key={m.id}>
-                  <td className="muted">{m.creado_en}</td>
-                  <td>{m.tipo}</td>
-                  <td>{m.producto_nombre || m.producto?.nombre || m.producto_id}</td>
-                  <td>{m.presentacion || "-"}</td>
-                  <td className="right">{m.cantidad ?? "-"}</td>
-                  <td className="right">{m.factor_aplicado ?? "-"}</td>
-                  <td className="right">{m.cantidad_base}</td>
-                  <td className="muted">
-                    {m.ubicacion_origen_nombre || m.ubicacion_origen_id || "-"}
-                  </td>
-                  <td className="muted">
-                    {m.ubicacion_destino_nombre || m.ubicacion_destino_id || "-"}
-                  </td>
-                  <td className="muted">{m.motivo || "-"}</td>
-                </tr>
-              ))}
             </tbody>
           </table>
         </div>
@@ -532,7 +576,7 @@ export default function MovimientosStock() {
         {meta && (
           <div className="row between mt">
             <div className="muted">
-              Página {meta.current_page} de {meta.last_page} · Total {meta.total}
+              {loading ? <InlineLoader /> : `Página ${meta.current_page} de ${meta.last_page} · Total ${meta.total}`}
             </div>
 
             <div className="row gap">
@@ -574,277 +618,281 @@ export default function MovimientosStock() {
               </button>
             </div>
 
-            <form onSubmit={onCreate} className="modal-body">
-              <div className="row gap">
-                <div className="field">
-                  <label>Tipo</label>
-                  <select
-                    value={form.tipo}
-                    onChange={(e) =>
-                      setForm((s) => ({
-                        ...s,
-                        tipo: e.target.value,
-                        ubicacion_origen_id:
-                          e.target.value === "salida" ||
-                          e.target.value === "ajuste" ||
-                          e.target.value === "traslado"
-                            ? isSuperAdmin
-                              ? ""
-                              : userUbicacionId
-                            : "",
-                        ubicacion_destino_id:
-                          e.target.value === "entrada"
-                            ? isSuperAdmin
-                              ? ""
-                              : userUbicacionId
-                            : "",
-                      }))
-                    }
-                  >
-                    <option value="entrada">Entrada</option>
-                    <option value="salida">Salida</option>
-                    <option value="traslado">Traslado</option>
-                    <option value="ajuste">Ajuste</option>
-                  </select>
-                </div>
-
-                <div className="field" style={{ position: "relative" }}>
-                  <label>Producto</label>
-                  <input
-                    required
-                    value={productoSearch}
-                    onChange={(e) => {
-                      setProductoSearch(e.target.value);
-                      setSelectedProducto(null);
-                      setPresentaciones([]);
-                      setForm((s) => ({
-                        ...s,
-                        producto_id: "",
-                        presentacion: "",
-                      }));
-                    }}
-                    placeholder="Escribe SKU, nombre o ID"
-                    autoComplete="off"
-                  />
-
-                  {form.producto_id && selectedProducto ? (
-                    <div className="muted" style={{ marginTop: 6 }}>
-                      Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} - {selectedProducto.nombre}
-                    </div>
-                  ) : null}
-
-                  {productoSearch.trim().length > 0 && productoOptions.length > 0 && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "100%",
-                        left: 0,
-                        right: 0,
-                        background: "#fff",
-                        border: "1px solid #ddd",
-                        borderRadius: 10,
-                        marginTop: 6,
-                        maxHeight: 220,
-                        overflowY: "auto",
-                        zIndex: 50,
-                        boxShadow: "0 8px 24px rgba(0,0,0,.12)",
-                      }}
-                    >
-                      {productoOptions.map((p) => (
-                        <button
-                          type="button"
-                          key={p.id}
-                          onClick={() => pickProducto(p)}
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            textAlign: "left",
-                            padding: "10px 12px",
-                            border: "none",
-                            background: "white",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <b>{p.sku || "(sin sku)"}</b> - {p.nombre} <span className="muted">#{p.id}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {productoSearch.trim().length > 0 && searchingProductos && (
-                    <div className="muted" style={{ marginTop: 6 }}>
-                      Buscando productos...
-                    </div>
-                  )}
-                </div>
-
-                <div className="field">
-                  <label>Presentación</label>
-                  <select
-                    required
-                    value={form.presentacion}
-                    onChange={(e) =>
-                      setForm((s) => ({ ...s, presentacion: e.target.value }))
-                    }
-                    disabled={!form.producto_id || presentaciones.length === 0}
-                  >
-                    <option value="">Seleccione...</option>
-                    {presentaciones.map((p) => (
-                      <option key={p.id || p.presentacion} value={p.presentacion}>
-                        {p.presentacion} (factor: {p.factor_base})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="field">
-                  <label>{form.tipo === "ajuste" ? "Cantidad (delta)" : "Cantidad"}</label>
-                  <input
-                    required
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={form.cantidad}
-                    onChange={(e) => setForm((s) => ({ ...s, cantidad: e.target.value }))}
-                    placeholder="Ej: 10"
-                  />
-                </div>
-              </div>
-
-              {presentacionSeleccionada ? (
-                <div
-                  style={{
-                    marginTop: 10,
-                    marginBottom: 8,
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    background: "#f8fafc",
-                    border: "1px solid #e2e8f0",
-                    fontSize: 14,
-                  }}
-                >
-                  <b>Equivalencia:</b> {form.cantidad || 0} × {presentacionSeleccionada.presentacion} × factor{" "}
-                  {presentacionSeleccionada.factor_base} ={" "}
-                  <b>
-                    {Number(form.cantidad || 0) *
-                      Number(presentacionSeleccionada.factor_base || 0)}
-                  </b>{" "}
-                  en unidad base
-                </div>
-              ) : null}
-
-              <div className="row gap">
-                {needsOrigen && (
-                  <div className="field grow">
-                    <label>Ubicación origen</label>
-
-                    {isSuperAdmin ? (
-                      <select
-                        required
-                        value={form.ubicacion_origen_id}
-                        onChange={(e) =>
-                          setForm((s) => ({
-                            ...s,
-                            ubicacion_origen_id: e.target.value,
-                            ubicacion_destino_id:
-                              form.tipo === "traslado" &&
-                              e.target.value === s.ubicacion_destino_id
+            {saving ? (
+              <ModalLoader text="Aplicando movimiento..." />
+            ) : (
+              <form onSubmit={onCreate} className="modal-body">
+                <div className="row gap">
+                  <div className="field">
+                    <label>Tipo</label>
+                    <select
+                      value={form.tipo}
+                      onChange={(e) =>
+                        setForm((s) => ({
+                          ...s,
+                          tipo: e.target.value,
+                          ubicacion_origen_id:
+                            e.target.value === "salida" ||
+                            e.target.value === "ajuste" ||
+                            e.target.value === "traslado"
+                              ? isSuperAdmin
                                 ? ""
-                                : s.ubicacion_destino_id,
-                          }))
-                        }
+                                : userUbicacionId
+                              : "",
+                          ubicacion_destino_id:
+                            e.target.value === "entrada"
+                              ? isSuperAdmin
+                                ? ""
+                                : userUbicacionId
+                              : "",
+                        }))
+                      }
+                    >
+                      <option value="entrada">Entrada</option>
+                      <option value="salida">Salida</option>
+                      <option value="traslado">Traslado</option>
+                      <option value="ajuste">Ajuste</option>
+                    </select>
+                  </div>
+
+                  <div className="field" style={{ position: "relative" }}>
+                    <label>Producto</label>
+                    <input
+                      required
+                      value={productoSearch}
+                      onChange={(e) => {
+                        setProductoSearch(e.target.value);
+                        setSelectedProducto(null);
+                        setPresentaciones([]);
+                        setForm((s) => ({
+                          ...s,
+                          producto_id: "",
+                          presentacion: "",
+                        }));
+                      }}
+                      placeholder="Escribe SKU, nombre o ID"
+                      autoComplete="off"
+                    />
+
+                    {form.producto_id && selectedProducto ? (
+                      <div className="muted" style={{ marginTop: 6 }}>
+                        Seleccionado: #{selectedProducto.id} - {selectedProducto.sku} - {selectedProducto.nombre}
+                      </div>
+                    ) : null}
+
+                    {productoSearch.trim().length > 0 && productoOptions.length > 0 && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "100%",
+                          left: 0,
+                          right: 0,
+                          background: "#fff",
+                          border: "1px solid #ddd",
+                          borderRadius: 10,
+                          marginTop: 6,
+                          maxHeight: 220,
+                          overflowY: "auto",
+                          zIndex: 50,
+                          boxShadow: "0 8px 24px rgba(0,0,0,.12)",
+                        }}
                       >
-                        <option value="">Seleccione...</option>
-                        {ubicacionesOrigenModal.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.nombre} ({u.tipo})
-                          </option>
+                        {productoOptions.map((p) => (
+                          <button
+                            type="button"
+                            key={p.id}
+                            onClick={() => pickProducto(p)}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              textAlign: "left",
+                              padding: "10px 12px",
+                              border: "none",
+                              background: "white",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <b>{p.sku || "(sin sku)"}</b> - {p.nombre} <span className="muted">#{p.id}</span>
+                          </button>
                         ))}
-                      </select>
-                    ) : (
-                      <input
-                        value={
-                          ubicacionPropia
-                            ? `${ubicacionPropia.nombre} (${ubicacionPropia.tipo})`
-                            : "Sucursal asignada"
-                        }
-                        disabled
-                        readOnly
-                      />
+                      </div>
+                    )}
+
+                    {productoSearch.trim().length > 0 && searchingProductos && (
+                      <div style={{ marginTop: 8 }}>
+                        <InlineLoader />
+                      </div>
                     )}
                   </div>
-                )}
 
-                {needsDestino && (
-                  <div className="field grow">
-                    <label>Ubicación destino</label>
-
-                    {!isSuperAdmin && form.tipo === "entrada" ? (
-                      <input
-                        value={
-                          ubicacionPropia
-                            ? `${ubicacionPropia.nombre} (${ubicacionPropia.tipo})`
-                            : "Sucursal asignada"
-                        }
-                        disabled
-                        readOnly
-                      />
-                    ) : (
-                      <select
-                        required
-                        value={form.ubicacion_destino_id}
-                        onChange={(e) =>
-                          setForm((s) => ({ ...s, ubicacion_destino_id: e.target.value }))
-                        }
-                      >
-                        <option value="">Seleccione...</option>
-                        {ubicacionesDestinoModal.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.nombre} ({u.tipo})
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                  <div className="field">
+                    <label>Presentación</label>
+                    <select
+                      required
+                      value={form.presentacion}
+                      onChange={(e) =>
+                        setForm((s) => ({ ...s, presentacion: e.target.value }))
+                      }
+                      disabled={!form.producto_id || presentaciones.length === 0}
+                    >
+                      <option value="">Seleccione...</option>
+                      {presentaciones.map((p) => (
+                        <option key={p.id || p.presentacion} value={p.presentacion}>
+                          {p.presentacion} (factor: {p.factor_base})
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                )}
-              </div>
 
-              <div className="field">
-                <label>Motivo (obligatorio en ajuste)</label>
-                <input
-                  value={form.motivo}
-                  onChange={(e) => setForm((s) => ({ ...s, motivo: e.target.value }))}
-                  placeholder="Ej: Conteo físico / Compra / Merma"
-                  required={form.tipo === "ajuste"}
-                />
-              </div>
+                  <div className="field">
+                    <label>{form.tipo === "ajuste" ? "Cantidad (delta)" : "Cantidad"}</label>
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={form.cantidad}
+                      onChange={(e) => setForm((s) => ({ ...s, cantidad: e.target.value }))}
+                      placeholder="Ej: 10"
+                    />
+                  </div>
+                </div>
 
-              <div className="row between mt">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => !saving && resetModal()}
-                >
-                  Cancelar
-                </button>
+                {presentacionSeleccionada ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      marginBottom: 8,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      fontSize: 14,
+                    }}
+                  >
+                    <b>Equivalencia:</b> {form.cantidad || 0} × {presentacionSeleccionada.presentacion} × factor{" "}
+                    {presentacionSeleccionada.factor_base} ={" "}
+                    <b>
+                      {Number(form.cantidad || 0) *
+                        Number(presentacionSeleccionada.factor_base || 0)}
+                    </b>{" "}
+                    en unidad base
+                  </div>
+                ) : null}
 
-                <button
-                  className="btn primary"
-                  disabled={
-                    saving ||
-                    !form.producto_id ||
-                    !form.presentacion ||
-                    !form.cantidad ||
-                    (!isSuperAdmin && !userUbicacionId) ||
-                    (needsOrigen && isSuperAdmin && !form.ubicacion_origen_id) ||
-                    (needsDestino && form.tipo === "traslado" && !form.ubicacion_destino_id) ||
-                    (needsDestino && form.tipo === "entrada" && isSuperAdmin && !form.ubicacion_destino_id)
-                  }
-                >
-                  {saving ? "Guardando..." : "Aplicar"}
-                </button>
-              </div>
-            </form>
+                <div className="row gap">
+                  {needsOrigen && (
+                    <div className="field grow">
+                      <label>Ubicación origen</label>
+
+                      {isSuperAdmin ? (
+                        <select
+                          required
+                          value={form.ubicacion_origen_id}
+                          onChange={(e) =>
+                            setForm((s) => ({
+                              ...s,
+                              ubicacion_origen_id: e.target.value,
+                              ubicacion_destino_id:
+                                form.tipo === "traslado" &&
+                                e.target.value === s.ubicacion_destino_id
+                                  ? ""
+                                  : s.ubicacion_destino_id,
+                            }))
+                          }
+                        >
+                          <option value="">Seleccione...</option>
+                          {ubicacionesOrigenModal.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.nombre} ({u.tipo})
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          value={
+                            ubicacionPropia
+                              ? `${ubicacionPropia.nombre} (${ubicacionPropia.tipo})`
+                              : "Sucursal asignada"
+                          }
+                          disabled
+                          readOnly
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {needsDestino && (
+                    <div className="field grow">
+                      <label>Ubicación destino</label>
+
+                      {!isSuperAdmin && form.tipo === "entrada" ? (
+                        <input
+                          value={
+                            ubicacionPropia
+                              ? `${ubicacionPropia.nombre} (${ubicacionPropia.tipo})`
+                              : "Sucursal asignada"
+                          }
+                          disabled
+                          readOnly
+                        />
+                      ) : (
+                        <select
+                          required
+                          value={form.ubicacion_destino_id}
+                          onChange={(e) =>
+                            setForm((s) => ({ ...s, ubicacion_destino_id: e.target.value }))
+                          }
+                        >
+                          <option value="">Seleccione...</option>
+                          {ubicacionesDestinoModal.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.nombre} ({u.tipo})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="field">
+                  <label>Motivo (obligatorio en ajuste)</label>
+                  <input
+                    value={form.motivo}
+                    onChange={(e) => setForm((s) => ({ ...s, motivo: e.target.value }))}
+                    placeholder="Ej: Conteo físico / Compra / Merma"
+                    required={form.tipo === "ajuste"}
+                  />
+                </div>
+
+                <div className="row between mt">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => !saving && resetModal()}
+                  >
+                    Cancelar
+                  </button>
+
+                  <button
+                    className="btn primary"
+                    disabled={
+                      saving ||
+                      !form.producto_id ||
+                      !form.presentacion ||
+                      !form.cantidad ||
+                      (!isSuperAdmin && !userUbicacionId) ||
+                      (needsOrigen && isSuperAdmin && !form.ubicacion_origen_id) ||
+                      (needsDestino && form.tipo === "traslado" && !form.ubicacion_destino_id) ||
+                      (needsDestino && form.tipo === "entrada" && isSuperAdmin && !form.ubicacion_destino_id)
+                    }
+                  >
+                    {saving ? <InlineLoader /> : "Aplicar"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

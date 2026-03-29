@@ -3,12 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-// GET /api/v1/caja/actual?ubicacion_id=1
+
 class Caja extends Model
 {
     protected $table = 'cajas';
 
-    public $timestamps = false; // porque tus columnas son abierto_en/cerrado_en
+    public $timestamps = false;
 
     protected $fillable = [
         'abierto_por',
@@ -25,5 +25,22 @@ class Caja extends Model
         'cerrado_en' => 'datetime',
         'efectivo_inicial' => 'decimal:2',
         'efectivo_final' => 'decimal:2',
+        'ubicacion_id' => 'integer',
+        'abierto_por' => 'integer',
     ];
+
+    public function ubicacion()
+    {
+        return $this->belongsTo(Ubicacion::class, 'ubicacion_id', 'id');
+    }
+
+    public function usuarioApertura()
+    {
+        return $this->belongsTo(Usuario::class, 'abierto_por', 'id');
+    }
+
+    public function movimientos()
+    {
+        return $this->hasMany(MovimientoCaja::class, 'caja_id', 'id');
+    }
 }
