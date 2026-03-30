@@ -166,9 +166,11 @@ class VentaTiendaController extends Controller
                     ]);
                 }
 
-                if ((float) $stock->cantidad_base < $cantidad) {
+                $stockDisponible = (float) ($stock->cantidad ?? 0);
+
+                if ($stockDisponible < $cantidad) {
                     throw ValidationException::withMessages([
-                        'stock' => ["Stock insuficiente para el producto {$productoId}."],
+                        'stock' => ["Stock insuficiente para el producto {$productoId}. Disponible: {$stockDisponible}."],
                     ]);
                 }
 
@@ -180,7 +182,10 @@ class VentaTiendaController extends Controller
                     'subtotal'        => $subtotal,
                 ]);
 
-                $stock->cantidad_base = (float) $stock->cantidad_base - $cantidad;
+                // IMPORTANTE:
+                // Aquí descontamos SOLO la cantidad real de la presentación vendida.
+                // cantidad_base no se toca porque en tu lógica ya no importa.
+                $stock->cantidad = max(0, (float) $stock->cantidad - $cantidad);
                 $stock->save();
 
                 MovimientoStock::create([
@@ -192,7 +197,7 @@ class VentaTiendaController extends Controller
                     'presentacion'         => null,
                     'factor_aplicado'      => 1,
                     'cantidad'             => $cantidad,
-                    'cantidad_base'        => $cantidad,
+                    'cantidad_base'        => 0,
                     'motivo'               => 'venta_tienda',
                     'referencia_tipo'      => 'venta_tienda',
                     'referencia_id'        => $venta->id,

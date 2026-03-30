@@ -164,11 +164,13 @@ export default function VentaTienda() {
             row?.producto_sku ||
             row?.codigo ||
             String(row?.producto_id ?? ""),
+          // IMPORTANTE:
+          // Tomamos cantidad como stock real de la presentación
           stock: Number(
-            row?.cantidad_base ??
-              row?.cantidad ??
+            row?.cantidad ??
               row?.stock ??
               row?.existencia ??
+              row?.cantidad_base ??
               0
           ),
           precio: Number(row?.precio ?? row?.precio_venta ?? 0),
