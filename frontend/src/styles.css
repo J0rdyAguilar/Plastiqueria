@@ -1699,3 +1699,511 @@ body {
   transform: scale(1.06);
   box-shadow: 0 12px 24px rgba(2, 8, 23, 0.24);
 }
+/* =========================================================
+   RESPONSIVE GLOBAL PARA CELULAR / TABLET
+   Pegar al final de styles.css
+   ========================================================= */
+
+/* Evita desbordes horizontales raros */
+html,
+body {
+  overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+img,
+svg,
+canvas,
+video,
+iframe {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Inputs y botones no se salen */
+input,
+select,
+textarea,
+button {
+  max-width: 100%;
+}
+
+/* Tablas con scroll horizontal si no caben */
+table {
+  width: 100%;
+}
+
+.table-responsive,
+.table-wrap,
+.overflow-table,
+.responsive-table {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* =========================================================
+   TABLET
+   ========================================================= */
+@media (max-width: 1024px) {
+  .lux-layout {
+    gap: 18px !important;
+    padding: 18px 14px 0 !important;
+  }
+
+  .lux-sidebar {
+    width: 250px !important;
+    flex: 0 0 250px !important;
+  }
+
+  .lux-sidebar-inner {
+    padding: 16px !important;
+    border-radius: 24px !important;
+  }
+
+  .lux-nav-link.is-vertical {
+    min-height: 52px !important;
+    font-size: 15px !important;
+    padding: 0 16px !important;
+  }
+
+  .lux-content-wrap,
+  .container,
+  .page-container,
+  .content-container,
+  .dashboard-container {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .grid-2,
+  .grid-3,
+  .grid-4,
+  .cards-grid,
+  .dashboard-grid,
+  .stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* =========================================================
+   CELULAR GRANDE / TABLET PEQUEÑA
+   ========================================================= */
+@media (max-width: 900px) {
+  .lux-header {
+    padding: 14px 12px 14px !important;
+  }
+
+  .lux-header-inner {
+    width: 100% !important;
+  }
+
+  .lux-header-row {
+    gap: 10px !important;
+  }
+
+  .lux-brand-logo-wrap {
+    width: 58px !important;
+    height: 58px !important;
+    border-radius: 18px !important;
+  }
+
+  .lux-brand-logo-img {
+    width: 42px !important;
+    height: 42px !important;
+  }
+
+  .lux-brand-copy strong {
+    font-size: 1.25rem !important;
+  }
+
+  .lux-brand-copy span {
+    font-size: 0.84rem !important;
+  }
+
+  .lux-user-box {
+    padding: 6px !important;
+    gap: 8px !important;
+  }
+
+  .lux-avatar {
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 14px !important;
+    font-size: 0.95rem !important;
+  }
+
+  .lux-user-copy strong {
+    font-size: 0.9rem !important;
+  }
+
+  .lux-user-copy span {
+    font-size: 0.78rem !important;
+  }
+
+  .lux-logout {
+    min-height: 40px !important;
+    padding: 0 14px !important;
+    font-size: 0.9rem !important;
+  }
+
+  .lux-layout {
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .lux-sidebar.desktop-only {
+    display: none !important;
+  }
+
+  .desktop-only {
+    display: none !important;
+  }
+
+  .lux-mobile-toggle {
+    display: inline-flex !important;
+  }
+
+  .lux-main {
+    width: 100% !important;
+    padding: 18px 12px 24px !important;
+  }
+
+  .lux-content-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .lux-footer {
+    padding: 14px 12px 20px !important;
+  }
+
+  .lux-footer-inner {
+    width: 100% !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+
+  /* Cards / paneles */
+  .card,
+  .panel,
+  .box,
+  .section-card,
+  .dashboard-card,
+  .widget,
+  .lux-card {
+    border-radius: 18px !important;
+    padding: 14px !important;
+  }
+
+  /* Grids comunes */
+  .grid,
+  .grid-2,
+  .grid-3,
+  .grid-4,
+  .cards-grid,
+  .dashboard-grid,
+  .stats-grid,
+  .two-columns,
+  .three-columns {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+
+  /* Filtros / buscadores */
+  .filters,
+  .filter-bar,
+  .toolbar,
+  .search-bar,
+  .actions-row,
+  .top-filters,
+  .pedido-filtros,
+  .pedido-search,
+  .header-actions {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .filters > *,
+  .filter-bar > *,
+  .toolbar > *,
+  .search-bar > *,
+  .actions-row > *,
+  .top-filters > *,
+  .pedido-filtros > *,
+  .pedido-search > *,
+  .header-actions > * {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Formularios */
+  .form-row,
+  .row,
+  .fields-row,
+  .inline-fields {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  .form-row > *,
+  .row > *,
+  .fields-row > *,
+  .inline-fields > * {
+    width: 100% !important;
+  }
+
+  input,
+  select,
+  textarea,
+  .input,
+  .select,
+  .textarea {
+    min-height: 46px !important;
+    font-size: 16px !important; /* evita zoom raro en iPhone */
+  }
+
+  textarea {
+    min-height: 110px !important;
+  }
+
+  /* Botones */
+  .btn,
+  .button,
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger,
+  .btn-success,
+  .action-btn {
+    min-height: 46px !important;
+    width: 100%;
+  }
+
+  /* Títulos */
+  h1,
+  .page-title,
+  .title-xl {
+    font-size: 2rem !important;
+    line-height: 1.1 !important;
+  }
+
+  h2,
+  .section-title,
+  .title-lg {
+    font-size: 1.35rem !important;
+  }
+
+  h3,
+  .title-md {
+    font-size: 1.1rem !important;
+  }
+
+  /* Si tienes tablas dentro de cards */
+  .card table,
+  .panel table,
+  .box table {
+    min-width: 640px;
+  }
+}
+
+/* =========================================================
+   CELULAR
+   ========================================================= */
+@media (max-width: 640px) {
+  body {
+    font-size: 15px;
+  }
+
+  .lux-header {
+    padding: 12px 10px 12px !important;
+  }
+
+  .lux-header-row {
+    align-items: center !important;
+  }
+
+  .lux-brand {
+    gap: 10px !important;
+    min-width: 0 !important;
+    max-width: calc(100% - 56px);
+  }
+
+  .lux-brand-copy {
+    min-width: 0 !important;
+  }
+
+  .lux-brand-copy strong {
+    font-size: 1.05rem !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .lux-brand-copy span {
+    font-size: 0.76rem !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .lux-brand-logo-wrap {
+    width: 50px !important;
+    height: 50px !important;
+    border-radius: 16px !important;
+  }
+
+  .lux-brand-logo-img {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  .lux-top-actions {
+    margin-left: auto !important;
+    gap: 8px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .lux-mobile-toggle {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 14px !important;
+  }
+
+  .lux-mobile-panel {
+    left: 10px !important;
+    right: 10px !important;
+    top: calc(100% - 2px) !important;
+    padding: 12px !important;
+    border-radius: 18px !important;
+  }
+
+  .lux-mobile-user {
+    padding: 8px 4px 14px !important;
+  }
+
+  .lux-mobile-group {
+    gap: 8px !important;
+    padding-top: 12px !important;
+  }
+
+  .lux-mobile-link,
+  .lux-mobile-logout {
+    min-height: 46px !important;
+    padding: 12px 14px !important;
+    border-radius: 14px !important;
+    font-size: 0.95rem !important;
+  }
+
+  .lux-main {
+    padding: 14px 10px 22px !important;
+  }
+
+  .lux-footer {
+    padding: 12px 10px 18px !important;
+  }
+
+  .lux-footer-inner {
+    font-size: 0.85rem !important;
+  }
+
+  .card,
+  .panel,
+  .box,
+  .section-card,
+  .dashboard-card,
+  .widget,
+  .lux-card {
+    padding: 12px !important;
+    border-radius: 16px !important;
+  }
+
+  h1,
+  .page-title,
+  .title-xl {
+    font-size: 1.75rem !important;
+  }
+
+  h2,
+  .section-title,
+  .title-lg {
+    font-size: 1.2rem !important;
+  }
+
+  .stats-grid,
+  .dashboard-grid,
+  .cards-grid {
+    gap: 12px !important;
+  }
+
+  /* Espaciados generales */
+  .p-4,
+  .p-5,
+  .p-6 {
+    padding: 12px !important;
+  }
+
+  .px-4,
+  .px-5,
+  .px-6 {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  .py-4,
+  .py-5,
+  .py-6 {
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+  }
+
+  .gap-4,
+  .gap-5,
+  .gap-6 {
+    gap: 12px !important;
+  }
+}
+
+/* =========================================================
+   CELULAR MUY PEQUEÑO
+   ========================================================= */
+@media (max-width: 420px) {
+  .lux-brand-copy strong {
+    font-size: 0.98rem !important;
+  }
+
+  .lux-brand-copy span {
+    font-size: 0.72rem !important;
+  }
+
+  .lux-main {
+    padding: 12px 8px 18px !important;
+  }
+
+  .lux-mobile-panel {
+    left: 8px !important;
+    right: 8px !important;
+  }
+
+  h1,
+  .page-title,
+  .title-xl {
+    font-size: 1.55rem !important;
+  }
+
+  .card table,
+  .panel table,
+  .box table {
+    min-width: 580px;
+  }
+}

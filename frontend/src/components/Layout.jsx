@@ -21,6 +21,7 @@ import {
   UserCircle2,
 } from "lucide-react";
 import { clearSession, getSession, isLoggedIn } from "../lib/auth";
+import "./layout.css";
 
 function normalizeRole(r) {
   const x = (r || "").toString().trim().toLowerCase();
@@ -82,77 +83,77 @@ export default function Layout({ children }) {
     {
       to: "/pedidos-admin",
       label: "Pedidos",
-      icon: <ShoppingCart size={16} />,
+      icon: <ShoppingCart size={18} />,
       show: isAdminLike,
       active: loc.pathname.startsWith("/pedidos-admin"),
     },
     {
       to: "/usuarios",
       label: "Usuarios",
-      icon: <Users size={16} />,
+      icon: <Users size={18} />,
       show: isSuperAdmin,
       active: loc.pathname.startsWith("/usuarios"),
     },
     {
       to: "/vendedores",
       label: "Vendedores",
-      icon: <UserCog size={16} />,
+      icon: <UserCog size={18} />,
       show: isAdminLike,
       active: loc.pathname.startsWith("/vendedores"),
     },
     {
       to: "/zonas",
       label: "Zonas",
-      icon: <MapPinned size={16} />,
+      icon: <MapPinned size={18} />,
       show: isAdminLike,
       active: loc.pathname.startsWith("/zonas"),
     },
     {
       to: "/rutas",
       label: "Rutas",
-      icon: <Route size={16} />,
+      icon: <Route size={18} />,
       show: isAdminLike,
       active: loc.pathname.startsWith("/rutas"),
     },
     {
       to: "/productos",
       label: "Productos",
-      icon: <Package size={16} />,
+      icon: <Package size={18} />,
       show: isAdminLike,
       active: loc.pathname.startsWith("/productos"),
     },
     {
       to: "/stock",
       label: "Inventario",
-      icon: <Boxes size={16} />,
+      icon: <Boxes size={18} />,
       show: isAdminLike,
       active: loc.pathname.startsWith("/stock"),
     },
     {
       to: "/movimientos-stock",
       label: "Movimientos",
-      icon: <ArrowLeftRight size={16} />,
+      icon: <ArrowLeftRight size={18} />,
       show: isAdminLike,
       active: loc.pathname.startsWith("/movimientos-stock"),
     },
     {
       to: "/ventas-tienda",
       label: "Tienda",
-      icon: <Store size={16} />,
+      icon: <Store size={18} />,
       show: canAccessTienda,
       active: loc.pathname.startsWith("/ventas-tienda"),
     },
     {
       to: "/registro-ventas-tienda",
       label: "Registro ventas",
-      icon: <ReceiptText size={16} />,
+      icon: <ReceiptText size={18} />,
       show: canAccessTienda,
       active: loc.pathname.startsWith("/registro-ventas-tienda"),
     },
     {
       to: "/caja",
       label: "Caja",
-      icon: <Wallet size={16} />,
+      icon: <Wallet size={18} />,
       show: logged && (isAdminLike || isCaja),
       active: loc.pathname.startsWith("/caja"),
     },
@@ -164,92 +165,86 @@ export default function Layout({ children }) {
         <div className="lux-header-glow lux-header-glow--one" />
         <div className="lux-header-glow lux-header-glow--two" />
 
-        <div className="lux-header-row">
-          <Link to={homeLink} className="lux-brand">
-            <div className="lux-brand-logo-wrap">
-              <img
-                src="/img/logo.png"
-                alt="Plastimax"
-                className="lux-brand-logo-img"
-              />
-            </div>
-
-            <div className="lux-brand-copy">
-              <strong>Plastimax</strong>
-              <span>
-                {isVendedorTienda ? "Panel de tienda" : "Panel administrativo"}
-              </span>
-            </div>
-          </Link>
-
-          <div className="lux-top-actions">
-            {vendedorEnPedidos && (
-              <div className="lux-segmented desktop-only">
-                <Link
-                  to="/pedidos#crear-pedido"
-                  className={`lux-chip ${vendedorVista === "crear" ? "is-active" : ""}`}
-                >
-                  <PlusCircle size={15} />
-                  Crear pedido
-                </Link>
-
-                <Link
-                  to="/pedidos#mis-pedidos"
-                  className={`lux-chip ${vendedorVista === "mios" ? "is-active" : ""}`}
-                >
-                  <ReceiptText size={15} />
-                  Mis pedidos
-                </Link>
+        <div className="lux-header-inner">
+          <div className="lux-header-row">
+            <Link to={homeLink} className="lux-brand">
+              <div className="lux-brand-logo-wrap">
+                <img
+                  src="/img/logo.png"
+                  alt="Plastimax"
+                  className="lux-brand-logo-img"
+                />
               </div>
-            )}
 
-            {logged ? (
-              <div className="lux-user-box desktop-only">
-                <button
-                  type="button"
-                  className="lux-user-profile-btn"
-                  onClick={goProfile}
-                  title="Ver perfil"
-                >
-                  <div className="lux-avatar">
-                    {(me?.nombre || me?.usuario || "U").charAt(0).toUpperCase()}
-                  </div>
-
-                  <div className="lux-user-copy">
-                    <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
-                    <span>{prettyRole(rol)}</span>
-                  </div>
-                </button>
-
-                <button type="button" className="lux-logout" onClick={logout}>
-                  <LogOut size={16} />
-                  Salir
-                </button>
+              <div className="lux-brand-copy">
+                <strong>Plastimax</strong>
+                <span>
+                  {isVendedorTienda ? "Panel de tienda" : "Panel administrativo"}
+                </span>
               </div>
-            ) : (
-              <Link className="lux-login-link desktop-only" to="/login">
-                Iniciar sesión
-              </Link>
-            )}
+            </Link>
 
-            <button
-              type="button"
-              className="lux-mobile-toggle"
-              onClick={() => setMobileOpen((v) => !v)}
-              aria-label="Abrir menú"
-            >
-              {mobileOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
+            <div className="lux-top-actions">
+              {vendedorEnPedidos && (
+                <div className="lux-segmented desktop-only">
+                  <Link
+                    to="/pedidos#crear-pedido"
+                    className={`lux-chip ${vendedorVista === "crear" ? "is-active" : ""}`}
+                  >
+                    <PlusCircle size={15} />
+                    Crear pedido
+                  </Link>
+
+                  <Link
+                    to="/pedidos#mis-pedidos"
+                    className={`lux-chip ${vendedorVista === "mios" ? "is-active" : ""}`}
+                  >
+                    <ReceiptText size={15} />
+                    Mis pedidos
+                  </Link>
+                </div>
+              )}
+
+              {logged ? (
+                <div className="lux-user-box desktop-only">
+                  <button
+                    type="button"
+                    className="lux-user-profile-btn"
+                    onClick={goProfile}
+                    title="Ver perfil"
+                  >
+                    <div className="lux-avatar">
+                      {(me?.nombre || me?.usuario || "U").charAt(0).toUpperCase()}
+                    </div>
+
+                    <div className="lux-user-copy">
+                      <strong>{me?.nombre || me?.usuario || "Usuario"}</strong>
+                      <span>{prettyRole(rol)}</span>
+                    </div>
+                  </button>
+
+                  <button type="button" className="lux-logout" onClick={logout}>
+                    <LogOut size={16} />
+                    Salir
+                  </button>
+                </div>
+              ) : (
+                <Link className="lux-login-link desktop-only" to="/login">
+                  Iniciar sesión
+                </Link>
+              )}
+
+              <button
+                type="button"
+                className="lux-mobile-toggle"
+                onClick={() => setMobileOpen((v) => !v)}
+                aria-label="Abrir menú"
+              >
+                {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+              </button>
+            </div>
           </div>
         </div>
-
-        {(isAdminLike || isVendedorTienda) && (
-          <nav className="lux-admin-nav desktop-only">
-            {adminLinks.map((item) => (
-              <NavItem key={item.to} {...item} />
-            ))}
-          </nav>
-        )}
 
         <AnimatePresence>
           {mobileOpen && (
@@ -341,16 +336,33 @@ export default function Layout({ children }) {
         </AnimatePresence>
       </header>
 
-      <main className="lux-main">
-        <motion.div
-          className="lux-content-wrap"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.28 }}
-        >
-          {children}
-        </motion.div>
-      </main>
+      <div className="lux-layout">
+        {(isAdminLike || isVendedorTienda) && (
+          <aside className="lux-sidebar desktop-only">
+            <div className="lux-sidebar-inner">
+              <div className="lux-sidebar-badge">Panel</div>
+              <div className="lux-sidebar-title">Menú principal</div>
+
+              <nav className="lux-sidebar-nav">
+                {adminLinks.map((item) => (
+                  <NavItem key={item.to} {...item} vertical />
+                ))}
+              </nav>
+            </div>
+          </aside>
+        )}
+
+        <main className="lux-main">
+          <motion.div
+            className="lux-content-wrap"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.28 }}
+          >
+            {children}
+          </motion.div>
+        </main>
+      </div>
 
       <footer className="lux-footer">
         <div className="lux-footer-inner">
@@ -365,10 +377,13 @@ export default function Layout({ children }) {
   );
 }
 
-function NavItem({ to, active, label, icon }) {
+function NavItem({ to, active, label, icon, vertical = false }) {
   return (
-    <Link to={to} className={`lux-nav-link ${active ? "is-active" : ""}`}>
-      {icon}
+    <Link
+      to={to}
+      className={`lux-nav-link ${vertical ? "is-vertical" : ""} ${active ? "is-active" : ""}`}
+    >
+      <span className="lux-nav-icon">{icon}</span>
       <span>{label}</span>
     </Link>
   );
