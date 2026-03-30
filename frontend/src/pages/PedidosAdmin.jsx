@@ -145,24 +145,15 @@ export default function PedidosAdmin() {
     }
   }
 
-  async function loadRuteros() {
-    try {
-      setLoadingRuteros(true);
-
-      const res = await usuariosApi.list({
-        rol: "rutero",
-        page: 1,
-        per_page: 100,
-      });
-
-      setRuteros(res?.data || []);
-    } catch (err) {
-      console.error(err);
-      notify.error(err, "No se pudieron cargar los ruteros.");
-    } finally {
-      setLoadingRuteros(false);
+    async function loadRuteros() {
+      try {
+        const res = await usuariosApi.ruteros();
+        setRuteros(res?.data || []);
+      } catch (err) {
+        console.error(err);
+        notify.error(err, "No se pudieron cargar los ruteros.");
+      }
     }
-  }
 
   useEffect(() => {
     loadPedidos();
@@ -810,19 +801,18 @@ export default function PedidosAdmin() {
                       <ModalLoader text="Cargando ruteros..." />
                     ) : (
                       <>
-                        <select
-                          value={ruteroId}
-                          onChange={(e) => setRuteroId(e.target.value)}
-                          style={inputStyle}
-                          disabled={saving}
-                        >
-                          <option value="">Seleccionar rutero</option>
-                          {ruteros.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {r.nombre || r.usuario || `Rutero #${r.id}`}
-                            </option>
-                          ))}
-                        </select>
+                      <select
+                        value={ruteroId}
+                        onChange={(e) => setRuteroId(Number(e.target.value))}
+                        style={inputStyle}
+                      >
+                        <option value="">Seleccionar rutero</option>
+                        {ruteros.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.nombre || r.usuario || `Rutero #${r.id}`}
+                          </option>
+                        ))}
+                      </select>
 
                         <button
                           type="button"

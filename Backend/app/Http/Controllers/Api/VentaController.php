@@ -51,24 +51,72 @@ class VentaController extends Controller
         return str_replace([' ', '-'], '_', mb_strtolower($estado));
     }
 
+    private function loadVentaRelations(Venta $venta): Venta
+    {
+        $venta->load([
+            'cliente:id,nombre',
+            'vendedor:id,codigo,usuario_id',
+            'vendedor.usuario:id,nombre,usuario',
+            'rutero:id,nombre,usuario,rol',
+            'ruta:id,nombre',
+            'zona:id,nombre',
+            'ubicacion:id,nombre,tipo',
+            'detalles.producto:id,nombre,sku',
+        ]);
+
+        return $venta;
+    }
+
     private function ventaResponse(Venta $venta): array
     {
+        $vendedorNombre =
+            $venta->vendedor?->usuario?->nombre
+            ?? $venta->vendedor?->usuario?->usuario
+            ?? $venta->vendedor?->codigo
+            ?? ($venta->vendedor_id ? ('Vendedor #' . $venta->vendedor_id) : null);
+
+        $ruteroNombre =
+            $venta->rutero?->nombre
+            ?? $venta->rutero?->usuario
+            ?? ($venta->rutero_id ? ('Rutero #' . $venta->rutero_id) : null);
+
         return [
             'id' => $venta->id,
+
             'cliente_id' => $venta->cliente_id,
             'cliente_nombre' => $venta->cliente?->nombre,
+
             'vendedor_id' => $venta->vendedor_id,
-            'vendedor_nombre' => $venta->vendedor?->usuario?->nombre
-                ?? $venta->vendedor?->usuario?->usuario
-                ?? $venta->vendedor?->codigo
-                ?? ('Vendedor #' . $venta->vendedor_id),
+            'vendedor_nombre' => $vendedorNombre,
+
+            'rutero_id' => $venta->rutero_id,
+            'rutero_nombre' => $ruteroNombre,
+
             'ubicacion_id' => $venta->ubicacion_id,
+            'ubicacion_nombre' => $venta->ubicacion?->nombre,
+
             'ruta_id' => $venta->ruta_id,
+            'ruta_nombre' => $venta->ruta?->nombre,
+
             'zona_id' => $venta->zona_id,
+            'zona_nombre' => $venta->zona?->nombre,
+
             'estado' => $venta->estado,
             'total' => (float) $venta->total,
             'observaciones' => $venta->observaciones,
+
             'creado_en' => optional($venta->creado_en)?->format('Y-m-d H:i:s'),
+            'actualizado_en' => optional($venta->actualizado_en)?->format('Y-m-d H:i:s'),
+            'fecha_en_ruta' => optional($venta->fecha_en_ruta)?->format('Y-m-d H:i:s'),
+            'entregado_en' => optional($venta->entregado_en)?->format('Y-m-d H:i:s'),
+
+            'rutero' => $venta->rutero ? [
+                'id' => (int) $venta->rutero->id,
+                'nombre' => $venta->rutero->nombre,
+                'usuario' => $venta->rutero->usuario,
+                'rol' => $venta->rutero->rol,
+            ] : null,
+
             'detalles' => $venta->detalles->map(function ($d) {
                 return [
                     'id' => $d->id,
@@ -147,6 +195,7 @@ class VentaController extends Controller
                 'usuario_id' => $vendedor->usuario_id,
                 'vendedor_id' => $vendedorAuthId,
                 'cliente_id' => $data['cliente_id'],
+                'rutero_id' => null,
                 'ruta_id' => $data['ruta_id'],
                 'zona_id' => $data['zona_id'],
                 'tipo_venta' => 'pedido_vendedor',
@@ -157,6 +206,8 @@ class VentaController extends Controller
                 'estado' => 'pendiente_revision',
                 'nota' => null,
                 'observaciones' => $data['observaciones'] ?? null,
+                'fecha_en_ruta' => null,
+                'entregado_en' => null,
             ]);
 
             foreach ($data['detalles'] as $item) {
@@ -172,11 +223,7 @@ class VentaController extends Controller
                 ]);
             }
 
-            $venta->load([
-                'cliente:id,nombre',
-                'vendedor.usuario:id,nombre,usuario',
-                'detalles.producto:id,nombre,sku',
-            ]);
+            $this->loadVentaRelations($venta);
 
             return response()->json([
                 'message' => 'Pedido creado correctamente.',
@@ -199,7 +246,12 @@ class VentaController extends Controller
         $query = Venta::query()
             ->with([
                 'cliente:id,nombre',
+                'vendedor:id,codigo,usuario_id',
                 'vendedor.usuario:id,nombre,usuario',
+                'rutero:id,nombre,usuario,rol',
+                'ruta:id,nombre',
+                'zona:id,nombre',
+                'ubicacion:id,nombre,tipo',
                 'detalles.producto:id,nombre,sku',
             ])
             ->where('tipo_venta', 'pedido_vendedor');
@@ -226,6 +278,10 @@ class VentaController extends Controller
                     })
                     ->orWhereHas('vendedor.usuario', function ($u) use ($q) {
                         $u->where('nombre', 'like', "%{$q}%")
+                          ->orWhere('usuario', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('rutero', function ($r) use ($q) {
+                        $r->where('nombre', 'like', "%{$q}%")
                           ->orWhere('usuario', 'like', "%{$q}%");
                     });
             });
@@ -260,9 +316,11 @@ class VentaController extends Controller
         $venta->estado = 'aprobado';
         $venta->save();
 
+        $this->loadVentaRelations($venta);
+
         return response()->json([
             'message' => 'Pedido aprobado.',
-            'data' => $this->ventaResponse($venta->fresh(['cliente', 'vendedor.usuario', 'detalles.producto'])),
+            'data' => $this->ventaResponse($venta),
         ]);
     }
 
@@ -287,9 +345,11 @@ class VentaController extends Controller
         $venta->estado = 'preparando';
         $venta->save();
 
+        $this->loadVentaRelations($venta);
+
         return response()->json([
             'message' => 'Pedido en preparación.',
-            'data' => $this->ventaResponse($venta->fresh(['cliente', 'vendedor.usuario', 'detalles.producto'])),
+            'data' => $this->ventaResponse($venta),
         ]);
     }
 
@@ -299,7 +359,7 @@ class VentaController extends Controller
         $role = $this->roleOf($user);
         $ubicacionAuthId = $this->userUbicacionId($user);
 
-        if (!in_array($role, ['admin', 'super_admin'], true)) {
+        if (!in_array($role, ['admin', 'super_admin', 'rutero'], true)) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
@@ -307,16 +367,31 @@ class VentaController extends Controller
             return response()->json(['message' => 'No puedes entregar pedidos de otra sucursal.'], 403);
         }
 
+        if ($role === 'rutero' && (int) $venta->rutero_id !== (int) $user->id) {
+            return response()->json([
+                'message' => 'No puedes entregar un pedido que no te fue asignado.'
+            ], 403);
+        }
+
         if ($venta->tipo_venta !== 'pedido_vendedor') {
             return response()->json(['message' => 'Venta no válida para este flujo.'], 422);
         }
 
+        if (!in_array($venta->estado, ['preparando', 'aprobado', 'en_ruta'], true)) {
+            return response()->json([
+                'message' => 'Solo se puede entregar un pedido preparado.'
+            ], 422);
+        }
+
         $venta->estado = 'entregado';
+        $venta->entregado_en = now();
         $venta->save();
+
+        $this->loadVentaRelations($venta);
 
         return response()->json([
             'message' => 'Pedido entregado.',
-            'data' => $this->ventaResponse($venta->fresh(['cliente', 'vendedor.usuario', 'detalles.producto'])),
+            'data' => $this->ventaResponse($venta),
         ]);
     }
 
@@ -378,15 +453,15 @@ class VentaController extends Controller
             }
 
             $venta->update([
-                'observaciones' => $data['observaciones'] ?? $venta->observaciones,
+                'observaciones' => $data['observaciones'] ?? $venta['observaciones'],
                 'total' => $total,
             ]);
 
+            $this->loadVentaRelations($venta);
+
             return response()->json([
                 'message' => 'Pedido actualizado correctamente.',
-                'data' => $this->ventaResponse(
-                    $venta->fresh(['detalles.producto', 'cliente', 'vendedor.usuario'])
-                ),
+                'data' => $this->ventaResponse($venta),
             ]);
         });
     }
@@ -409,8 +484,13 @@ class VentaController extends Controller
         $query = Venta::query()
             ->with([
                 'cliente:id,nombre',
-                'detalles.producto:id,nombre,sku',
+                'vendedor:id,codigo,usuario_id',
                 'vendedor.usuario:id,nombre,usuario',
+                'rutero:id,nombre,usuario,rol',
+                'ruta:id,nombre',
+                'zona:id,nombre',
+                'ubicacion:id,nombre,tipo',
+                'detalles.producto:id,nombre,sku',
             ])
             ->where('tipo_venta', 'pedido_vendedor')
             ->where('vendedor_id', $vendedorAuthId);
@@ -429,5 +509,42 @@ class VentaController extends Controller
             ->through(fn ($venta) => $this->ventaResponse($venta));
 
         return response()->json($items);
+    }
+
+    public function asignarRutero(Request $request, Venta $venta)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $ubicacionAuthId = $this->userUbicacionId($user);
+
+        if (!in_array($role, ['admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($role === 'admin' && (int) $venta->ubicacion_id !== (int) $ubicacionAuthId) {
+            return response()->json(['message' => 'No puedes modificar pedidos de otra sucursal.'], 403);
+        }
+
+        $data = $request->validate([
+            'rutero_id' => [
+                'required',
+                'integer',
+                Rule::exists('usuarios', 'id')->where(function ($q) {
+                    $q->where('rol', 'rutero');
+                }),
+            ],
+        ]);
+
+        $venta->rutero_id = $data['rutero_id'];
+        $venta->estado = 'en_ruta';
+        $venta->fecha_en_ruta = now();
+        $venta->save();
+
+        $this->loadVentaRelations($venta);
+
+        return response()->json([
+            'message' => 'Rutero asignado correctamente.',
+            'pedido' => $this->ventaResponse($venta),
+        ]);
     }
 }

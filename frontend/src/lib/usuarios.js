@@ -2,5 +2,6 @@
 import { api } from "./api";
 
 export const usuariosApi = {
-  list: () => api.usuariosList(),
+  list: (params = {}) => api.usuariosList(params),
+  ruteros: () => api.usuariosList({ rol: "rutero" }),
 };
