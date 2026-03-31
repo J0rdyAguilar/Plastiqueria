@@ -55,6 +55,7 @@ function badgeStyle(estado) {
     fontSize: 12,
     fontWeight: 700,
     textTransform: "capitalize",
+    whiteSpace: "nowrap",
   };
 
   switch (estado) {
@@ -93,7 +94,7 @@ export default function PedidosAdmin() {
   const [observaciones, setObservaciones] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [loadingRuteros, setLoadingRuteros] = useState(false);
+  const [loadingRuteros, setLoadingRuteros] = useState(true);
   const [ruteros, setRuteros] = useState([]);
   const [ruteroId, setRuteroId] = useState("");
 
@@ -135,7 +136,21 @@ export default function PedidosAdmin() {
               ],
             }))
           );
+        } else if (nuevosItems.length > 0) {
+          seleccionarPedido(nuevosItems[0]);
+        } else {
+          setPedidoActivo(null);
+          setObservaciones("");
+          setRuteroId("");
+          setLineasEdit([]);
         }
+      } else if (!pedidoActivo && nuevosItems.length > 0) {
+        seleccionarPedido(nuevosItems[0]);
+      } else if (nuevosItems.length === 0) {
+        setPedidoActivo(null);
+        setObservaciones("");
+        setRuteroId("");
+        setLineasEdit([]);
       }
     } catch (err) {
       console.error(err);
@@ -145,15 +160,18 @@ export default function PedidosAdmin() {
     }
   }
 
-    async function loadRuteros() {
-      try {
-        const res = await usuariosApi.ruteros();
-        setRuteros(res?.data || []);
-      } catch (err) {
-        console.error(err);
-        notify.error(err, "No se pudieron cargar los ruteros.");
-      }
+  async function loadRuteros() {
+    try {
+      setLoadingRuteros(true);
+      const res = await usuariosApi.ruteros();
+      setRuteros(res?.data || []);
+    } catch (err) {
+      console.error(err);
+      notify.error(err, "No se pudieron cargar los ruteros.");
+    } finally {
+      setLoadingRuteros(false);
     }
+  }
 
   useEffect(() => {
     loadPedidos();
@@ -352,11 +370,15 @@ export default function PedidosAdmin() {
       return;
     }
 
-    const detalles = lineasEdit.length > 0 ? lineasEdit : pedidoActivo?.detalles || [];
+    const detalles =
+      lineasEdit.length > 0 ? lineasEdit : pedidoActivo?.detalles || [];
     const totalTicket =
       lineasEdit.length > 0
         ? total
-        : (pedidoActivo?.detalles || []).reduce((acc, d) => acc + num(d.subtotal), 0);
+        : (pedidoActivo?.detalles || []).reduce(
+            (acc, d) => acc + num(d.subtotal),
+            0
+          );
 
     const html = `
       <!doctype html>
@@ -373,24 +395,11 @@ export default function PedidosAdmin() {
             color: #111827;
             font-family: Arial, Helvetica, sans-serif;
           }
-          body {
-            padding: 12px;
-          }
-          .ticket {
-            width: 80mm;
-            margin: 0 auto;
-          }
+          body { padding: 12px; }
+          .ticket { width: 80mm; margin: 0 auto; }
           .center { text-align: center; }
-          .title {
-            font-size: 20px;
-            font-weight: 800;
-            margin-bottom: 2px;
-          }
-          .subtitle {
-            font-size: 12px;
-            color: #4b5563;
-            margin-bottom: 10px;
-          }
+          .title { font-size: 20px; font-weight: 800; margin-bottom: 2px; }
+          .subtitle { font-size: 12px; color: #4b5563; margin-bottom: 10px; }
           .box {
             border-top: 1px dashed #9ca3af;
             border-bottom: 1px dashed #9ca3af;
@@ -404,9 +413,7 @@ export default function PedidosAdmin() {
             margin: 4px 0;
             font-size: 12px;
           }
-          .label {
-            color: #4b5563;
-          }
+          .label { color: #4b5563; }
           .line-item {
             padding: 7px 0;
             border-bottom: 1px dashed #d1d5db;
@@ -438,12 +445,8 @@ export default function PedidosAdmin() {
             color: #6b7280;
           }
           @media print {
-            body {
-              padding: 0;
-            }
-            .ticket {
-              width: 80mm;
-            }
+            body { padding: 0; }
+            .ticket { width: 80mm; }
           }
         </style>
       </head>
@@ -469,7 +472,9 @@ export default function PedidosAdmin() {
               pedidoActivo.vendedor_nombre || "—"
             }</strong></div>
             <div class="row"><span class="label">Rutero:</span><strong>${
-              pedidoActivo.rutero?.nombre || pedidoActivo.rutero_nombre || "Sin asignar"
+              pedidoActivo.rutero?.nombre ||
+              pedidoActivo.rutero_nombre ||
+              "Sin asignar"
             }</strong></div>
           </div>
 
@@ -547,96 +552,171 @@ export default function PedidosAdmin() {
       <header className="topbar">
         <div>
           <h2>Pedidos Admin</h2>
-          <p className="muted">Revisión, aprobación, preparación y asignación de rutero</p>
+          <p className="muted">
+            Revisión, aprobación, preparación y asignación de rutero
+          </p>
         </div>
       </header>
 
-      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16 }}>
-        <div style={{ display: "grid", gap: 16 }}>
-          <div className="card pad">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 240px 140px", gap: 12 }}>
-              <input
-                type="text"
-                placeholder="Buscar por cliente, vendedor"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                style={inputStyle}
-                disabled={loading || saving}
-              />
+      <div
+        style={{
+          marginTop: 12,
+          display: "grid",
+          gridTemplateColumns: "1.28fr 1fr",
+          gap: 16,
+          alignItems: "start",
+        }}
+      >
+        <div>
+          <div className="card pad" style={leftCardStyle}>
+            <div style={toolbarWrapStyle}>
+              <div style={toolbarGridStyle}>
+                <input
+                  type="text"
+                  placeholder="Buscar por cliente o vendedor"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  style={inputStyle}
+                  disabled={loading || saving}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") loadPedidos();
+                  }}
+                />
 
-              <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value)}
-                style={inputStyle}
-                disabled={loading || saving}
-              >
-                <option value="">Todos los estados</option>
-                <option value="pendiente_revision">Pendiente revisión</option>
-                <option value="aprobado">Aprobado</option>
-                <option value="preparando">Preparando</option>
-                <option value="en_ruta">En ruta</option>
-                <option value="entregado">Entregado</option>
-              </select>
+                <select
+                  value={estado}
+                  onChange={(e) => setEstado(e.target.value)}
+                  style={inputStyle}
+                  disabled={loading || saving}
+                >
+                  <option value="">Todos los estados</option>
+                  <option value="pendiente_revision">Pendiente revisión</option>
+                  <option value="aprobado">Aprobado</option>
+                  <option value="preparando">Preparando</option>
+                  <option value="en_ruta">En ruta</option>
+                  <option value="entregado">Entregado</option>
+                </select>
 
-              <button onClick={() => loadPedidos()} style={primaryBtn} disabled={loading || saving}>
-                {loading ? <InlineLoader /> : "Buscar"}
-              </button>
-            </div>
-          </div>
-
-          <div className="card pad">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-                marginBottom: 12,
-              }}
-            >
-              <h3 style={{ margin: 0 }}>Listado de pedidos</h3>
-              <div className="muted small">
-                {loading ? <InlineLoader /> : `${items.length} pedido(s)`}
+                <button
+                  onClick={() => loadPedidos()}
+                  style={primaryBtn}
+                  disabled={loading || saving}
+                >
+                  {loading ? <InlineLoader /> : "Buscar"}
+                </button>
               </div>
             </div>
 
-            {loading ? (
-              <TableLoader />
-            ) : items.length === 0 ? (
-              <div className="muted">No hay pedidos.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 12 }}>
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => !saving && seleccionarPedido(item)}
-                    style={{
-                      border: pedidoActivo?.id === item.id ? "2px solid #111827" : "1px solid #e5e7eb",
-                      borderRadius: 12,
-                      padding: 14,
-                      cursor: saving ? "not-allowed" : "pointer",
-                      opacity: saving ? 0.7 : 1,
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                      <div>
-                        <div style={{ fontWeight: 700 }}>Pedido #{item.id}</div>
-                        <div className="muted">Cliente: {item.cliente_nombre || "—"}</div>
-                        <div className="muted">Vendedor: {item.vendedor_nombre || "—"}</div>
-                        <div className="muted">
-                          Rutero: {item.rutero?.nombre || item.rutero_nombre || "Sin asignar"}
+            <div style={{ marginTop: 18 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 12,
+                }}
+              >
+                <h3 style={{ margin: 0 }}>Listado de pedidos</h3>
+                <div className="muted small">
+                  {loading ? <InlineLoader /> : `${items.length} pedido(s)`}
+                </div>
+              </div>
+
+              {loading ? (
+                <TableLoader />
+              ) : items.length === 0 ? (
+                <div style={emptyStateStyle}>
+                  <div style={{ fontSize: 30 }}>📦</div>
+                  <div style={{ fontWeight: 700 }}>No se encontraron pedidos</div>
+                  <div style={{ fontSize: 13 }}>
+                    Prueba cambiando el estado o el texto de búsqueda.
+                  </div>
+                </div>
+              ) : (
+                <div style={listWrapStyle}>
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {items.map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={() => !saving && seleccionarPedido(item)}
+                        style={{
+                          ...pedidoItemStyle,
+                          border:
+                            pedidoActivo?.id === item.id
+                              ? "2px solid #111827"
+                              : "1px solid #dbe1ea",
+                          boxShadow:
+                            pedidoActivo?.id === item.id
+                              ? "0 10px 25px rgba(15, 23, 42, 0.10)"
+                              : "0 4px 14px rgba(15, 23, 42, 0.04)",
+                          cursor: saving ? "not-allowed" : "pointer",
+                          opacity: saving ? 0.7 : 1,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "flex-start",
+                            gap: 12,
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontWeight: 800,
+                                fontSize: 16,
+                                color: "#0f172a",
+                                marginBottom: 6,
+                              }}
+                            >
+                              Pedido #{item.id}
+                            </div>
+
+                            <div className="muted" style={{ marginBottom: 3 }}>
+                              Cliente: {item.cliente_nombre || "—"}
+                            </div>
+                            <div className="muted" style={{ marginBottom: 3 }}>
+                              Vendedor: {item.vendedor_nombre || "—"}
+                            </div>
+                            <div className="muted">
+                              Rutero:{" "}
+                              {item.rutero?.nombre ||
+                                item.rutero_nombre ||
+                                "Sin asignar"}
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              textAlign: "right",
+                              display: "grid",
+                              gap: 8,
+                              justifyItems: "end",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <div style={badgeStyle(item.estado)}>
+                              {estadoLabel(item.estado)}
+                            </div>
+                            <div
+                              style={{
+                                fontWeight: 900,
+                                fontSize: 20,
+                                color: "#0f172a",
+                              }}
+                            >
+                              {money(item.total)}
+                            </div>
+                          </div>
                         </div>
                       </div>
-
-                      <div style={{ textAlign: "right" }}>
-                        <div style={badgeStyle(item.estado)}>{estadoLabel(item.estado)}</div>
-                        <div style={{ marginTop: 8, fontWeight: 800 }}>{money(item.total)}</div>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -659,7 +739,9 @@ export default function PedidosAdmin() {
                   </div>
                   <div>
                     <b>Rutero:</b>{" "}
-                    {pedidoActivo.rutero?.nombre || pedidoActivo.rutero_nombre || "Sin asignar"}
+                    {pedidoActivo.rutero?.nombre ||
+                      pedidoActivo.rutero_nombre ||
+                      "Sin asignar"}
                   </div>
                   <div>
                     <b>Estado:</b>{" "}
@@ -684,7 +766,14 @@ export default function PedidosAdmin() {
 
                 <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
                   {lineasEdit.map((l) => (
-                    <div key={l.id} style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+                    <div
+                      key={l.id}
+                      style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 12,
+                        padding: 12,
+                      }}
+                    >
                       <div style={{ fontWeight: 700 }}>{l.producto_nombre}</div>
 
                       <div
@@ -696,12 +785,17 @@ export default function PedidosAdmin() {
                         }}
                       >
                         <div>
-                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          <label
+                            className="muted"
+                            style={{ display: "block", marginBottom: 6 }}
+                          >
                             Presentación
                           </label>
                           <select
                             value={l.presentacion}
-                            onChange={(e) => setLinea(l.id, { presentacion: e.target.value })}
+                            onChange={(e) =>
+                              setLinea(l.id, { presentacion: e.target.value })
+                            }
                             style={inputStyle}
                             disabled={saving}
                           >
@@ -714,7 +808,10 @@ export default function PedidosAdmin() {
                         </div>
 
                         <div>
-                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          <label
+                            className="muted"
+                            style={{ display: "block", marginBottom: 6 }}
+                          >
                             Cantidad
                           </label>
                           <input
@@ -722,14 +819,21 @@ export default function PedidosAdmin() {
                             min="0"
                             step="1"
                             value={l.cantidad_base}
-                            onChange={(e) => setLinea(l.id, { cantidad_base: num(e.target.value) })}
+                            onChange={(e) =>
+                              setLinea(l.id, {
+                                cantidad_base: num(e.target.value),
+                              })
+                            }
                             style={inputStyle}
                             disabled={saving}
                           />
                         </div>
 
                         <div>
-                          <label className="muted" style={{ display: "block", marginBottom: 6 }}>
+                          <label
+                            className="muted"
+                            style={{ display: "block", marginBottom: 6 }}
+                          >
                             Precio
                           </label>
                           <input
@@ -737,7 +841,11 @@ export default function PedidosAdmin() {
                             min="0"
                             step="0.01"
                             value={l.precio_unitario}
-                            onChange={(e) => setLinea(l.id, { precio_unitario: num(e.target.value) })}
+                            onChange={(e) =>
+                              setLinea(l.id, {
+                                precio_unitario: num(e.target.value),
+                              })
+                            }
                             style={inputStyle}
                             disabled={saving}
                           />
@@ -745,11 +853,21 @@ export default function PedidosAdmin() {
                       </div>
 
                       <div style={{ marginTop: 10 }}>
-                        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <label
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                          }}
+                        >
                           <input
                             type="checkbox"
                             checked={!!l.es_monto_variable}
-                            onChange={(e) => setLinea(l.id, { es_monto_variable: e.target.checked })}
+                            onChange={(e) =>
+                              setLinea(l.id, {
+                                es_monto_variable: e.target.checked,
+                              })
+                            }
                             disabled={saving}
                           />
                           <span>Habilitar monto variable</span>
@@ -766,7 +884,10 @@ export default function PedidosAdmin() {
                               key={p}
                               type="button"
                               onClick={() =>
-                                setLinea(l.id, { precio_unitario: p, es_monto_variable: true })
+                                setLinea(l.id, {
+                                  precio_unitario: p,
+                                  es_monto_variable: true,
+                                })
                               }
                               style={suggestBtn}
                               disabled={saving}
@@ -784,15 +905,34 @@ export default function PedidosAdmin() {
                   ))}
                 </div>
 
-                <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
+                <hr
+                  style={{
+                    margin: "14px 0",
+                    border: 0,
+                    borderTop: "1px solid #eee",
+                  }}
+                />
 
-                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontSize: 18 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontWeight: 800,
+                    fontSize: 18,
+                  }}
+                >
                   <span>Total</span>
                   <span>{money(total)}</span>
                 </div>
 
                 <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-                  <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+                  <div
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 12,
+                      padding: 12,
+                    }}
+                  >
                     <label className="muted" style={{ display: "block", marginBottom: 6 }}>
                       Asignar rutero
                     </label>
@@ -801,18 +941,18 @@ export default function PedidosAdmin() {
                       <ModalLoader text="Cargando ruteros..." />
                     ) : (
                       <>
-                      <select
-                        value={ruteroId}
-                        onChange={(e) => setRuteroId(Number(e.target.value))}
-                        style={inputStyle}
-                      >
-                        <option value="">Seleccionar rutero</option>
-                        {ruteros.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            {r.nombre || r.usuario || `Rutero #${r.id}`}
-                          </option>
-                        ))}
-                      </select>
+                        <select
+                          value={ruteroId}
+                          onChange={(e) => setRuteroId(Number(e.target.value))}
+                          style={inputStyle}
+                        >
+                          <option value="">Seleccionar rutero</option>
+                          {ruteros.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.nombre || r.usuario || `Rutero #${r.id}`}
+                            </option>
+                          ))}
+                        </select>
 
                         <button
                           type="button"
@@ -855,12 +995,64 @@ export default function PedidosAdmin() {
   );
 }
 
+const leftCardStyle = {
+  borderRadius: 20,
+  padding: 16,
+  background: "#ffffff",
+};
+
+const toolbarWrapStyle = {
+  paddingBottom: 14,
+  borderBottom: "1px solid #edf1f6",
+};
+
+const toolbarGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "1fr 220px 130px",
+  gap: 12,
+  alignItems: "center",
+};
+
+const listWrapStyle = {
+  display: "grid",
+  gap: 12,
+  maxHeight: "calc(100vh - 320px)",
+  minHeight: 220,
+  overflowY: "auto",
+  paddingRight: 4,
+};
+
+const pedidoItemStyle = {
+  borderRadius: 16,
+  padding: 16,
+  background:
+    "linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(248,250,252,1) 100%)",
+  transition: "all .18s ease",
+};
+
+const emptyStateStyle = {
+  minHeight: 220,
+  borderRadius: 16,
+  border: "1px dashed #d4dae3",
+  background:
+    "linear-gradient(180deg, rgba(248,250,252,0.85) 0%, rgba(255,255,255,1) 100%)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexDirection: "column",
+  gap: 8,
+  color: "#64748b",
+  textAlign: "center",
+  padding: 24,
+};
+
 const inputStyle = {
   width: "100%",
   border: "1px solid #d1d5db",
   borderRadius: 10,
   padding: "10px 12px",
   outline: "none",
+  background: "#fff",
 };
 
 const primaryBtn = {
