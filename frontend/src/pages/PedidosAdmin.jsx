@@ -85,6 +85,25 @@ function formatDate(value) {
   return d.toLocaleString();
 }
 
+function mapDetalleToLinea(d) {
+  const cantidadReal = num(d.cantidad);
+  const cantidadBase = num(d.cantidad_base);
+  const precio = num(d.precio_unitario);
+
+  return {
+    id: d.id,
+    producto_id: d.producto_id,
+    producto_nombre: d.producto_nombre,
+    presentacion: d.presentacion || "unidad",
+    cantidad: cantidadReal > 0 ? cantidadReal : cantidadBase,
+    cantidad_base: cantidadBase > 0 ? cantidadBase : (cantidadReal > 0 ? cantidadReal : 0),
+    precio_unitario: precio,
+    subtotal: num(d.subtotal) || (cantidadReal > 0 ? cantidadReal : cantidadBase) * precio,
+    es_monto_variable: !!d.es_monto_variable,
+    sugeridos: [precio, precio + 2, precio + 5],
+  };
+}
+
 export default function PedidosAdmin() {
   const [q, setQ] = useState("");
   const [estado, setEstado] = useState("pendiente_revision");
@@ -113,29 +132,15 @@ export default function PedidosAdmin() {
       setItems(nuevosItems);
 
       const idBuscado = selectedId ?? pedidoActivo?.id ?? null;
+
       if (idBuscado) {
         const actualizado = nuevosItems.find((p) => p.id === idBuscado);
+
         if (actualizado) {
           setPedidoActivo(actualizado);
           setObservaciones(actualizado?.observaciones || "");
           setRuteroId(actualizado?.rutero_id || "");
-          setLineasEdit(
-            (actualizado?.detalles || []).map((d) => ({
-              id: d.id,
-              producto_id: d.producto_id,
-              producto_nombre: d.producto_nombre,
-              presentacion: d.presentacion || "unidad",
-              cantidad_base: num(d.cantidad_base),
-              precio_unitario: num(d.precio_unitario),
-              subtotal: num(d.subtotal),
-              es_monto_variable: !!d.es_monto_variable,
-              sugeridos: [
-                num(d.precio_unitario),
-                num(d.precio_unitario) + 2,
-                num(d.precio_unitario) + 5,
-              ],
-            }))
-          );
+          setLineasEdit((actualizado?.detalles || []).map(mapDetalleToLinea));
         } else if (nuevosItems.length > 0) {
           seleccionarPedido(nuevosItems[0]);
         } else {
@@ -183,31 +188,21 @@ export default function PedidosAdmin() {
     setPedidoActivo(item);
     setObservaciones(item?.observaciones || "");
     setRuteroId(item?.rutero_id || "");
-    setLineasEdit(
-      (item?.detalles || []).map((d) => ({
-        id: d.id,
-        producto_id: d.producto_id,
-        producto_nombre: d.producto_nombre,
-        presentacion: d.presentacion || "unidad",
-        cantidad_base: num(d.cantidad_base),
-        precio_unitario: num(d.precio_unitario),
-        subtotal: num(d.subtotal),
-        es_monto_variable: !!d.es_monto_variable,
-        sugeridos: [
-          num(d.precio_unitario),
-          num(d.precio_unitario) + 2,
-          num(d.precio_unitario) + 5,
-        ],
-      }))
-    );
+    setLineasEdit((item?.detalles || []).map(mapDetalleToLinea));
   }
 
   function setLinea(id, changes) {
     setLineasEdit((prev) =>
       prev.map((l) => {
         if (l.id !== id) return l;
+
         const next = { ...l, ...changes };
-        next.subtotal = num(next.cantidad_base) * num(next.precio_unitario);
+
+        next.cantidad = Math.max(0, num(next.cantidad));
+        next.cantidad_base = Math.max(0, num(next.cantidad_base));
+        next.precio_unitario = Math.max(0, num(next.precio_unitario));
+        next.subtotal = num(next.cantidad) * num(next.precio_unitario);
+
         return next;
       })
     );
@@ -217,6 +212,18 @@ export default function PedidosAdmin() {
     return lineasEdit.reduce((acc, item) => acc + num(item.subtotal), 0);
   }, [lineasEdit]);
 
+  function buildDetallesPayload() {
+    return lineasEdit.map((l) => ({
+      id: l.id,
+      presentacion: l.presentacion,
+      cantidad: Number(l.cantidad),
+      cantidad_base: Number(l.cantidad_base || l.cantidad),
+      precio_unitario: Number(l.precio_unitario),
+      subtotal: Number(l.subtotal),
+      es_monto_variable: l.es_monto_variable ? 1 : 0,
+    }));
+  }
+
   async function guardarCambios() {
     if (!pedidoActivo) return;
 
@@ -225,14 +232,7 @@ export default function PedidosAdmin() {
 
       await pedidosAdminApi.actualizar(pedidoActivo.id, {
         observaciones,
-        detalles: lineasEdit.map((l) => ({
-          id: l.id,
-          presentacion: l.presentacion,
-          cantidad_base: l.cantidad_base,
-          precio_unitario: l.precio_unitario,
-          subtotal: l.subtotal,
-          es_monto_variable: l.es_monto_variable ? 1 : 0,
-        })),
+        detalles: buildDetallesPayload(),
       });
 
       await loadPedidos(pedidoActivo.id);
@@ -253,17 +253,14 @@ export default function PedidosAdmin() {
 
       await pedidosAdminApi.actualizar(pedidoActivo.id, {
         observaciones,
-        detalles: lineasEdit.map((l) => ({
-          id: l.id,
-          presentacion: l.presentacion,
-          cantidad_base: l.cantidad_base,
-          precio_unitario: l.precio_unitario,
-          subtotal: l.subtotal,
-          es_monto_variable: l.es_monto_variable ? 1 : 0,
-        })),
+        detalles: buildDetallesPayload(),
       });
 
-      await pedidosAdminApi.aprobar(pedidoActivo.id);
+      await pedidosAdminApi.aprobar(pedidoActivo.id, {
+        observaciones,
+        detalles: buildDetallesPayload(),
+      });
+
       notify.success("Pedido aprobado correctamente.");
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
@@ -276,6 +273,7 @@ export default function PedidosAdmin() {
 
   async function prepararPedido() {
     if (!pedidoActivo) return;
+
     try {
       setSaving(true);
       await pedidosAdminApi.preparar(pedidoActivo.id);
@@ -320,23 +318,7 @@ export default function PedidosAdmin() {
         );
 
         setObservaciones(pedidoActualizado?.observaciones || "");
-        setLineasEdit(
-          (pedidoActualizado?.detalles || []).map((d) => ({
-            id: d.id,
-            producto_id: d.producto_id,
-            producto_nombre: d.producto_nombre,
-            presentacion: d.presentacion || "unidad",
-            cantidad_base: num(d.cantidad_base),
-            precio_unitario: num(d.precio_unitario),
-            subtotal: num(d.subtotal),
-            es_monto_variable: !!d.es_monto_variable,
-            sugeridos: [
-              num(d.precio_unitario),
-              num(d.precio_unitario) + 2,
-              num(d.precio_unitario) + 5,
-            ],
-          }))
-        );
+        setLineasEdit((pedidoActualizado?.detalles || []).map(mapDetalleToLinea));
       }
 
       notify.success(res?.message || "Rutero asignado correctamente.");
@@ -351,6 +333,7 @@ export default function PedidosAdmin() {
 
   async function entregarPedido() {
     if (!pedidoActivo) return;
+
     try {
       setSaving(true);
       await pedidosAdminApi.entregar(pedidoActivo.id);
@@ -370,15 +353,11 @@ export default function PedidosAdmin() {
       return;
     }
 
-    const detalles =
-      lineasEdit.length > 0 ? lineasEdit : pedidoActivo?.detalles || [];
+    const detalles = lineasEdit.length > 0 ? lineasEdit : pedidoActivo?.detalles || [];
     const totalTicket =
       lineasEdit.length > 0
         ? total
-        : (pedidoActivo?.detalles || []).reduce(
-            (acc, d) => acc + num(d.subtotal),
-            0
-          );
+        : (pedidoActivo?.detalles || []).reduce((acc, d) => acc + num(d.subtotal), 0);
 
     const html = `
       <!doctype html>
@@ -485,7 +464,7 @@ export default function PedidosAdmin() {
               <div class="line-item">
                 <div class="prod">${d.producto_nombre || `Producto #${d.producto_id}`}</div>
                 <div class="row">
-                  <span class="muted">${d.cantidad_base} x ${d.presentacion || "unidad"}</span>
+                  <span class="muted">${num(d.cantidad)} x ${d.presentacion || "unidad"}</span>
                   <strong>${money(d.precio_unitario)}</strong>
                 </div>
                 <div class="row">
@@ -818,10 +797,10 @@ export default function PedidosAdmin() {
                             type="number"
                             min="0"
                             step="1"
-                            value={l.cantidad_base}
+                            value={l.cantidad}
                             onChange={(e) =>
                               setLinea(l.id, {
-                                cantidad_base: num(e.target.value),
+                                cantidad: num(e.target.value),
                               })
                             }
                             style={inputStyle}
