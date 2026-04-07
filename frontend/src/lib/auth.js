@@ -30,7 +30,10 @@ export function getUser() {
 
 export function getUserRole() {
   const user = getUser();
-  return String(user?.role || user?.rol || "").toLowerCase();
+  return String(user?.role || user?.rol || "")
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
 }
 
 export function getUserUbicacionId() {
@@ -47,5 +50,5 @@ export function isLoggedIn() {
 }
 
 export function isSuperAdmin() {
-  return getUserRole() === "superadmin";
+  return getUserRole() === "super_admin";
 }

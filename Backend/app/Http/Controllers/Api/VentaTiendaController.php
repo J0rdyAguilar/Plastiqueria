@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
-class PedidoController extends Controller
+class VentaTiendaController extends Controller
 {
     public function __construct(private StockService $stockService) {}
 

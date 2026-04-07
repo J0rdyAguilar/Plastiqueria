@@ -17,6 +17,7 @@ import PedidosAdmin from "./pages/PedidosAdmin";
 import VentaTienda from "./pages/VentaTienda";
 import RegistroVentasTienda from "./pages/RegistroVentasTienda";
 import PerfilUsuario from "./pages/PerfilUsuario";
+import Rutero from "./pages/Rutero";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 import { getSession, getToken } from "./lib/auth";
@@ -50,6 +51,7 @@ function roleHome() {
   if (rol === "caja") return "/caja";
   if (rol === "vendedor") return "/pedidos";
   if (rol === "vendedor_tienda") return "/ventas-tienda";
+  if (rol === "rutero") return "/rutero";
 
   return "/login";
 }
@@ -188,6 +190,15 @@ export const router = createBrowserRouter([
   },
 
   {
+    path: "/rutero",
+    element: (
+      <Wrap roles={["rutero", "super_admin"]}>
+        <Rutero />
+      </Wrap>
+    ),
+  },
+
+  {
     path: "/ventas-tienda",
     element: (
       <WrapWithLayout roles={["vendedor_tienda", "admin", "super_admin"]}>
@@ -217,7 +228,7 @@ export const router = createBrowserRouter([
   {
     path: "/perfil",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin", "caja", "vendedor", "vendedor_tienda"]}>
+      <WrapWithLayout roles={["admin", "super_admin", "caja", "vendedor", "vendedor_tienda", "rutero"]}>
         <PerfilUsuario />
       </WrapWithLayout>
     ),

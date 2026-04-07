@@ -19,6 +19,7 @@ class Pedido extends Model
         'ubicacion_id',
         'cliente_id',
         'vendedor_id',
+        'rutero_id',
         'ruta_id',
         'zona_id',
         'estado',
@@ -34,6 +35,7 @@ class Pedido extends Model
         'ubicacion_id'   => 'int',
         'cliente_id'     => 'int',
         'vendedor_id'    => 'int',
+        'rutero_id'      => 'int',
         'ruta_id'        => 'int',
         'zona_id'        => 'int',
         'total'          => 'decimal:2',
@@ -75,7 +77,7 @@ class Pedido extends Model
     }
 
     public function rutero()
-{
-    return $this->belongsTo(Usuario::class, 'rutero_id');
-}
+    {
+        return $this->belongsTo(Usuario::class, 'rutero_id');
+    }
 }

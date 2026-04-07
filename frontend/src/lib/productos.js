@@ -1,14 +1,14 @@
-import { http } from "../lib/http";
+import { httpV1 } from "./httpV1";
 
 export const productosApi = {
-  list: (params = {}) => http.get("/productos", { params }).then(r => r.data),
-  create: (payload) => http.post("/productos", payload).then(r => r.data),
-  update: (id, payload) => http.put(`/productos/${id}`, payload).then(r => r.data),
-  remove: (id) => http.delete(`/productos/${id}`).then(r => r.data),
-  show: (id) => http.get(`/productos/${id}`).then(r => r.data),
+  list: (params = {}) => httpV1.get("/productos", { params }).then(r => r.data),
+  create: (payload) => httpV1.post("/productos", payload).then(r => r.data),
+  update: (id, payload) => httpV1.put(`/productos/${id}`, payload).then(r => r.data),
+  remove: (id) => httpV1.delete(`/productos/${id}`).then(r => r.data),
+  show: (id) => httpV1.get(`/productos/${id}`).then(r => r.data),
 
   search: (q, params = {}) =>
-    http.get("/productos", {
+    httpV1.get("/productos", {
       params: {
         q,
         per_page: 20,
@@ -23,7 +23,7 @@ export const productosApi = {
     fd.append("es_principal", es_principal ? "1" : "0");
     fd.append("orden", String(orden));
 
-    return http.post("/producto-imagenes", fd, {
+    return httpV1.post("/producto-imagenes", fd, {
       headers: { "Content-Type": "multipart/form-data" },
     }).then(r => r.data);
   },

@@ -44,6 +44,7 @@ function roleHomeFromPayload(payload) {
   if (rol === "caja") return "/caja";
   if (rol === "vendedor") return "/pedidos";
   if (rol === "vendedor_tienda") return "/ventas-tienda";
+  if (rol === "rutero") return "/rutero";
 
   return "/login";
 }
