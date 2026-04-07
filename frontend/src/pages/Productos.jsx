@@ -1,6 +1,6 @@
 // src/pages/Productos.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { productosApi } from "../api/productos";
+import { productosApi } from "../lib/productos";
 
 function fullImg(url) {
   if (!url) return "";

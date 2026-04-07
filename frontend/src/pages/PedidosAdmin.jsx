@@ -224,25 +224,8 @@ export default function PedidosAdmin() {
     }));
   }
 
-  async function guardarCambios() {
-    if (!pedidoActivo) return;
-
-    try {
-      setSaving(true);
-
-      await pedidosAdminApi.actualizar(pedidoActivo.id, {
-        observaciones,
-        detalles: buildDetallesPayload(),
-      });
-
-      await loadPedidos(pedidoActivo.id);
-      notify.success("Pedido actualizado correctamente.");
-    } catch (err) {
-      console.error(err);
-      notify.error(err, "No se pudo actualizar el pedido.");
-    } finally {
-      setSaving(false);
-    }
+  function guardarCambios() {
+    notify.error("Editar pedido aún no está implementado.");
   }
 
   async function aprobarPedido() {
@@ -251,15 +234,7 @@ export default function PedidosAdmin() {
     try {
       setSaving(true);
 
-      await pedidosAdminApi.actualizar(pedidoActivo.id, {
-        observaciones,
-        detalles: buildDetallesPayload(),
-      });
-
-      await pedidosAdminApi.aprobar(pedidoActivo.id, {
-        observaciones,
-        detalles: buildDetallesPayload(),
-      });
+      await pedidosAdminApi.aprobar(pedidoActivo.id);
 
       notify.success("Pedido aprobado correctamente.");
       await loadPedidos(pedidoActivo.id);

@@ -1,4 +1,4 @@
-import { http } from "./http";
+import { httpV1 } from "./httpV1";
 
 export const pedidosAdminApi = {
   list: async ({ q = "", estado = "", page = 1, per_page = 20 } = {}) => {
@@ -8,32 +8,27 @@ export const pedidosAdminApi = {
     params.set("page", String(page));
     params.set("per_page", String(per_page));
 
-    const { data } = await http.get(`/ventas/pedidos-admin?${params.toString()}`);
+    const { data } = await httpV1.get(`/pedidos?${params.toString()}`);
     return data;
   },
 
-  actualizar: async (id, payload) => {
-    const { data } = await http.put(`/ventas/${id}/actualizar-admin`, payload);
-    return data;
-  },
-
-  aprobar: async (id) => {
-    const { data } = await http.post(`/ventas/${id}/aprobar`);
+  aprobar: async (id, payload = {}) => {
+    const { data } = await httpV1.post(`/pedidos/${id}/aprobar`, payload);
     return data;
   },
 
   preparar: async (id) => {
-    const { data } = await http.post(`/ventas/${id}/preparar`);
+    const { data } = await httpV1.post(`/pedidos/${id}/preparar`);
     return data;
   },
 
   entregar: async (id) => {
-    const { data } = await http.post(`/ventas/${id}/entregar`);
+    const { data } = await httpV1.post(`/pedidos/${id}/entregar`);
     return data;
   },
 
   asignarRutero: async (id, payload) => {
-    const { data } = await http.post(`/ventas/${id}/asignar-rutero`, payload);
+    const { data } = await httpV1.post(`/pedidos/${id}/asignar-rutero`, payload);
     return data;
   },
 };

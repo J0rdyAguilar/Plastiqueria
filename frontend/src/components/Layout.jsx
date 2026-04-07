@@ -370,7 +370,7 @@ export default function Layout({ children }) {
             <LayoutDashboard size={16} />
             <span>© {new Date().getFullYear()} Plastiquería</span>
           </div>
-          <span>Grupo Cresth by Joserweb</span>
+          <span>Ing. Jordy by Joserweb</span>
         </div>
       </footer>
     </div>

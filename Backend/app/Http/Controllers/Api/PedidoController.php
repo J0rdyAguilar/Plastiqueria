@@ -733,48 +733,39 @@ class PedidoController extends Controller
     {
         $user = $request->user();
         $userUbicacionId = $this->userUbicacionId($user);
-
         $soloActivos = $request->boolean('solo_activos', true);
 
         $query = Pedido::query()
-            ->with([
-                'cliente:id,nombre,ruta_id,zona_id',
-                'vendedor:id,codigo,usuario_id',
-                'vendedor.usuario:id,usuario,nombre',
-                'rutero:id,usuario,nombre,rol',
-                'ruta:id,nombre',
-                'zona:id,nombre',
-                'ubicacion:id,nombre,tipo',
-                'detalles.producto:id,nombre,sku',
-            ])
-            ->where('rutero_id', (int) $user->id)
-            ->orderByRaw("
-                CASE
-                    WHEN estado = 'en_ruta' THEN 1
-                    WHEN estado = 'preparando' THEN 2
-                    WHEN estado = 'aprobado' THEN 3
-                    WHEN estado = 'entregado' THEN 4
-                    ELSE 5
-                END
-            ")
-            ->orderByDesc('creado_en');
+            ->where('rutero_id', (int) $user->id);
 
-        // 🔒 filtro por sucursal (CLAVE)
-        if ($userUbicacionId) {
-            $query->where('ubicacion_id', $userUbicacionId);
-        }
+        // PRUEBA TEMPORAL:
+        // comentamos el filtro por sucursal para ver si eso está bloqueando el pedido
+        // if ($userUbicacionId) {
+        //     $query->where('ubicacion_id', $userUbicacionId);
+        // }
 
-        // 🔥 solo pedidos activos (los que debe entregar)
         if ($soloActivos) {
             $query->whereIn('estado', ['en_ruta', 'preparando', 'aprobado']);
         }
 
-        $pedidos = $query->get();
+        $pedidos = $query->orderByDesc('id')->get([
+            'id',
+            'codigo',
+            'estado',
+            'ubicacion_id',
+            'cliente_id',
+            'vendedor_id',
+            'rutero_id',
+            'ruta_id',
+            'zona_id',
+            'observaciones',
+            'total',
+            'creado_en',
+            'entregado_en',
+        ]);
 
         return response()->json([
-            'data' => collect($pedidos)
-                ->map(fn ($p) => $this->pedidoResponse($p))
-                ->values(),
+            'data' => $pedidos,
         ]);
     }
 }

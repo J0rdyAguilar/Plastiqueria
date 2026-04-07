@@ -642,7 +642,7 @@ export default function Pedidos() {
     try {
       setEnviando(true);
 
-      await pedidosApi.createPedidoVendedor(payload);
+      await pedidosApi.create(payload);
 
       notify.success("Pedido enviado al administrador");
 
