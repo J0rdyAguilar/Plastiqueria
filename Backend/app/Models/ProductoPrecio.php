@@ -4,6 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use App\Models\Ubicacion;
+use App\Models\Stock;
+use App\Models\Producto;
 
 class ProductoPrecio extends Model
 {
@@ -20,15 +23,18 @@ class ProductoPrecio extends Model
         'producto_id',
         'presentacion',
         'factor_base',
-        'precio',
+        'precio_costo',
+        'precio_venta',
         'activo',
         'creado_en',
         'actualizado_en',
     ];
 
     protected $casts = [
+        'producto_id'    => 'integer',
         'factor_base'    => 'float',
-        'precio'         => 'float',
+        'precio_costo'   => 'float',
+        'precio_venta'   => 'float',
         'activo'         => 'boolean',
         'creado_en'      => 'datetime',
         'actualizado_en' => 'datetime',

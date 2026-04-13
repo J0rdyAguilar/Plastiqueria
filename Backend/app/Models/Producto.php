@@ -13,7 +13,6 @@ class Producto extends Model
 
     protected $table = 'productos';
 
-    // Si usas timestamps personalizados
     const CREATED_AT = 'creado_en';
     const UPDATED_AT = 'actualizado_en';
 
@@ -21,56 +20,44 @@ class Producto extends Model
         'sku',
         'nombre',
         'descripcion',
+        'unidad_base',
+        'alerta_stock',
         'activo',
+        'creado_en',
+        'actualizado_en',
     ];
 
     protected $casts = [
-        'activo' => 'boolean',
+        'alerta_stock'   => 'integer',
+        'activo'         => 'boolean',
+        'creado_en'      => 'datetime',
+        'actualizado_en' => 'datetime',
     ];
 
-    /* =========================================================
-       RELACIONES
-    ========================================================= */
-
-    /**
-     * Precios por presentación (unidad, caja, etc)
-     * productos.id -> producto_precios.producto_id
-     */
     public function precios(): HasMany
     {
-        return $this->hasMany(ProductoPrecio::class, 'producto_id');
+        return $this->hasMany(ProductoPrecio::class, 'producto_id', 'id')
+            ->orderByDesc('activo')
+            ->orderBy('factor_base');
     }
 
-    /**
-     * Imagen principal del producto
-     */
     public function imagenPrincipal(): HasOne
     {
-        return $this->hasOne(ProductoImagen::class, 'producto_id')
+        return $this->hasOne(ProductoImagen::class, 'producto_id', 'id')
             ->where('es_principal', 1)
             ->orderBy('orden');
     }
 
-    /**
-     * Todas las imágenes
-     */
     public function imagenes(): HasMany
     {
-        return $this->hasMany(ProductoImagen::class, 'producto_id')
+        return $this->hasMany(ProductoImagen::class, 'producto_id', 'id')
             ->orderBy('orden');
     }
 
-    /**
-     * Stock en diferentes ubicaciones
-     */
     public function stocks(): HasMany
     {
-        return $this->hasMany(Stock::class, 'producto_id');
+        return $this->hasMany(Stock::class, 'producto_id', 'id');
     }
-
-    /* =========================================================
-       SCOPES
-    ========================================================= */
 
     public function scopeActivos($query)
     {

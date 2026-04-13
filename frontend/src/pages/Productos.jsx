@@ -33,7 +33,8 @@ function makePrecioRow() {
     id: null,
     presentacion: "unidad",
     factor_base: 1,
-    precio: "",
+    precio_costo: "",
+    precio_venta: "",
     activo: true,
   };
 }
@@ -135,7 +136,22 @@ export default function Productos() {
               <strong>{presentacionLabel(p.presentacion)}</strong>
               <span className="price-factor">x{Number(p.factor_base || 0)}</span>
             </div>
-            <span className="price-chip-value">{money(p.precio)}</span>
+
+            <div className="price-dual">
+              <div className="price-line">
+                <span className="price-label">Costo</span>
+                <span className="price-value-secondary">
+                  {money(p.precio_costo ?? 0)}
+                </span>
+              </div>
+
+              <div className="price-line">
+                <span className="price-label">Venta</span>
+                <span className="price-chip-value">
+                  {money(p.precio_venta ?? p.precio ?? 0)}
+                </span>
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -257,7 +273,7 @@ export default function Productos() {
                 <th style={{ width: 90 }}>Imagen</th>
                 <th style={{ width: 150 }}>SKU</th>
                 <th>Producto</th>
-                <th style={{ minWidth: 360 }}>Precios</th>
+                <th style={{ minWidth: 420 }}>Precios</th>
                 <th style={{ width: 120 }}>Estado</th>
                 <th style={{ width: 210 }}>Acciones</th>
               </tr>
@@ -292,9 +308,6 @@ export default function Productos() {
                     <td>
                       <div className="product-name">{row.nombre}</div>
                       <div className="product-desc">{row.descripcion || "Sin descripción"}</div>
-                      <div className="product-meta">
-                        Unidad base: <strong>{presentacionLabel(row.unidad_base)}</strong>
-                      </div>
                     </td>
 
                     <td>{renderPrecios(row)}</td>
@@ -379,7 +392,6 @@ function ProductoModal({ initial, onClose, onSaved }) {
   const [sku, setSku] = useState(initial?.sku || "");
   const [nombre, setNombre] = useState(initial?.nombre || "");
   const [descripcion, setDescripcion] = useState(initial?.descripcion || "");
-  const [unidadBase, setUnidadBase] = useState(initial?.unidad_base || "unidad");
   const [alertaStock, setAlertaStock] = useState(initial?.alerta_stock ?? 0);
   const [activo, setActivo] = useState(initial?.activo ?? true);
 
@@ -393,7 +405,8 @@ function ProductoModal({ initial, onClose, onSaved }) {
         id: p.id ?? null,
         presentacion: p.presentacion || "unidad",
         factor_base: p.factor_base ?? 1,
-        precio: p.precio ?? "",
+        precio_costo: p.precio_costo ?? "",
+        precio_venta: p.precio_venta ?? p.precio ?? "",
         activo: p.activo ?? true,
       }));
     }
@@ -431,7 +444,8 @@ function ProductoModal({ initial, onClose, onSaved }) {
         id: p.id || undefined,
         presentacion: p.presentacion,
         factor_base: Number(p.factor_base || 0),
-        precio: Number(p.precio || 0),
+        precio_costo: Number(p.precio_costo || 0),
+        precio_venta: Number(p.precio_venta || 0),
         activo: !!p.activo,
       }))
       .filter((p) => p.presentacion && p.factor_base > 0);
@@ -442,7 +456,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
     }
 
     if (!preciosLimpios.length) {
-      setErr("Debes agregar al menos un precio por presentación.");
+      setErr("Debes agregar al menos una presentación.");
       return;
     }
 
@@ -455,14 +469,28 @@ function ProductoModal({ initial, onClose, onSaved }) {
       return;
     }
 
+    const sinVenta = preciosLimpios.some((p) => p.precio_venta <= 0);
+    if (sinVenta) {
+      setErr("Cada presentación debe tener precio de venta mayor a 0.");
+      return;
+    }
+
+    const sinCosto = preciosLimpios.some((p) => p.precio_costo < 0);
+    if (sinCosto) {
+      setErr("El precio costo no puede ser negativo.");
+      return;
+    }
+
     setSaving(true);
 
     try {
+      const unidadBaseAuto = preciosLimpios[0]?.presentacion || "unidad";
+
       const payload = {
         sku: sku || null,
         nombre: nombre.trim(),
         descripcion: descripcion || null,
-        unidad_base: unidadBase,
+        unidad_base: unidadBaseAuto,
         alerta_stock: Number(alertaStock || 0),
         activo: !!activo,
         precios: preciosLimpios,
@@ -501,7 +529,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
           <div>
             <h2 className="modal-title">{isEdit ? "Editar producto" : "Nuevo producto"}</h2>
             <p className="muted small">
-              Llena los datos básicos, agrega precios por presentación y sube una imagen si lo deseas.
+              Llena los datos básicos, agrega presentaciones con precio costo y precio venta, y sube una imagen si lo deseas.
             </p>
           </div>
           <button className="iconbtn" onClick={onClose} aria-label="Cerrar">
@@ -538,21 +566,6 @@ function ProductoModal({ initial, onClose, onSaved }) {
             </div>
 
             <div>
-              <label className="label">Unidad base</label>
-              <select
-                className="input"
-                value={unidadBase}
-                onChange={(e) => setUnidadBase(e.target.value)}
-              >
-                {PRESENTACION_OPTIONS.map((op) => (
-                  <option key={op.value} value={op.value}>
-                    {op.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
               <label className="label">Alerta stock</label>
               <input
                 type="number"
@@ -563,7 +576,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
               />
             </div>
 
-            <div className="col-2">
+            <div>
               <label className="label">Imagen principal (opcional)</label>
               <input
                 type="file"
@@ -588,9 +601,9 @@ function ProductoModal({ initial, onClose, onSaved }) {
               <div className="price-box">
                 <div className="price-box-head">
                   <div>
-                    <h3 className="subttl">Precios por presentación</h3>
+                    <h3 className="subttl">Presentaciones y precios</h3>
                     <p className="muted tiny">
-                      Configura cada presentación sin que se repita y define su factor base.
+                      Aquí defines unidad, docena, paquete, etc. con su factor base, precio costo y precio venta.
                     </p>
                   </div>
 
@@ -600,7 +613,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
                     onClick={addPrecioRow}
                     disabled={saving}
                   >
-                    + Agregar precio
+                    + Agregar presentación
                   </button>
                 </div>
 
@@ -610,7 +623,8 @@ function ProductoModal({ initial, onClose, onSaved }) {
                       <tr>
                         <th>Presentación</th>
                         <th>Factor base</th>
-                        <th>Precio</th>
+                        <th>Precio costo</th>
+                        <th>Precio venta</th>
                         <th>Activo</th>
                         <th></th>
                       </tr>
@@ -657,8 +671,23 @@ function ProductoModal({ initial, onClose, onSaved }) {
                               step="0.01"
                               min="0"
                               className="input"
-                              value={row.precio}
-                              onChange={(e) => updatePrecioRow(index, "precio", e.target.value)}
+                              value={row.precio_costo}
+                              onChange={(e) =>
+                                updatePrecioRow(index, "precio_costo", e.target.value)
+                              }
+                            />
+                          </td>
+
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="input"
+                              value={row.precio_venta}
+                              onChange={(e) =>
+                                updatePrecioRow(index, "precio_venta", e.target.value)
+                              }
                             />
                           </td>
 
@@ -1157,16 +1186,6 @@ const styles = `
   color:#64748b;
 }
 
-.product-meta{
-  margin-top:8px;
-  font-size:12px;
-  color:#64748b;
-}
-
-.product-meta strong{
-  color:#334155;
-}
-
 .price-list{
   display:flex;
   flex-wrap:wrap;
@@ -1174,7 +1193,7 @@ const styles = `
 }
 
 .price-chip{
-  min-width:120px;
+  min-width:160px;
   padding:10px 11px;
   border-radius:16px;
   border:1px solid #e8edf5;
@@ -1203,9 +1222,35 @@ const styles = `
   font-weight:800;
 }
 
+.price-dual{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  margin-top:8px;
+}
+
+.price-line{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+}
+
+.price-label{
+  font-size:11px;
+  font-weight:800;
+  color:#64748b;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+
+.price-value-secondary{
+  font-size:13px;
+  font-weight:800;
+  color:#334155;
+}
+
 .price-chip-value{
-  display:block;
-  margin-top:7px;
   font-size:15px;
   font-weight:900;
   color:#0f172a;
@@ -1345,7 +1390,7 @@ const styles = `
 }
 
 .modal-lg{
-  width:min(1120px, 100%);
+  width:min(1180px, 100%);
 }
 
 .modal-header{
@@ -1472,7 +1517,7 @@ const styles = `
   width:100%;
   border-collapse:separate;
   border-spacing:0;
-  min-width:760px;
+  min-width:980px;
 }
 
 .price-editor th,

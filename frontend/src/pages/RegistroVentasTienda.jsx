@@ -38,12 +38,14 @@ export default function RegistroVentasTienda() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
+  const [sucursales, setSucursales] = useState([]);
 
   const [filters, setFilters] = useState({
     fecha_desde: hoy,
     fecha_hasta: hoy,
     metodo_pago: "",
-    solo_mias: 1,
+    ubicacion_id: "",
+    solo_mias: 0,
     page: 1,
     per_page: 30,
   });
@@ -52,7 +54,12 @@ export default function RegistroVentasTienda() {
     try {
       setLoading(true);
       const resp = await ventasTienda.list(filters);
+
       setRows(Array.isArray(resp?.data) ? resp.data : []);
+
+      if (Array.isArray(resp?.sucursales)) {
+        setSucursales(resp.sucursales);
+      }
     } catch (error) {
       console.error("ERROR CARGANDO REGISTRO:", error);
       alert(
@@ -98,7 +105,8 @@ export default function RegistroVentasTienda() {
       fecha_desde: hoy,
       fecha_hasta: hoy,
       metodo_pago: "",
-      solo_mias: 1,
+      ubicacion_id: "",
+      solo_mias: 0,
       page: 1,
     }));
   }
@@ -148,7 +156,7 @@ export default function RegistroVentasTienda() {
                 }}
               >
                 <ReceiptText size={16} />
-                Mi registro de ventas
+                Registro de ventas
               </div>
 
               <h1
@@ -172,7 +180,7 @@ export default function RegistroVentasTienda() {
                   lineHeight: 1.6,
                 }}
               >
-                Aquí puedes ver lo que vendiste hoy, separado por efectivo y tarjeta.
+                Aquí puedes ver las ventas del período, separadas por efectivo y tarjeta.
               </p>
             </div>
 
@@ -211,7 +219,7 @@ export default function RegistroVentasTienda() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr auto",
+              gridTemplateColumns: "1fr 1fr 1fr 1fr auto",
               gap: 14,
               alignItems: "end",
             }}
@@ -225,6 +233,7 @@ export default function RegistroVentasTienda() {
                   setFilters((prev) => ({
                     ...prev,
                     fecha_desde: e.target.value,
+                    page: 1,
                   }))
                 }
                 style={inputStyle}
@@ -240,6 +249,7 @@ export default function RegistroVentasTienda() {
                   setFilters((prev) => ({
                     ...prev,
                     fecha_hasta: e.target.value,
+                    page: 1,
                   }))
                 }
                 style={inputStyle}
@@ -254,6 +264,7 @@ export default function RegistroVentasTienda() {
                   setFilters((prev) => ({
                     ...prev,
                     metodo_pago: e.target.value,
+                    page: 1,
                   }))
                 }
                 style={inputStyle}
@@ -261,6 +272,28 @@ export default function RegistroVentasTienda() {
                 <option value="">Todos</option>
                 <option value="efectivo">Efectivo</option>
                 <option value="tarjeta">Tarjeta</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={labelStyle}>Sucursal</label>
+              <select
+                value={filters.ubicacion_id}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    ubicacion_id: e.target.value,
+                    page: 1,
+                  }))
+                }
+                style={inputStyle}
+              >
+                <option value="">Todas</option>
+                {sucursales.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.nombre}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -420,17 +453,17 @@ export default function RegistroVentasTienda() {
                         <InfoCard
                           icon={<User size={16} />}
                           title="Vendedor"
-                          value={venta.usuario?.nombre || venta.usuario?.usuario || "—"}
+                          value={venta.usuario_nombre || venta.usuario?.nombre || venta.usuario?.usuario || "—"}
                         />
                         <InfoCard
                           icon={<Store size={16} />}
                           title="Sucursal"
-                          value={venta.ubicacion?.nombre || "—"}
+                          value={venta.ubicacion_nombre || venta.ubicacion?.nombre || "—"}
                         />
                         <InfoCard
                           icon={<CreditCard size={16} />}
                           title="Cliente"
-                          value={venta.cliente?.nombre || "Consumidor final"}
+                          value={venta.nombre_comprador || venta.cliente?.nombre || "Consumidor final"}
                         />
                       </div>
                     </div>
@@ -494,7 +527,7 @@ export default function RegistroVentasTienda() {
                                     style={{ borderTop: "1px solid #eef2f7" }}
                                   >
                                     <td style={tdStyle}>
-                                      {d.producto?.nombre || "Producto"}
+                                      {d.producto_nombre || d.producto?.nombre || "Producto"}
                                     </td>
                                     <td style={tdStyle}>{d.producto_id}</td>
                                     <td style={tdStyle}>{d.cantidad}</td>
@@ -541,7 +574,7 @@ export default function RegistroVentasTienda() {
               grid-template-columns: 1fr !important;
             }
 
-            div[style*="grid-template-columns: 1fr 1fr 1fr auto"] {
+            div[style*="grid-template-columns: 1fr 1fr 1fr 1fr auto"] {
               grid-template-columns: 1fr !important;
             }
           }

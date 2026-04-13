@@ -16,6 +16,7 @@ import {
   CreditCard,
   Banknote,
   ReceiptText,
+  UserRound,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ventasTienda } from "../api/ventasTienda";
@@ -92,6 +93,182 @@ function highlightText(text, query) {
   );
 }
 
+function formatDate(value) {
+  if (!value) return new Date().toLocaleString();
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
+function safeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function imprimirTicketVenta({
+  venta = null,
+  items = [],
+  total = 0,
+  metodoPago = "",
+  nombreComprador = "",
+}) {
+  const fecha =
+    venta?.creado_en ||
+    venta?.fecha ||
+    venta?.created_at ||
+    new Date().toISOString();
+
+  const codigo =
+    venta?.codigo ||
+    venta?.id ||
+    `VT-${new Date().getTime()}`;
+
+  const html = `
+    <!doctype html>
+    <html lang="es">
+    <head>
+      <meta charset="utf-8" />
+      <title>Ticket venta #${safeHtml(codigo)}</title>
+      <style>
+        * { box-sizing: border-box; }
+        html, body {
+          margin: 0;
+          padding: 0;
+          background: #ffffff;
+          color: #111827;
+          font-family: Arial, Helvetica, sans-serif;
+        }
+        body { padding: 12px; }
+        .ticket { width: 80mm; margin: 0 auto; }
+        .center { text-align: center; }
+        .title { font-size: 20px; font-weight: 800; margin-bottom: 2px; }
+        .subtitle { font-size: 12px; color: #4b5563; margin-bottom: 10px; }
+        .box {
+          border-top: 1px dashed #9ca3af;
+          border-bottom: 1px dashed #9ca3af;
+          padding: 8px 0;
+          margin: 8px 0;
+        }
+        .row {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          margin: 4px 0;
+          font-size: 12px;
+        }
+        .label { color: #4b5563; }
+        .line-item {
+          padding: 7px 0;
+          border-bottom: 1px dashed #d1d5db;
+        }
+        .prod {
+          font-size: 13px;
+          font-weight: 700;
+          margin-bottom: 4px;
+        }
+        .muted {
+          color: #6b7280;
+          font-size: 11px;
+        }
+        .totals {
+          margin-top: 10px;
+          border-top: 2px solid #111827;
+          padding-top: 8px;
+        }
+        .total-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 18px;
+          font-weight: 800;
+        }
+        .footer {
+          margin-top: 14px;
+          text-align: center;
+          font-size: 11px;
+          color: #6b7280;
+        }
+        @media print {
+          body { padding: 0; }
+          .ticket { width: 80mm; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="ticket">
+        <div class="center">
+          <div class="title">PLASTIMAX</div>
+          <div class="subtitle">Ticket de venta</div>
+        </div>
+
+        <div class="box">
+          <div class="row"><span class="label">Venta:</span><strong>#${safeHtml(codigo)}</strong></div>
+          <div class="row"><span class="label">Fecha:</span><strong>${safeHtml(formatDate(fecha))}</strong></div>
+          <div class="row"><span class="label">Comprador:</span><strong>${safeHtml(nombreComprador || "Consumidor final")}</strong></div>
+          <div class="row"><span class="label">Pago:</span><strong>${safeHtml(metodoPago === "tarjeta" ? "Tarjeta" : "Efectivo")}</strong></div>
+        </div>
+
+        <div>
+          ${items
+            .map(
+              (d) => `
+            <div class="line-item">
+              <div class="prod">${safeHtml(
+                `${d.nombre || "Producto"}${d.presentacion ? ` - ${d.presentacion}` : ""}`
+              )}</div>
+              <div class="row">
+                <span class="muted">${safeHtml(Number(d.cantidad || 0))} x ${safeHtml(
+                money(d.precio_unitario)
+              )}</span>
+                <strong>${safeHtml(
+                  money(Number(d.cantidad || 0) * Number(d.precio_unitario || 0))
+                )}</strong>
+              </div>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+
+        <div class="totals">
+          <div class="total-row">
+            <span>Total</span>
+            <span>${safeHtml(money(total))}</span>
+          </div>
+        </div>
+
+        <div class="footer">
+          Impreso el ${safeHtml(new Date().toLocaleString())}<br/>
+          Gracias por su compra
+        </div>
+      </div>
+
+      <script>
+        window.onload = function() {
+          window.print();
+          window.onafterprint = function() {
+            window.close();
+          };
+        };
+      </script>
+    </body>
+    </html>
+  `;
+
+  const win = window.open("", "_blank", "width=420,height=760");
+  if (!win) {
+    alert("El navegador bloqueó la ventana de impresión.");
+    return;
+  }
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+
 export default function VentaTienda() {
   const nav = useNavigate();
 
@@ -102,6 +279,7 @@ export default function VentaTienda() {
   const [cantidad, setCantidad] = useState(1);
   const [q, setQ] = useState("");
   const [metodoPago, setMetodoPago] = useState("efectivo");
+  const [nombreComprador, setNombreComprador] = useState("");
 
   const [loadingInventario, setLoadingInventario] = useState(true);
   const [loadingVenta, setLoadingVenta] = useState(false);
@@ -164,8 +342,6 @@ export default function VentaTienda() {
             row?.producto_sku ||
             row?.codigo ||
             String(row?.producto_id ?? ""),
-          // IMPORTANTE:
-          // Tomamos cantidad como stock real de la presentación
           stock: Number(
             row?.cantidad ??
               row?.stock ??
@@ -376,6 +552,11 @@ export default function VentaTienda() {
       return;
     }
 
+    if (!nombreComprador.trim()) {
+      alert("Ingresa el nombre del comprador.");
+      return;
+    }
+
     if (!metodoPago) {
       alert("Selecciona un método de pago.");
       return;
@@ -384,8 +565,9 @@ export default function VentaTienda() {
     try {
       setLoadingVenta(true);
 
-      await ventasTienda.crear({
+      const resp = await ventasTienda.crear({
         metodo_pago: metodoPago,
+        nombre_comprador: nombreComprador.trim(),
         items: items.map((item) => ({
           producto_id: String(item.producto_id),
           cantidad: Number(item.cantidad),
@@ -393,9 +575,20 @@ export default function VentaTienda() {
         })),
       });
 
+      const ventaCreada = resp?.data || resp?.venta || resp || null;
+
+      imprimirTicketVenta({
+        venta: ventaCreada,
+        items,
+        total,
+        metodoPago,
+        nombreComprador: nombreComprador.trim(),
+      });
+
       alert("Venta realizada correctamente.");
       setItems([]);
       setMetodoPago("efectivo");
+      setNombreComprador("");
       await cargarInventario();
     } catch (error) {
       console.error("ERROR VENTA:", error);
@@ -482,7 +675,7 @@ export default function VentaTienda() {
                   lineHeight: 1.6,
                 }}
               >
-                Registra ventas por sucursal, indicando si fueron en efectivo o tarjeta.
+                Registra ventas por sucursal, indicando comprador y método de pago.
               </p>
             </div>
 
@@ -982,6 +1175,39 @@ export default function VentaTienda() {
                 padding: 16,
               }}
             >
+              <label style={labelStyle}>Nombre del comprador</label>
+              <div style={{ position: "relative" }}>
+                <UserRound
+                  size={18}
+                  style={{
+                    position: "absolute",
+                    left: 14,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "#64748b",
+                  }}
+                />
+                <input
+                  type="text"
+                  value={nombreComprador}
+                  onChange={(e) => setNombreComprador(e.target.value)}
+                  placeholder="Ej. Juan Pérez"
+                  style={{
+                    ...inputStyle,
+                    paddingLeft: 42,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div
+              style={{
+                borderRadius: 18,
+                border: "1px solid #e2e8f0",
+                background: "#fff",
+                padding: 16,
+              }}
+            >
               <label style={labelStyle}>Método de pago</label>
               <div
                 style={{
@@ -1061,6 +1287,16 @@ export default function VentaTienda() {
                 }}
               >
                 Método: {metodoPago === "efectivo" ? "Efectivo" : "Tarjeta"}
+              </div>
+              <div
+                style={{
+                  color: "rgba(255,255,255,0.82)",
+                  fontSize: 14,
+                  marginTop: 6,
+                  fontWeight: 700,
+                }}
+              >
+                Comprador: {nombreComprador.trim() || "Sin ingresar"}
               </div>
             </div>
 

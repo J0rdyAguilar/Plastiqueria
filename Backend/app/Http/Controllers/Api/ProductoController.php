@@ -18,21 +18,27 @@ class ProductoController extends Controller
     {
         $q = trim((string) $request->query('q', ''));
         $perPage = (int) $request->query('per_page', 10);
+        $activo = $request->query('activo');
 
         $query = Producto::with([
             'imagenPrincipal:id,producto_id,url,es_principal,orden',
-            'precios:id,producto_id,presentacion,factor_base,precio,activo,creado_en,actualizado_en',
+            'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
         ]);
 
         if ($q !== '') {
             $query->where(function ($sub) use ($q) {
                 $sub->where('sku', 'like', "%{$q}%")
-                    ->orWhere('nombre', 'like', "%{$q}%");
+                    ->orWhere('nombre', 'like', "%{$q}%")
+                    ->orWhere('descripcion', 'like', "%{$q}%");
 
                 if (is_numeric($q)) {
                     $sub->orWhere('id', (int) $q);
                 }
             });
+        }
+
+        if ($activo !== null && $activo !== '') {
+            $query->where('activo', (int) $activo);
         }
 
         return ProductoResource::collection(
@@ -58,7 +64,8 @@ class ProductoController extends Controller
                 Rule::in(['unidad', 'docena', 'paquete', 'caja', 'bolsa', 'fardo', 'millar', 'cubo']),
             ],
             'precios.*.factor_base' => 'required|numeric|min:0.0001',
-            'precios.*.precio' => 'required|numeric|min:0',
+            'precios.*.precio_costo' => 'required|numeric|min:0',
+            'precios.*.precio_venta' => 'required|numeric|min:0',
             'precios.*.activo' => 'nullable|boolean',
         ]);
 
@@ -81,7 +88,8 @@ class ProductoController extends Controller
                     'producto_id' => $producto->id,
                     'presentacion' => $item['presentacion'],
                     'factor_base' => $item['factor_base'],
-                    'precio' => $item['precio'],
+                    'precio_costo' => $item['precio_costo'],
+                    'precio_venta' => $item['precio_venta'],
                     'activo' => $item['activo'] ?? true,
                     'creado_en' => $ahora,
                     'actualizado_en' => $ahora,
@@ -104,7 +112,7 @@ class ProductoController extends Controller
 
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
-                'precios:id,producto_id,presentacion,factor_base,precio,activo,creado_en,actualizado_en',
+                'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
                 'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ]);
 
@@ -118,8 +126,7 @@ class ProductoController extends Controller
     public function show(Producto $producto)
     {
         $producto->load([
-            'unidades',
-            'precios',
+            'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
             'imagenes',
             'imagenPrincipal',
             'stocks',
@@ -149,7 +156,8 @@ class ProductoController extends Controller
                 Rule::in(['unidad', 'docena', 'paquete', 'caja', 'bolsa', 'fardo', 'millar', 'cubo']),
             ],
             'precios.*.factor_base' => 'required|numeric|min:0.0001',
-            'precios.*.precio' => 'required|numeric|min:0',
+            'precios.*.precio_costo' => 'required|numeric|min:0',
+            'precios.*.precio_venta' => 'required|numeric|min:0',
             'precios.*.activo' => 'nullable|boolean',
         ]);
 
@@ -192,7 +200,8 @@ class ProductoController extends Controller
                         $precio->update([
                             'presentacion' => $item['presentacion'],
                             'factor_base' => $item['factor_base'],
-                            'precio' => $item['precio'],
+                            'precio_costo' => $item['precio_costo'],
+                            'precio_venta' => $item['precio_venta'],
                             'activo' => $item['activo'] ?? true,
                             'actualizado_en' => $ahora,
                         ]);
@@ -201,7 +210,8 @@ class ProductoController extends Controller
                             'producto_id' => $producto->id,
                             'presentacion' => $item['presentacion'],
                             'factor_base' => $item['factor_base'],
-                            'precio' => $item['precio'],
+                            'precio_costo' => $item['precio_costo'],
+                            'precio_venta' => $item['precio_venta'],
                             'activo' => $item['activo'] ?? true,
                             'creado_en' => $ahora,
                             'actualizado_en' => $ahora,
@@ -212,7 +222,8 @@ class ProductoController extends Controller
                         'producto_id' => $producto->id,
                         'presentacion' => $item['presentacion'],
                         'factor_base' => $item['factor_base'],
-                        'precio' => $item['precio'],
+                        'precio_costo' => $item['precio_costo'],
+                        'precio_venta' => $item['precio_venta'],
                         'activo' => $item['activo'] ?? true,
                         'creado_en' => $ahora,
                         'actualizado_en' => $ahora,
@@ -222,7 +233,7 @@ class ProductoController extends Controller
 
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
-                'precios:id,producto_id,presentacion,factor_base,precio,activo,creado_en,actualizado_en',
+                'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
                 'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ]);
 
@@ -246,7 +257,6 @@ class ProductoController extends Controller
     {
         $productos = Producto::where('activo', true)
             ->with([
-                'unidades',
                 'precios' => function ($q) {
                     $q->where('activo', true)
                         ->orderBy('presentacion');
