@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getSession } from "../lib/auth";
 import { rutasApi } from "../lib/rutas";
@@ -6,7 +6,6 @@ import { zonasApi } from "../lib/zonas";
 import { ubicacionesApi } from "../lib/ubicaciones";
 import { clientesApi } from "../lib/clientes";
 import { pedidosApi } from "../lib/pedidos";
-import { misPedidosApi } from "../lib/misPedidos";
 import { productosApi } from "../lib/productos";
 import { notify } from "../lib/notify";
 
@@ -17,6 +16,20 @@ function money(n) {
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function wordsOf(value) {
+  return normalizeText(value)
+    .split(/\s+/)
+    .filter(Boolean);
 }
 
 function getErrorMessage(err, fallback = "Ocurrió un error") {
@@ -58,6 +71,8 @@ function estadoBadgeStyle(estado) {
       return { ...base, background: "#ecfeff", color: "#155e75" };
     case "preparando":
       return { ...base, background: "#ecfdf5", color: "#166534" };
+    case "en_ruta":
+      return { ...base, background: "#eff6ff", color: "#1d4ed8" };
     case "entregado":
       return { ...base, background: "#f3f4f6", color: "#374151" };
     default:
@@ -78,13 +93,24 @@ function normalizarPresentaciones(precios = []) {
       tipo: String(p.presentacion || "unidad").toLowerCase(),
       label: String(p.presentacion || "unidad"),
       factor: num(p.factor_base || 1),
-      precio: num(p.precio || 0),
+      precioCosto: num(p.precio_costo || 0),
+      precioVenta: num(p.precio_venta ?? p.precio ?? 0),
+      precio: num(p.precio_venta ?? p.precio ?? 0),
     }))
     .filter((p) => p.factor > 0);
 
   if (mapped.length > 0) return mapped;
 
-  return [{ tipo: "unidad", label: "unidad", factor: 1, precio: 0 }];
+  return [
+    {
+      tipo: "unidad",
+      label: "unidad",
+      factor: 1,
+      precioCosto: 0,
+      precioVenta: 0,
+      precio: 0,
+    },
+  ];
 }
 
 function normalizarCliente(c) {
@@ -189,6 +215,11 @@ export default function Pedidos() {
   const [error, setError] = useState("");
 
   const [q, setQ] = useState("");
+  const [searchFocus, setSearchFocus] = useState(false);
+  const [searchMode, setSearchMode] = useState("todos");
+  const [onlyConPrecio, setOnlyConPrecio] = useState(false);
+
+  const searchBoxRef = useRef(null);
 
   const [ubicacionId, setUbicacionId] = useState("");
   const [ubicaciones, setUbicaciones] = useState([]);
@@ -289,17 +320,27 @@ export default function Pedidos() {
       setLoadingProductos(true);
       setError("");
 
-      const productosRows = await fetchProductosConPrecios({ q, per_page: 500 });
+      const productosRows = await fetchProductosConPrecios({ q: "", per_page: 500 });
       const rows = Array.isArray(productosRows) ? productosRows : [];
 
-      const merged = rows.map((p) => ({
-        id: Number(p.id),
-        nombre: p.nombre,
-        sku: p.sku,
-        cantidad_base: 999999,
-        presentaciones: normalizarPresentaciones(p.precios),
-        permite_monto_variable: true,
-      }));
+      const merged = rows.map((p) => {
+        const presentaciones = normalizarPresentaciones(p.precios);
+        const palabrasPresentacion = presentaciones
+          .map((pr) => `${pr.label} ${pr.tipo} factor ${pr.factor}`)
+          .join(" ");
+
+        return {
+          id: Number(p.id),
+          nombre: p.nombre,
+          sku: p.sku,
+          cantidad_base: 999999,
+          presentaciones,
+          permite_monto_variable: true,
+          __search: normalizeText(
+            `${p.nombre || ""} ${p.sku || ""} ${palabrasPresentacion}`
+          ),
+        };
+      });
 
       setProductos(merged);
 
@@ -348,7 +389,7 @@ export default function Pedidos() {
     try {
       setLoadingMisPedidos(true);
 
-      const res = await misPedidosApi.list({
+      const res = await pedidosApi.misPedidos({
         estado: estadoFiltroPedidos,
         page: 1,
         per_page: 20,
@@ -366,6 +407,7 @@ export default function Pedidos() {
 
   useEffect(() => {
     loadInicial();
+    loadProductos();
   }, []);
 
   useEffect(() => {
@@ -373,29 +415,102 @@ export default function Pedidos() {
   }, [location.hash]);
 
   useEffect(() => {
-    loadProductos();
-  }, [q]);
-
-  useEffect(() => {
     if (vista === "mios") {
       loadMisPedidos();
     }
   }, [vista, estadoFiltroPedidos]);
 
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (!searchBoxRef.current?.contains(e.target)) {
+        setSearchFocus(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const clienteSeleccionado = useMemo(() => {
     return clientes.find((c) => String(c.id) === String(clienteId)) || null;
   }, [clientes, clienteId]);
 
-  const productosFiltrados = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    if (!term) return productos;
+  function getSearchScore(producto, rawTerm, mode) {
+    const term = normalizeText(rawTerm);
+    if (!term) return 1;
 
-    return productos.filter(
-      (p) =>
-        String(p.nombre || "").toLowerCase().includes(term) ||
-        String(p.sku || "").toLowerCase().includes(term)
+    const nombre = normalizeText(producto.nombre);
+    const sku = normalizeText(producto.sku);
+    const presentaciones = normalizeText(
+      (producto.presentaciones || [])
+        .map((p) => `${p.label} ${p.tipo} factor ${p.factor}`)
+        .join(" ")
     );
-  }, [productos, q]);
+
+    const target =
+      mode === "nombre"
+        ? nombre
+        : mode === "codigo"
+        ? sku
+        : mode === "presentacion"
+        ? presentaciones
+        : normalizeText(`${nombre} ${sku} ${presentaciones}`);
+
+    if (!target.includes(term)) return -1;
+
+    let score = 0;
+
+    if (sku === term) score += 200;
+    if (nombre === term) score += 180;
+    if (sku.startsWith(term)) score += 120;
+    if (nombre.startsWith(term)) score += 100;
+    if (presentaciones.startsWith(term)) score += 70;
+
+    const termWords = wordsOf(term);
+    const targetWords = wordsOf(target);
+
+    for (const word of termWords) {
+      if (targetWords.includes(word)) score += 18;
+      if (target.startsWith(word)) score += 10;
+      if (target.includes(word)) score += 6;
+    }
+
+    score += Math.max(0, 40 - target.indexOf(term));
+    score += Math.max(0, 30 - Math.abs(target.length - term.length));
+
+    return score;
+  }
+
+  const productosFiltrados = useMemo(() => {
+    let lista = [...productos];
+
+    if (onlyConPrecio) {
+      lista = lista.filter((p) =>
+        (p.presentaciones || []).some((pr) => num(pr.precio) > 0)
+      );
+    }
+
+    const term = q.trim();
+    if (!term) {
+      return lista.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+    }
+
+    return lista
+      .map((p) => ({
+        ...p,
+        __score: getSearchScore(p, term, searchMode),
+      }))
+      .filter((p) => p.__score >= 0)
+      .sort((a, b) => {
+        if (b.__score !== a.__score) return b.__score - a.__score;
+        return String(a.nombre).localeCompare(String(b.nombre));
+      });
+  }, [productos, q, searchMode, onlyConPrecio]);
+
+  const sugerencias = useMemo(() => {
+    if (!q.trim()) return [];
+    return productosFiltrados.slice(0, 6);
+  }, [productosFiltrados, q]);
 
   function getPresentacionDefault(producto) {
     return producto.presentaciones?.[0] || {
@@ -448,10 +563,10 @@ export default function Pedidos() {
         ...linea,
         presentacion: encontrada?.tipo || "unidad",
         factor: num(encontrada?.factor || 1),
-        precioBase: num(encontrada?.precio || 0),
+        precioBase: num(encontrada?.precioVenta ?? encontrada?.precio ?? 0),
         montoVariable: linea.usaMontoVariable
           ? num(linea.montoVariable)
-          : num(encontrada?.precio || 0),
+          : num(encontrada?.precioVenta ?? encontrada?.precio ?? 0),
       },
     }));
   }
@@ -909,7 +1024,12 @@ export default function Pedidos() {
                       </div>
 
                       <div style={{ gridColumn: "1 / -1" }}>
-                        <button type="button" onClick={handleCrearCliente} style={saveBtn} disabled={guardandoCliente}>
+                        <button
+                          type="button"
+                          onClick={handleCrearCliente}
+                          style={saveBtn}
+                          disabled={guardandoCliente}
+                        >
                           {guardandoCliente ? <InlineLoader /> : "Guardar cliente"}
                         </button>
                       </div>
@@ -968,25 +1088,248 @@ export default function Pedidos() {
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
-                    alignItems: "center",
+                    alignItems: "flex-start",
                     gap: 12,
                     flexWrap: "wrap",
                   }}
                 >
-                  <h3 style={{ margin: 0 }}>Productos</h3>
+                  <div>
+                    <h3 style={{ margin: 0 }}>Productos</h3>
+                    <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+                      Busca por nombre, código o presentación
+                    </div>
+                  </div>
 
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <input
-                      type="text"
-                      value={q}
-                      onChange={(e) => setQ(e.target.value)}
-                      placeholder="Buscar por nombre o código..."
-                      style={{ ...inputStyle, maxWidth: 320 }}
-                      disabled={loadingProductos || enviando}
-                    />
-                    <button type="button" onClick={loadProductos} style={miniBtn} disabled={loadingProductos || enviando}>
-                      {loadingProductos ? <InlineLoader /> : "Buscar"}
-                    </button>
+                  <div
+                    ref={searchBoxRef}
+                    style={{
+                      width: "100%",
+                      maxWidth: 430,
+                      position: "relative",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr auto",
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ position: "relative" }}>
+                        <input
+                          type="text"
+                          value={q}
+                          onChange={(e) => setQ(e.target.value)}
+                          onFocus={() => setSearchFocus(true)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              setSearchFocus(false);
+                            }
+
+                            if (e.key === "Enter" && sugerencias.length > 0) {
+                              e.preventDefault();
+                              setQ(sugerencias[0].nombre || "");
+                              setSearchFocus(false);
+                            }
+                          }}
+                          placeholder="Ej: fosforos, CAPLA-001, bolsa, docena..."
+                          style={{
+                            ...inputStyle,
+                            paddingLeft: 42,
+                            paddingRight: q ? 42 : 12,
+                            boxShadow: searchFocus
+                              ? "0 0 0 4px rgba(37, 99, 235, 0.10)"
+                              : "none",
+                            borderColor: searchFocus ? "#3b82f6" : "#d1d5db",
+                            transition: "all .2s ease",
+                          }}
+                          disabled={loadingProductos || enviando}
+                        />
+
+                        <span
+                          style={{
+                            position: "absolute",
+                            left: 14,
+                            top: "50%",
+                            transform: "translateY(-50%)",
+                            fontSize: 16,
+                            opacity: 0.7,
+                          }}
+                        >
+                          🔎
+                        </span>
+
+                        {q ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setQ("");
+                              setSearchFocus(false);
+                            }}
+                            style={{
+                              position: "absolute",
+                              right: 10,
+                              top: "50%",
+                              transform: "translateY(-50%)",
+                              border: 0,
+                              background: "transparent",
+                              cursor: "pointer",
+                              fontSize: 16,
+                              opacity: 0.7,
+                            }}
+                          >
+                            ✕
+                          </button>
+                        ) : null}
+
+                        {searchFocus && sugerencias.length > 0 ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: "calc(100% + 8px)",
+                              left: 0,
+                              right: 0,
+                              background: "#fff",
+                              border: "1px solid #e5e7eb",
+                              borderRadius: 14,
+                              boxShadow: "0 18px 50px rgba(15, 23, 42, 0.12)",
+                              padding: 8,
+                              zIndex: 30,
+                              display: "grid",
+                              gap: 6,
+                            }}
+                          >
+                            {sugerencias.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => {
+                                  setQ(item.nombre || "");
+                                  setSearchFocus(false);
+                                }}
+                                style={{
+                                  textAlign: "left",
+                                  border: "1px solid #eef2f7",
+                                  background: "#fff",
+                                  borderRadius: 10,
+                                  padding: "10px 12px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <div style={{ fontWeight: 700 }}>{item.nombre}</div>
+                                <div className="muted" style={{ fontSize: 12 }}>
+                                  Código: {item.sku || "—"}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={loadProductos}
+                        style={miniBtn}
+                        disabled={loadingProductos || enviando}
+                      >
+                        {loadingProductos ? <InlineLoader /> : "Recargar"}
+                      </button>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 10,
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSearchMode("todos")}
+                        style={searchMode === "todos" ? chipActive : chipBtn}
+                      >
+                        Todo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSearchMode("nombre")}
+                        style={searchMode === "nombre" ? chipActive : chipBtn}
+                      >
+                        Nombre
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSearchMode("codigo")}
+                        style={searchMode === "codigo" ? chipActive : chipBtn}
+                      >
+                        Código
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSearchMode("presentacion")}
+                        style={searchMode === "presentacion" ? chipActive : chipBtn}
+                      >
+                        Presentación
+                      </button>
+
+                      <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginLeft: "auto",
+                          fontSize: 13,
+                          color: "#475569",
+                          background: "#f8fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 999,
+                          padding: "8px 12px",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={onlyConPrecio}
+                          onChange={(e) => setOnlyConPrecio(e.target.checked)}
+                        />
+                        Solo con precio
+                      </label>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 10,
+                        fontSize: 13,
+                        color: "#64748b",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span>
+                        {q.trim()
+                          ? `${productosFiltrados.length} resultado(s) para "${q}"`
+                          : `${productosFiltrados.length} producto(s) disponibles`}
+                      </span>
+
+                      {q.trim() ? (
+                        <button
+                          type="button"
+                          onClick={() => setQ("")}
+                          style={{
+                            border: 0,
+                            background: "transparent",
+                            color: "#2563eb",
+                            cursor: "pointer",
+                            fontWeight: 700,
+                          }}
+                        >
+                          Limpiar búsqueda
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
 
@@ -1002,9 +1345,11 @@ export default function Pedidos() {
                         key={producto.id}
                         style={{
                           border: "1px solid #e5e7eb",
-                          borderRadius: 12,
+                          borderRadius: 14,
                           padding: 14,
                           opacity: enviando ? 0.7 : 1,
+                          background: "#fff",
+                          boxShadow: "0 4px 18px rgba(15, 23, 42, 0.03)",
                         }}
                       >
                         <div
@@ -1016,16 +1361,21 @@ export default function Pedidos() {
                           }}
                         >
                           <div>
-                            <div style={{ fontWeight: 700 }}>{producto.nombre}</div>
+                            <div style={{ fontWeight: 800 }}>{producto.nombre}</div>
                             <div className="muted" style={{ fontSize: 13 }}>
                               Código: {producto.sku || "—"}
                             </div>
                             <div className="muted" style={{ fontSize: 13 }}>
-                              Disponible para pedido
+                              Presentaciones:{" "}
+                              {(producto.presentaciones || [])
+                                .map((p) => p.label || p.tipo)
+                                .join(", ")}
                             </div>
                           </div>
 
-                          <div style={{ fontWeight: 700 }}>Subtotal: {money(subtotal)}</div>
+                          <div style={{ fontWeight: 800, color: "#0f172a" }}>
+                            Subtotal: {money(subtotal)}
+                          </div>
                         </div>
 
                         <div
@@ -1048,7 +1398,7 @@ export default function Pedidos() {
                             >
                               {(producto.presentaciones || []).map((p) => (
                                 <option key={p.tipo} value={p.tipo}>
-                                  {p.label || p.tipo} — factor {p.factor} — {money(p.precio)}
+                                  {p.label || p.tipo} — factor {p.factor} — {money(p.precioVenta ?? p.precio)}
                                 </option>
                               ))}
                             </select>
@@ -1104,7 +1454,18 @@ export default function Pedidos() {
                   })}
 
                   {!loadingProductos && productosFiltrados.length === 0 && (
-                    <div className="muted">No se encontraron productos.</div>
+                    <div
+                      style={{
+                        border: "1px dashed #cbd5e1",
+                        borderRadius: 14,
+                        padding: 18,
+                        textAlign: "center",
+                        color: "#64748b",
+                        background: "#f8fafc",
+                      }}
+                    >
+                      No se encontraron productos con esa búsqueda.
+                    </div>
                   )}
                 </div>
               </div>
@@ -1116,14 +1477,18 @@ export default function Pedidos() {
 
                 <div style={{ display: "grid", gap: 10 }}>
                   <div>
-                    <div className="muted" style={{ fontSize: 13 }}>Cliente</div>
+                    <div className="muted" style={{ fontSize: 13 }}>
+                      Cliente
+                    </div>
                     <div style={{ fontWeight: 600 }}>
                       {clienteSeleccionado?.nombre || "No seleccionado"}
                     </div>
                   </div>
 
                   <div>
-                    <div className="muted" style={{ fontSize: 13 }}>Ruta / Zona</div>
+                    <div className="muted" style={{ fontSize: 13 }}>
+                      Ruta / Zona
+                    </div>
                     <div style={{ fontWeight: 600 }}>
                       {(clienteSeleccionado?.ruta_nombre || "—") +
                         " / " +
@@ -1132,7 +1497,9 @@ export default function Pedidos() {
                   </div>
 
                   <div>
-                    <div className="muted" style={{ fontSize: 13 }}>Productos agregados</div>
+                    <div className="muted" style={{ fontSize: 13 }}>
+                      Productos agregados
+                    </div>
                     <div style={{ fontWeight: 600 }}>{detalles.length}</div>
                   </div>
                 </div>
@@ -1224,6 +1591,7 @@ export default function Pedidos() {
                 <option value="pendiente_revision">Pendiente revisión</option>
                 <option value="aprobado">Aprobado</option>
                 <option value="preparando">Preparando</option>
+                <option value="en_ruta">En ruta</option>
                 <option value="entregado">Entregado</option>
               </select>
             </div>
@@ -1282,7 +1650,7 @@ export default function Pedidos() {
                             {d.producto_nombre || `Producto #${d.producto_id}`}
                           </div>
                           <div className="muted" style={{ fontSize: 13 }}>
-                            {d.cantidad_base} × {d.presentacion || "unidad"} ×{" "}
+                            {d.cantidad} × {d.presentacion || "unidad"} ×{" "}
                             {money(d.precio_unitario)}
                           </div>
                           <div style={{ marginTop: 4, fontWeight: 700 }}>{money(d.subtotal)}</div>
@@ -1320,10 +1688,29 @@ const inputStyle = {
 const miniBtn = {
   border: "1px solid #d1d5db",
   background: "#fff",
-  borderRadius: 8,
+  borderRadius: 10,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const chipBtn = {
+  border: "1px solid #dbe4f0",
+  background: "#fff",
+  color: "#334155",
+  borderRadius: 999,
   padding: "8px 12px",
   cursor: "pointer",
-  fontWeight: 600,
+  fontWeight: 700,
+  fontSize: 13,
+};
+
+const chipActive = {
+  ...chipBtn,
+  background: "#eff6ff",
+  border: "1px solid #93c5fd",
+  color: "#1d4ed8",
+  boxShadow: "0 4px 14px rgba(37, 99, 235, 0.12)",
 };
 
 const saveBtn = {

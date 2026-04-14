@@ -8,6 +8,7 @@ use App\Models\VentaTiendaDetalle;
 use App\Models\Stock;
 use App\Models\MovimientoStock;
 use App\Models\Ubicacion;
+use App\Models\ProductoPrecio;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -31,6 +32,81 @@ class VentaTiendaController extends Controller
     {
         $id = $user->ubicacion_id ?? $user->sucursal_id ?? null;
         return $id !== null ? (int) $id : null;
+    }
+
+    private function buildVentaResponse($venta, $movimientosByVenta = null, $preciosById = null): array
+    {
+        $movs = collect();
+
+        if ($movimientosByVenta !== null) {
+            $movs = collect($movimientosByVenta->get($venta->id, []));
+        } else {
+            $movs = MovimientoStock::query()
+                ->where('referencia_tipo', 'venta_tienda')
+                ->where('referencia_id', (int) $venta->id)
+                ->get();
+        }
+
+        $detalles = $venta->detalles->map(function ($d) use ($movs, $preciosById) {
+            $mov = $movs->first(function ($m) use ($d) {
+                return (int) $m->producto_id === (int) $d->producto_id;
+            });
+
+            $productoPrecio = null;
+
+            if ($mov && !empty($mov->producto_precio_id)) {
+                if ($preciosById !== null) {
+                    $productoPrecio = $preciosById->get((int) $mov->producto_precio_id);
+                } else {
+                    $productoPrecio = ProductoPrecio::query()->find((int) $mov->producto_precio_id);
+                }
+            }
+
+            $precioCosto = (float) ($productoPrecio?->precio_costo ?? 0);
+            $precioVentaCatalogo = (float) ($productoPrecio?->precio_venta ?? 0);
+            $precioUnitario = (float) ($d->precio_unitario ?? 0);
+            $cantidad = (float) ($d->cantidad ?? 0);
+            $subtotal = (float) ($d->subtotal ?? ($cantidad * $precioUnitario));
+            $gananciaUnitaria = $precioUnitario - $precioCosto;
+            $gananciaTotal = $gananciaUnitaria * $cantidad;
+
+            return [
+                'id' => $d->id,
+                'producto_id' => (int) $d->producto_id,
+                'producto_nombre' => $d->producto?->nombre ?? null,
+                'producto_precio_id' => $mov ? (int) ($mov->producto_precio_id ?? 0) : null,
+                'presentacion' => $mov?->presentacion ?? null,
+                'cantidad' => $cantidad,
+                'precio_costo' => $precioCosto,
+                'precio_unitario' => $precioUnitario,
+                'precio_venta_catalogo' => $precioVentaCatalogo,
+                'subtotal' => $subtotal,
+                'ganancia_unitaria' => $gananciaUnitaria,
+                'ganancia_total' => $gananciaTotal,
+            ];
+        })->values();
+
+        return [
+            'id' => $venta->id,
+            'estado' => $venta->estado,
+            'metodo_pago' => $venta->metodo_pago,
+            'subtotal' => (float) $venta->subtotal,
+            'descuento' => (float) $venta->descuento,
+            'total' => (float) $venta->total,
+            'ganancia_total' => (float) $detalles->sum('ganancia_total'),
+            'creado_en' => optional($venta->creado_en)->format('Y-m-d H:i:s'),
+
+            'usuario' => $venta->usuario,
+            'usuario_nombre' => $venta->usuario?->nombre ?? $venta->usuario?->usuario,
+
+            'ubicacion' => $venta->ubicacion,
+            'ubicacion_nombre' => $venta->ubicacion?->nombre,
+
+            'cliente' => $venta->cliente,
+            'nombre_comprador' => null,
+
+            'detalles' => $detalles,
+        ];
     }
 
     public function index(Request $request)
@@ -88,6 +164,28 @@ class VentaTiendaController extends Controller
         $perPage = max(1, (int) $request->query('per_page', 20));
         $page = $query->paginate($perPage);
 
+        $ventas = collect($page->items());
+        $ventaIds = $ventas->pluck('id')->map(fn($v) => (int) $v)->values();
+
+        $movimientos = MovimientoStock::query()
+            ->where('referencia_tipo', 'venta_tienda')
+            ->whereIn('referencia_id', $ventaIds)
+            ->get()
+            ->groupBy('referencia_id');
+
+        $productoPrecioIds = $movimientos
+            ->flatten(1)
+            ->pluck('producto_precio_id')
+            ->filter()
+            ->map(fn($v) => (int) $v)
+            ->unique()
+            ->values();
+
+        $preciosById = ProductoPrecio::query()
+            ->whereIn('id', $productoPrecioIds)
+            ->get()
+            ->keyBy('id');
+
         if ($role === 'super_admin') {
             $sucursales = Ubicacion::query()
                 ->select('id', 'nombre')
@@ -107,36 +205,8 @@ class VentaTiendaController extends Controller
             'per_page' => $page->perPage(),
             'total' => $page->total(),
             'sucursales' => $sucursales,
-            'data' => collect($page->items())->map(function ($venta) {
-                return [
-                    'id' => $venta->id,
-                    'estado' => $venta->estado,
-                    'metodo_pago' => $venta->metodo_pago,
-                    'subtotal' => (float) $venta->subtotal,
-                    'descuento' => (float) $venta->descuento,
-                    'total' => (float) $venta->total,
-                    'creado_en' => optional($venta->creado_en)->format('Y-m-d H:i:s'),
-
-                    'usuario' => $venta->usuario,
-                    'usuario_nombre' => $venta->usuario?->nombre ?? $venta->usuario?->usuario,
-
-                    'ubicacion' => $venta->ubicacion,
-                    'ubicacion_nombre' => $venta->ubicacion?->nombre,
-
-                    'cliente' => $venta->cliente,
-                    'nombre_comprador' => null,
-
-                    'detalles' => $venta->detalles->map(function ($d) {
-                        return [
-                            'id' => $d->id,
-                            'producto_id' => $d->producto_id,
-                            'producto_nombre' => $d->producto?->nombre ?? null,
-                            'cantidad' => (float) $d->cantidad,
-                            'precio_unitario' => (float) $d->precio_unitario,
-                            'subtotal' => (float) $d->subtotal,
-                        ];
-                    })->values(),
-                ];
+            'data' => $ventas->map(function ($venta) use ($movimientos, $preciosById) {
+                return $this->buildVentaResponse($venta, $movimientos, $preciosById);
             })->values(),
         ]);
     }
@@ -158,7 +228,9 @@ class VentaTiendaController extends Controller
             'metodo_pago' => ['required', 'string', 'in:efectivo,tarjeta'],
             'nombre_comprador' => ['nullable', 'string', 'max:150'],
             'items' => ['required', 'array', 'min:1'],
-            'items.*.producto_id' => ['required'],
+            'items.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
+            'items.*.producto_precio_id' => ['required', 'integer', 'exists:producto_precios,id'],
+            'items.*.presentacion' => ['nullable', 'string', 'max:100'],
             'items.*.cantidad' => ['required', 'numeric', 'min:0.01'],
             'items.*.precio_unitario' => ['required', 'numeric', 'min:0.01'],
         ]);
@@ -182,17 +254,19 @@ class VentaTiendaController extends Controller
 
             foreach ($data['items'] as $item) {
                 $productoId = (int) $item['producto_id'];
+                $productoPrecioId = (int) $item['producto_precio_id'];
                 $cantidad = (float) $item['cantidad'];
 
                 $stock = Stock::query()
                     ->where('ubicacion_id', $ventaUbicacionId)
                     ->where('producto_id', $productoId)
+                    ->where('producto_precio_id', $productoPrecioId)
                     ->lockForUpdate()
                     ->first();
 
                 if (!$stock) {
                     return response()->json([
-                        'message' => "No existe stock para el producto {$productoId} en esta sucursal."
+                        'message' => "No existe stock para esa presentación del producto {$productoId} en esta sucursal."
                     ], 422);
                 }
 
@@ -221,9 +295,12 @@ class VentaTiendaController extends Controller
 
             foreach ($data['items'] as $item) {
                 $productoId = (int) $item['producto_id'];
+                $productoPrecioId = (int) $item['producto_precio_id'];
                 $cantidad = (float) $item['cantidad'];
                 $precioUnitario = (float) $item['precio_unitario'];
                 $lineSubtotal = $cantidad * $precioUnitario;
+
+                $productoPrecio = ProductoPrecio::query()->find($productoPrecioId);
 
                 VentaTiendaDetalle::create([
                     'venta_id'        => $venta->id,
@@ -236,6 +313,7 @@ class VentaTiendaController extends Controller
                 $stock = Stock::query()
                     ->where('ubicacion_id', $ventaUbicacionId)
                     ->where('producto_id', $productoId)
+                    ->where('producto_precio_id', $productoPrecioId)
                     ->lockForUpdate()
                     ->first();
 
@@ -247,9 +325,9 @@ class VentaTiendaController extends Controller
                     'ubicacion_origen_id'  => $ventaUbicacionId,
                     'ubicacion_destino_id' => null,
                     'producto_id'          => $productoId,
-                    'producto_precio_id'   => $stock->producto_precio_id ?? null,
-                    'presentacion'         => null,
-                    'factor_aplicado'      => 1,
+                    'producto_precio_id'   => $productoPrecioId,
+                    'presentacion'         => $productoPrecio?->presentacion,
+                    'factor_aplicado'      => (float) ($productoPrecio?->factor_base ?? 1),
                     'cantidad'             => $cantidad,
                     'cantidad_base'        => 0,
                     'motivo'               => 'venta_tienda',
@@ -269,29 +347,7 @@ class VentaTiendaController extends Controller
 
             return response()->json([
                 'message' => 'Venta realizada correctamente.',
-                'data' => [
-                    'id' => $venta->id,
-                    'estado' => $venta->estado,
-                    'metodo_pago' => $venta->metodo_pago,
-                    'subtotal' => (float) $venta->subtotal,
-                    'descuento' => (float) $venta->descuento,
-                    'total' => (float) $venta->total,
-                    'creado_en' => optional($venta->creado_en)->format('Y-m-d H:i:s'),
-                    'usuario' => $venta->usuario,
-                    'ubicacion' => $venta->ubicacion,
-                    'cliente' => $venta->cliente,
-                    'nombre_comprador' => $data['nombre_comprador'] ?? null,
-                    'detalles' => $venta->detalles->map(function ($d) {
-                        return [
-                            'id' => $d->id,
-                            'producto_id' => $d->producto_id,
-                            'producto_nombre' => $d->producto?->nombre ?? null,
-                            'cantidad' => (float) $d->cantidad,
-                            'precio_unitario' => (float) $d->precio_unitario,
-                            'subtotal' => (float) $d->subtotal,
-                        ];
-                    })->values(),
-                ],
+                'data' => $this->buildVentaResponse($venta),
             ], 201);
         });
     }

@@ -21,14 +21,12 @@ class Producto extends Model
         'nombre',
         'descripcion',
         'unidad_base',
-        'alerta_stock',
         'activo',
         'creado_en',
         'actualizado_en',
     ];
 
     protected $casts = [
-        'alerta_stock'   => 'integer',
         'activo'         => 'boolean',
         'creado_en'      => 'datetime',
         'actualizado_en' => 'datetime',
@@ -54,11 +52,6 @@ class Producto extends Model
             ->orderBy('orden');
     }
 
-    public function stocks(): HasMany
-    {
-        return $this->hasMany(Stock::class, 'producto_id', 'id');
-    }
-
     public function scopeActivos($query)
     {
         return $query->where('activo', true);
@@ -66,11 +59,13 @@ class Producto extends Model
 
     public function scopeBuscar($query, $q)
     {
-        if (!$q) return $query;
+        if (!$q) {
+            return $query;
+        }
 
         return $query->where(function ($qq) use ($q) {
             $qq->where('nombre', 'like', "%{$q}%")
                ->orWhere('sku', 'like', "%{$q}%");
         });
     }
-}
+}   

@@ -1,4 +1,4 @@
-import { http } from "./http";
+import { httpV1 } from "./httpV1";
 
 function cleanParams(obj = {}) {
   const params = new URLSearchParams();
@@ -35,12 +35,24 @@ export const pedidosApi = {
       per_page,
     });
 
-    const url = query ? `/ventas/pedidos-admin?${query}` : `/ventas/pedidos-admin`;
-    const { data } = await http.get(url);
+    const url = query ? `/pedidos?${query}` : `/pedidos`;
+    const { data } = await httpV1.get(url);
     return data;
   },
 
-  createPedidoVendedor: async (payload = {}) => {
+  misPedidos: async ({ estado = "", page = 1, per_page = 20 } = {}) => {
+    const query = cleanParams({
+      estado,
+      page,
+      per_page,
+    });
+
+    const url = query ? `/pedidos/mis-pedidos?${query}` : `/pedidos/mis-pedidos`;
+    const { data } = await httpV1.get(url);
+    return data;
+  },
+
+  create: async (payload = {}) => {
     const cleanPayload = { ...payload };
 
     Object.keys(cleanPayload).forEach((key) => {
@@ -53,12 +65,12 @@ export const pedidosApi = {
       }
     });
 
-    const { data } = await http.post("/ventas/pedido-vendedor", cleanPayload);
+    const { data } = await httpV1.post("/pedidos", cleanPayload);
     return data;
   },
 
   enviar: async (pedidoId) => {
-    const { data } = await http.post(`/ventas/${pedidoId}/aprobar`);
+    const { data } = await httpV1.post(`/pedidos/${pedidoId}/enviar`);
     return data;
   },
 };

@@ -13,6 +13,7 @@ Route::middleware(['role:admin,super_admin,vendedor'])->group(function () {
 
 // admin y super_admin
 Route::middleware(['role:admin,super_admin'])->group(function () {
+    Route::put('/{pedido}', [PedidoController::class, 'update']);
     Route::post('/{pedido}/aprobar', [PedidoController::class, 'aprobar']);
     Route::post('/{pedido}/preparar', [PedidoController::class, 'preparar']);
     Route::post('/{pedido}/asignar-rutero', [PedidoController::class, 'asignarRutero']);

@@ -53,7 +53,7 @@ class MovimientoStockController extends Controller
         $query = MovimientoStock::query()
             ->with([
                 'producto:id,sku,nombre',
-                'productoPrecio:id,producto_id,presentacion,factor_base,precio',
+                'productoPrecio:id,producto_id,presentacion,factor_base,precio_costo,precio_venta',
                 'ubicacionOrigen:id,nombre,tipo',
                 'ubicacionDestino:id,nombre,tipo',
             ])
@@ -101,6 +101,12 @@ class MovimientoStockController extends Controller
                         'producto_sku' => $m->producto?->sku,
                         'presentacion' => $m->presentacion ?: $m->productoPrecio?->presentacion,
                         'factor_aplicado' => $m->factor_aplicado,
+
+                        // Compatibilidad si el frontend aún usa "precio"
+                        'precio' => $m->productoPrecio?->precio_venta,
+                        'precio_costo' => $m->productoPrecio?->precio_costo,
+                        'precio_venta' => $m->productoPrecio?->precio_venta,
+
                         'cantidad' => $m->cantidad,
                         'cantidad_base' => $m->cantidad_base,
                         'ubicacion_origen_id' => $m->ubicacion_origen_id,

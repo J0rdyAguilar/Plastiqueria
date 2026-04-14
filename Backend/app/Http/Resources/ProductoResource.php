@@ -7,11 +7,6 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class ProductoResource extends JsonResource
 {
-    /**
-     * Transform the resource into an array.
-     *
-     * @return array<string, mixed>
-     */
     public function toArray(Request $request): array
     {
         return [
@@ -20,7 +15,6 @@ class ProductoResource extends JsonResource
             'nombre' => $this->nombre,
             'descripcion' => $this->descripcion,
             'unidad_base' => $this->unidad_base,
-            'alerta_stock' => $this->alerta_stock,
             'activo' => (bool) $this->activo,
 
             'imagen_principal' => $this->whenLoaded('imagenPrincipal', function () {
@@ -39,23 +33,12 @@ class ProductoResource extends JsonResource
                             'id' => $precio->id,
                             'presentacion' => $precio->presentacion,
                             'factor_base' => (float) $precio->factor_base,
-                            'precio' => (float) $precio->precio,
+                            'precio_costo' => (float) $precio->precio_costo,
+                            'precio_venta' => (float) $precio->precio_venta,
                             'activo' => (bool) $precio->activo,
                         ];
                     });
             }, []),
-
-            'stocks' => $this->whenLoaded('stocks', function () {
-                return $this->stocks->values()->map(function ($stock) {
-                    return [
-                        'id' => $stock->id,
-                        'ubicacion_id' => $stock->ubicacion_id,
-                        'producto_id' => $stock->producto_id,
-                        'cantidad_base' => (int) $stock->cantidad_base,
-                        'actualizado_en' => $stock->actualizado_en,
-                    ];
-                });
-            }, []),
         ];
     }
-}
+}   

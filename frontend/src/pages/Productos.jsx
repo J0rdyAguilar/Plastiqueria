@@ -52,6 +52,9 @@ export default function Productos() {
   const [openForm, setOpenForm] = useState(false);
   const [editing, setEditing] = useState(null);
 
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsRow, setDetailsRow] = useState(null);
+
   const firstLoadRef = useRef(true);
 
   async function fetchData(page = 1, opts = {}) {
@@ -113,6 +116,11 @@ export default function Productos() {
     setOpenForm(true);
   }
 
+  function onViewDetails(row) {
+    setDetailsRow(row);
+    setDetailsOpen(true);
+  }
+
   async function onDelete(row) {
     if (!window.confirm(`¿Eliminar producto "${row.nombre}"?`)) return;
 
@@ -126,34 +134,30 @@ export default function Productos() {
 
   function renderPrecios(row) {
     const precios = Array.isArray(row?.precios) ? row.precios : [];
-    if (!precios.length) return <span className="empty-prices">Sin precios configurados</span>;
+    const total = precios.length;
+
+    if (!total) {
+      return (
+        <div className="prices-compact">
+          <span className="empty-prices">Sin precios configurados</span>
+        </div>
+      );
+    }
 
     return (
-      <div className="price-list">
-        {precios.map((p, idx) => (
-          <div className="price-chip" key={p.id ?? `${p.presentacion}-${idx}`}>
-            <div className="price-chip-top">
-              <strong>{presentacionLabel(p.presentacion)}</strong>
-              <span className="price-factor">x{Number(p.factor_base || 0)}</span>
-            </div>
+      <div className="prices-compact">
+        <div className="prices-summary">
+          <strong>{total}</strong>
+          <span>{total === 1 ? "presentación" : "presentaciones"}</span>
+        </div>
 
-            <div className="price-dual">
-              <div className="price-line">
-                <span className="price-label">Costo</span>
-                <span className="price-value-secondary">
-                  {money(p.precio_costo ?? 0)}
-                </span>
-              </div>
-
-              <div className="price-line">
-                <span className="price-label">Venta</span>
-                <span className="price-chip-value">
-                  {money(p.precio_venta ?? p.precio ?? 0)}
-                </span>
-              </div>
-            </div>
-          </div>
-        ))}
+        <button
+          type="button"
+          className="btn btn-soft btn-sm"
+          onClick={() => onViewDetails(row)}
+        >
+          Ver detalles
+        </button>
       </div>
     );
   }
@@ -273,9 +277,9 @@ export default function Productos() {
                 <th style={{ width: 90 }}>Imagen</th>
                 <th style={{ width: 150 }}>SKU</th>
                 <th>Producto</th>
-                <th style={{ minWidth: 420 }}>Precios</th>
+                <th style={{ minWidth: 260 }}>Precios</th>
                 <th style={{ width: 120 }}>Estado</th>
-                <th style={{ width: 210 }}>Acciones</th>
+                <th style={{ width: 270 }}>Acciones</th>
               </tr>
             </thead>
 
@@ -320,6 +324,9 @@ export default function Productos() {
 
                     <td>
                       <div className="actions">
+                        <button className="btn btn-soft btn-sm" onClick={() => onViewDetails(row)}>
+                          Detalles
+                        </button>
                         <button className="btn btn-edit btn-sm" onClick={() => onEdit(row)}>
                           Editar
                         </button>
@@ -381,6 +388,16 @@ export default function Productos() {
         />
       ) : null}
 
+      {detailsOpen && detailsRow ? (
+        <ProductoDetallesModal
+          row={detailsRow}
+          onClose={() => {
+            setDetailsOpen(false);
+            setDetailsRow(null);
+          }}
+        />
+      ) : null}
+
       <style>{styles}</style>
     </div>
   );
@@ -392,7 +409,6 @@ function ProductoModal({ initial, onClose, onSaved }) {
   const [sku, setSku] = useState(initial?.sku || "");
   const [nombre, setNombre] = useState(initial?.nombre || "");
   const [descripcion, setDescripcion] = useState(initial?.descripcion || "");
-  const [alertaStock, setAlertaStock] = useState(initial?.alerta_stock ?? 0);
   const [activo, setActivo] = useState(initial?.activo ?? true);
 
   const [saving, setSaving] = useState(false);
@@ -491,7 +507,6 @@ function ProductoModal({ initial, onClose, onSaved }) {
         nombre: nombre.trim(),
         descripcion: descripcion || null,
         unidad_base: unidadBaseAuto,
-        alerta_stock: Number(alertaStock || 0),
         activo: !!activo,
         precios: preciosLimpios,
       };
@@ -503,7 +518,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
         prod = await productosApi.create(payload);
       }
 
-      const id = prod?.id ?? initial?.id;
+      const id = prod?.data?.id ?? prod?.id ?? initial?.id;
 
       if (imgFile && id) {
         await productosApi.uploadImagen({
@@ -562,17 +577,6 @@ function ProductoModal({ initial, onClose, onSaved }) {
                 className="input"
                 value={descripcion}
                 onChange={(e) => setDescripcion(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className="label">Alerta stock</label>
-              <input
-                type="number"
-                className="input"
-                value={alertaStock}
-                onChange={(e) => setAlertaStock(e.target.value)}
-                min="0"
               />
             </div>
 
@@ -751,6 +755,104 @@ function ProductoModal({ initial, onClose, onSaved }) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function ProductoDetallesModal({ row, onClose }) {
+  const precios = Array.isArray(row?.precios) ? row.precios : [];
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal modal-details" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h2 className="modal-title">Detalles del producto</h2>
+            <p className="muted small">
+              Aquí puedes ver todas las presentaciones configuradas para este producto.
+            </p>
+          </div>
+          <button className="iconbtn" onClick={onClose} aria-label="Cerrar">
+            ✕
+          </button>
+        </div>
+
+        <div className="details-product-head">
+          <div className="details-thumb">
+            {row?.imagen_principal?.url ? (
+              <img src={fullImg(row.imagen_principal.url)} alt={row.nombre} />
+            ) : (
+              <div className="thumb-ph">Sin imagen</div>
+            )}
+          </div>
+
+          <div className="details-main">
+            <div className="details-topline">
+              <h3>{row?.nombre || "Producto"}</h3>
+              <span className={row?.activo ? "status-pill status-active" : "status-pill status-inactive"}>
+                {row?.activo ? "Activo" : "Inactivo"}
+              </span>
+            </div>
+
+            <div className="details-meta">
+              <span className="sku-badge">{row?.sku || "Sin SKU"}</span>
+            </div>
+
+            <p className="details-desc">
+              {row?.descripcion || "Sin descripción"}
+            </p>
+          </div>
+        </div>
+
+        <div className="details-section">
+          <div className="details-section-head">
+            <h3>Presentaciones y precios</h3>
+            <span>{precios.length} {precios.length === 1 ? "registro" : "registros"}</span>
+          </div>
+
+          {!precios.length ? (
+            <div className="empty-state small-empty">
+              <div className="empty-state-icon">📦</div>
+              <h3>Sin presentaciones</h3>
+              <p>Este producto todavía no tiene precios configurados.</p>
+            </div>
+          ) : (
+            <div className="details-grid">
+              {precios.map((p, idx) => (
+                <div className="detail-price-card" key={p.id ?? `${p.presentacion}-${idx}`}>
+                  <div className="detail-price-head">
+                    <strong>{presentacionLabel(p.presentacion)}</strong>
+                    <span className="price-factor">x{Number(p.factor_base || 0)}</span>
+                  </div>
+
+                  <div className="detail-price-body">
+                    <div className="detail-line">
+                      <span>Costo</span>
+                      <strong>{money(p.precio_costo ?? 0)}</strong>
+                    </div>
+
+                    <div className="detail-line">
+                      <span>Venta</span>
+                      <strong>{money(p.precio_venta ?? p.precio ?? 0)}</strong>
+                    </div>
+
+                    <div className="detail-line">
+                      <span>Estado</span>
+                      <strong>{p.activo ? "Activo" : "Inactivo"}</strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="btn btn-soft" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1008,7 +1110,7 @@ const styles = `
 
 .pro-table{
   width:100%;
-  min-width:1120px;
+  min-width:980px;
   border-collapse:separate;
   border-spacing:0;
 }
@@ -1186,74 +1288,36 @@ const styles = `
   color:#64748b;
 }
 
-.price-list{
+.prices-compact{
   display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-}
-
-.price-chip{
-  min-width:160px;
-  padding:10px 11px;
-  border-radius:16px;
-  border:1px solid #e8edf5;
-  background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  box-shadow:0 5px 16px rgba(15,23,42,.04);
-}
-
-.price-chip-top{
-  display:flex;
-  justify-content:space-between;
   align-items:center;
-  gap:8px;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
 }
 
-.price-chip strong{
-  font-size:12px;
-  color:#334155;
-}
-
-.price-factor{
-  font-size:11px;
-  color:#6366f1;
-  background:#eef2ff;
-  border-radius:999px;
-  padding:3px 7px;
-  font-weight:800;
-}
-
-.price-dual{
+.prices-summary{
   display:flex;
   flex-direction:column;
-  gap:6px;
-  margin-top:8px;
+  justify-content:center;
+  min-width:120px;
+  padding:10px 12px;
+  border-radius:14px;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
 }
 
-.price-line{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:10px;
-}
-
-.price-label{
-  font-size:11px;
-  font-weight:800;
-  color:#64748b;
-  text-transform:uppercase;
-  letter-spacing:.06em;
-}
-
-.price-value-secondary{
-  font-size:13px;
-  font-weight:800;
-  color:#334155;
-}
-
-.price-chip-value{
-  font-size:15px;
-  font-weight:900;
+.prices-summary strong{
+  font-size:18px;
+  line-height:1;
   color:#0f172a;
+}
+
+.prices-summary span{
+  margin-top:4px;
+  font-size:12px;
+  color:#64748b;
+  font-weight:700;
 }
 
 .empty-prices{
@@ -1391,6 +1455,10 @@ const styles = `
 
 .modal-lg{
   width:min(1180px, 100%);
+}
+
+.modal-details{
+  width:min(920px, 100%);
 }
 
 .modal-header{
@@ -1568,6 +1636,144 @@ const styles = `
   color:#64748b;
 }
 
+.details-product-head{
+  display:grid;
+  grid-template-columns:110px 1fr;
+  gap:16px;
+  align-items:start;
+  margin-bottom:18px;
+}
+
+.details-thumb{
+  width:110px;
+  height:110px;
+  border-radius:20px;
+  overflow:hidden;
+  display:grid;
+  place-items:center;
+  background:#f8fafc;
+  border:1px solid #e5e7eb;
+}
+
+.details-thumb img{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
+}
+
+.details-main h3{
+  margin:0;
+  font-size:24px;
+  line-height:1.1;
+  color:#0f172a;
+}
+
+.details-topline{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.details-meta{
+  margin-top:10px;
+}
+
+.details-desc{
+  margin:12px 0 0;
+  color:#64748b;
+  line-height:1.6;
+}
+
+.details-section{
+  margin-top:10px;
+}
+
+.details-section-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:14px;
+  flex-wrap:wrap;
+}
+
+.details-section-head h3{
+  margin:0;
+  font-size:18px;
+  color:#0f172a;
+}
+
+.details-section-head span{
+  font-size:13px;
+  color:#64748b;
+  font-weight:700;
+}
+
+.details-grid{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:14px;
+}
+
+.detail-price-card{
+  border:1px solid #e8edf5;
+  border-radius:18px;
+  background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow:0 5px 16px rgba(15,23,42,.04);
+  padding:14px;
+}
+
+.detail-price-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:12px;
+}
+
+.detail-price-head strong{
+  font-size:15px;
+  color:#0f172a;
+}
+
+.detail-price-body{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.detail-line{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 0;
+  border-bottom:1px solid #edf2f7;
+}
+
+.detail-line:last-child{
+  border-bottom:none;
+  padding-bottom:0;
+}
+
+.detail-line span{
+  font-size:13px;
+  color:#64748b;
+  font-weight:700;
+}
+
+.detail-line strong{
+  font-size:15px;
+  color:#0f172a;
+}
+
+.small-empty{
+  padding:28px 16px;
+}
+
 @keyframes spin{
   to{ transform:rotate(360deg); }
 }
@@ -1619,6 +1825,19 @@ const styles = `
 
   .pro-pager{
     justify-content:center;
+  }
+
+  .details-product-head{
+    grid-template-columns:1fr;
+  }
+
+  .details-thumb{
+    width:90px;
+    height:90px;
+  }
+
+  .details-grid{
+    grid-template-columns:1fr;
   }
 }
 `;

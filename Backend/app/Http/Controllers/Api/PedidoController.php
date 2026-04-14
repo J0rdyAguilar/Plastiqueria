@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Pedido;
 use App\Models\PedidoDetalle;
 use App\Models\ProductoPrecio;
+use App\Models\Usuario;
 use App\Models\Vendedor;
 use App\Services\StockService;
 use Illuminate\Http\Request;
@@ -57,25 +58,68 @@ class PedidoController extends Controller
         return $estado;
     }
 
+    private function findProductoPrecio(int $productoId, ?string $presentacion): ?ProductoPrecio
+    {
+        $presentacion = trim((string) $presentacion);
+
+        if ($productoId <= 0 || $presentacion === '') {
+            return null;
+        }
+
+        return ProductoPrecio::query()
+            ->where('producto_id', $productoId)
+            ->whereRaw('LOWER(presentacion) = ?', [mb_strtolower($presentacion)])
+            ->where('activo', true)
+            ->first();
+    }
+
     private function detalleResponse(PedidoDetalle $d): array
     {
+        $precioConfig = $this->findProductoPrecio(
+            (int) $d->producto_id,
+            (string) $d->presentacion
+        );
+
+        $cantidad = (float) ($d->cantidad ?? 0);
+        $precioVenta = (float) ($d->precio_unitario ?? 0);
+        $precioCosto = (float) ($precioConfig?->precio_costo ?? 0);
+        $precioVentaCatalogo = (float) ($precioConfig?->precio_venta ?? 0);
+        $subtotal = (float) ($d->subtotal ?? 0);
+
+        if ($subtotal <= 0) {
+            $subtotal = $cantidad * $precioVenta;
+        }
+
+        $gananciaUnitaria = $precioVenta - $precioCosto;
+        $gananciaTotal = $gananciaUnitaria * $cantidad;
+
         return [
             'id' => $d->id,
             'producto_id' => (int) $d->producto_id,
             'producto_nombre' => $d->producto?->nombre,
+            'producto_sku' => $d->producto?->sku,
             'presentacion' => $d->presentacion,
-            'cantidad' => (float) ($d->cantidad ?? 0),
+            'cantidad' => $cantidad,
             'cantidad_base' => (int) ($d->cantidad_base ?? 0),
-            'precio_unitario' => (float) ($d->precio_unitario ?? 0),
-            'subtotal' => (float) ($d->subtotal ?? 0),
+
+            'precio_costo' => $precioCosto,
+            'precio_unitario' => $precioVenta,
+            'precio_venta_catalogo' => $precioVentaCatalogo,
+
+            'subtotal' => $subtotal,
+            'ganancia_unitaria' => $gananciaUnitaria,
+            'ganancia_total' => $gananciaTotal,
+
+            'factor_base' => (float) ($precioConfig?->factor_base ?? 1),
             'es_monto_variable' => (bool) ($d->es_monto_variable ?? false),
         ];
     }
 
     private function pedidoResponse(Pedido $p): array
     {
-        $detalles = $p->detalles->map(fn ($d) => $this->detalleResponse($d))->values();
+        $detalles = $p->detalles->map(fn($d) => $this->detalleResponse($d))->values();
         $total = (float) ($p->total ?? $detalles->sum('subtotal'));
+        $gananciaTotal = (float) $detalles->sum('ganancia_total');
 
         $vendedorNombre =
             $p->vendedor?->usuario?->usuario
@@ -113,6 +157,7 @@ class PedidoController extends Controller
 
             'observaciones' => $p->observaciones,
             'total' => $total,
+            'ganancia_total' => $gananciaTotal,
 
             'creado_en' => optional($p->creado_en)->format('Y-m-d H:i:s'),
             'actualizado_en' => optional($p->actualizado_en)->format('Y-m-d H:i:s'),
@@ -124,6 +169,7 @@ class PedidoController extends Controller
                 'nombre' => $p->rutero->nombre,
                 'usuario' => $p->rutero->usuario,
                 'rol' => $p->rutero->rol,
+                'ubicacion_id' => $p->rutero->ubicacion_id,
             ] : null,
 
             'detalles' => $detalles,
@@ -136,7 +182,7 @@ class PedidoController extends Controller
             'cliente:id,nombre,ruta_id,zona_id',
             'vendedor:id,codigo,usuario_id',
             'vendedor.usuario:id,usuario,nombre',
-            'rutero:id,usuario,nombre,rol',
+            'rutero:id,usuario,nombre,rol,ubicacion_id',
             'ruta:id,nombre',
             'zona:id,nombre',
             'ubicacion:id,nombre,tipo',
@@ -165,7 +211,7 @@ class PedidoController extends Controller
                 'cliente:id,nombre,ruta_id,zona_id',
                 'vendedor:id,codigo,usuario_id',
                 'vendedor.usuario:id,usuario,nombre',
-                'rutero:id,usuario,nombre,rol',
+                'rutero:id,usuario,nombre,rol,ubicacion_id',
                 'ruta:id,nombre',
                 'zona:id,nombre',
                 'ubicacion:id,nombre,tipo',
@@ -227,14 +273,14 @@ class PedidoController extends Controller
                     })
                     ->orWhereHas('vendedor.usuario', function ($q) use ($qText) {
                         $q->where('usuario', 'like', "%{$qText}%")
-                          ->orWhere('nombre', 'like', "%{$qText}%");
+                            ->orWhere('nombre', 'like', "%{$qText}%");
                     })
                     ->orWhereHas('vendedor', function ($q) use ($qText) {
                         $q->where('codigo', 'like', "%{$qText}%");
                     })
                     ->orWhereHas('rutero', function ($q) use ($qText) {
                         $q->where('usuario', 'like', "%{$qText}%")
-                          ->orWhere('nombre', 'like', "%{$qText}%");
+                            ->orWhere('nombre', 'like', "%{$qText}%");
                     });
             });
         }
@@ -247,7 +293,7 @@ class PedidoController extends Controller
             'per_page' => $page->perPage(),
             'total' => $page->total(),
             'data' => collect($page->items())
-                ->map(fn ($p) => $this->pedidoResponse($p))
+                ->map(fn($p) => $this->pedidoResponse($p))
                 ->values(),
         ]);
     }
@@ -271,7 +317,7 @@ class PedidoController extends Controller
                 'cliente:id,nombre,ruta_id,zona_id',
                 'vendedor:id,codigo,usuario_id',
                 'vendedor.usuario:id,usuario,nombre',
-                'rutero:id,usuario,nombre,rol',
+                'rutero:id,usuario,nombre,rol,ubicacion_id',
                 'ruta:id,nombre',
                 'zona:id,nombre',
                 'ubicacion:id,nombre,tipo',
@@ -296,7 +342,7 @@ class PedidoController extends Controller
             'per_page' => $page->perPage(),
             'total' => $page->total(),
             'data' => collect($page->items())
-                ->map(fn ($p) => $this->pedidoResponse($p))
+                ->map(fn($p) => $this->pedidoResponse($p))
                 ->values(),
         ]);
     }
@@ -323,10 +369,10 @@ class PedidoController extends Controller
             'detalles' => ['required', 'array', 'min:1'],
             'detalles.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
             'detalles.*.presentacion' => ['required', 'string', 'max:50'],
-            'detalles.*.cantidad' => ['nullable', 'numeric', 'min:0.01'],
+            'detalles.*.cantidad' => ['required', 'numeric', 'min:0.01'],
             'detalles.*.cantidad_base' => ['required', 'integer', 'min:1'],
             'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0'],
-            'detalles.*.subtotal' => ['required', 'numeric', 'min:0'],
+            'detalles.*.subtotal' => ['nullable', 'numeric', 'min:0'],
             'detalles.*.es_monto_variable' => ['nullable', Rule::in([0, 1, '0', '1', true, false])],
         ]);
 
@@ -381,7 +427,13 @@ class PedidoController extends Controller
         }
 
         return DB::transaction(function () use ($data) {
-            $total = collect($data['detalles'])->sum(fn ($d) => (float) $d['subtotal']);
+            $total = collect($data['detalles'])->sum(function ($d) {
+                $cantidad = (float) ($d['cantidad'] ?? 0);
+                $precio = (float) ($d['precio_unitario'] ?? 0);
+                return array_key_exists('subtotal', $d)
+                    ? (float) $d['subtotal']
+                    : ($cantidad * $precio);
+            });
 
             $pedido = Pedido::create([
                 'codigo' => $this->generarCodigo(),
@@ -402,14 +454,20 @@ class PedidoController extends Controller
             ]);
 
             foreach ($data['detalles'] as $d) {
+                $cantidad = (float) $d['cantidad'];
+                $precio = (float) $d['precio_unitario'];
+                $subtotal = array_key_exists('subtotal', $d)
+                    ? (float) $d['subtotal']
+                    : ($cantidad * $precio);
+
                 PedidoDetalle::create([
                     'pedido_id' => $pedido->id,
                     'producto_id' => (int) $d['producto_id'],
                     'presentacion' => $d['presentacion'],
-                    'cantidad' => isset($d['cantidad']) ? (float) $d['cantidad'] : null,
+                    'cantidad' => $cantidad,
                     'cantidad_base' => (int) $d['cantidad_base'],
-                    'precio_unitario' => (float) $d['precio_unitario'],
-                    'subtotal' => (float) $d['subtotal'],
+                    'precio_unitario' => $precio,
+                    'subtotal' => $subtotal,
                     'es_monto_variable' => !empty($d['es_monto_variable']) ? 1 : 0,
                 ]);
             }
@@ -420,6 +478,73 @@ class PedidoController extends Controller
                 'message' => 'Pedido creado correctamente.',
                 'data' => $this->pedidoResponse($pedido),
             ], 201);
+        });
+    }
+
+    public function update(Pedido $pedido, Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+
+        if (!in_array($role, ['admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($role === 'admin' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+            return response()->json([
+                'message' => 'No puedes editar pedidos de otra sucursal.'
+            ], 403);
+        }
+
+        $data = $request->validate([
+            'observaciones' => ['nullable', 'string'],
+            'detalles' => ['required', 'array', 'min:1'],
+            'detalles.*.id' => ['required', 'integer', 'exists:pedido_detalles,id'],
+            'detalles.*.presentacion' => ['required', 'string', 'max:50'],
+            'detalles.*.cantidad' => ['required', 'numeric', 'min:0.01'],
+            'detalles.*.cantidad_base' => ['required', 'integer', 'min:1'],
+            'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0'],
+            'detalles.*.subtotal' => ['nullable', 'numeric', 'min:0'],
+            'detalles.*.es_monto_variable' => ['nullable', Rule::in([0, 1, '0', '1', true, false])],
+        ]);
+
+        return DB::transaction(function () use ($pedido, $data) {
+            if (array_key_exists('observaciones', $data)) {
+                $pedido->observaciones = $data['observaciones'];
+            }
+
+            foreach ($data['detalles'] as $d) {
+                $det = PedidoDetalle::query()
+                    ->where('pedido_id', $pedido->id)
+                    ->where('id', (int) $d['id'])
+                    ->firstOrFail();
+
+                $cantidad = (float) $d['cantidad'];
+                $precio = (float) $d['precio_unitario'];
+                $subtotal = array_key_exists('subtotal', $d)
+                    ? (float) $d['subtotal']
+                    : ($cantidad * $precio);
+
+                $det->presentacion = $d['presentacion'];
+                $det->cantidad = $cantidad;
+                $det->cantidad_base = (int) $d['cantidad_base'];
+                $det->precio_unitario = $precio;
+                $det->subtotal = $subtotal;
+                $det->es_monto_variable = !empty($d['es_monto_variable']) ? 1 : 0;
+                $det->save();
+            }
+
+            $pedido->total = (float) $pedido->detalles()->sum('subtotal');
+            $pedido->actualizado_en = now();
+            $pedido->save();
+
+            $this->loadPedidoRelations($pedido);
+
+            return response()->json([
+                'message' => 'Pedido actualizado correctamente.',
+                'data' => $this->pedidoResponse($pedido),
+            ]);
         });
     }
 
@@ -521,10 +646,18 @@ class PedidoController extends Controller
                         $det->precio_unitario = (float) $d['precio_unitario'];
                     }
 
+                    $cantidadActual = array_key_exists('cantidad', $d)
+                        ? (float) $d['cantidad']
+                        : (float) ($det->cantidad ?? 0);
+
+                    $precioActual = array_key_exists('precio_unitario', $d)
+                        ? (float) $d['precio_unitario']
+                        : (float) ($det->precio_unitario ?? 0);
+
                     if (array_key_exists('subtotal', $d)) {
                         $det->subtotal = (float) $d['subtotal'];
                     } else {
-                        $det->subtotal = (float) $det->precio_unitario;
+                        $det->subtotal = $cantidadActual * $precioActual;
                     }
 
                     if (array_key_exists('es_monto_variable', $d)) {
@@ -664,15 +797,35 @@ class PedidoController extends Controller
 
     public function asignarRutero(Request $request, Pedido $pedido)
     {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+
+        if (!in_array($role, ['admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($role === 'admin' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+            return response()->json([
+                'message' => 'No puedes asignar rutero a pedidos de otra sucursal.'
+            ], 403);
+        }
+
         $data = $request->validate([
             'rutero_id' => ['required', 'integer', 'exists:usuarios,id'],
         ]);
 
-        $rutero = \App\Models\Usuario::findOrFail($data['rutero_id']);
+        $rutero = Usuario::findOrFail($data['rutero_id']);
 
         if ($rutero->rol !== 'rutero') {
             return response()->json([
                 'message' => 'El usuario seleccionado no es un rutero.'
+            ], 422);
+        }
+
+        if (!empty($rutero->ubicacion_id) && (int) $rutero->ubicacion_id !== (int) $pedido->ubicacion_id) {
+            return response()->json([
+                'message' => 'No puedes asignar un rutero de otra sucursal.'
             ], 422);
         }
 
@@ -698,7 +851,7 @@ class PedidoController extends Controller
             'cliente:id,nombre,ruta_id,zona_id',
             'vendedor:id,codigo,usuario_id',
             'vendedor.usuario:id,usuario,nombre',
-            'rutero:id,usuario,nombre,rol',
+            'rutero:id,usuario,nombre,rol,ubicacion_id',
             'ruta:id,nombre',
             'zona:id,nombre',
             'ubicacion:id,nombre,tipo',
@@ -719,30 +872,18 @@ class PedidoController extends Controller
             'per_page' => $page->perPage(),
             'total' => $page->total(),
             'data' => collect($page->items())
-                ->map(fn ($p) => $this->pedidoResponse($p))
+                ->map(fn($p) => $this->pedidoResponse($p))
                 ->values(),
         ]);
-    }
-
-    private function generarCodigo(): string
-    {
-        return 'PED-' . now()->format('Ymd-His') . '-' . random_int(100, 999);
     }
 
     public function misPedidosRutero(Request $request)
     {
         $user = $request->user();
-        $userUbicacionId = $this->userUbicacionId($user);
         $soloActivos = $request->boolean('solo_activos', true);
 
         $query = Pedido::query()
             ->where('rutero_id', (int) $user->id);
-
-        // PRUEBA TEMPORAL:
-        // comentamos el filtro por sucursal para ver si eso está bloqueando el pedido
-        // if ($userUbicacionId) {
-        //     $query->where('ubicacion_id', $userUbicacionId);
-        // }
 
         if ($soloActivos) {
             $query->whereIn('estado', ['en_ruta', 'preparando', 'aprobado']);
@@ -767,5 +908,10 @@ class PedidoController extends Controller
         return response()->json([
             'data' => $pedidos,
         ]);
+    }
+
+    private function generarCodigo(): string
+    {
+        return 'PED-' . now()->format('Ymd-His') . '-' . random_int(100, 999);
     }
 }

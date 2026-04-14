@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { pedidosAdminApi } from "../lib/pedidosAdmin";
 import { notify } from "../lib/notify";
 import { usuariosApi } from "../lib/usuarios";
+import { getSession } from "../lib/auth";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -11,16 +12,6 @@ function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
-
-const PRESENTACIONES = [
-  "unidad",
-  "docena",
-  "fardo",
-  "paquete",
-  "caja",
-  "bolsa",
-  "millar",
-];
 
 function InlineLoader() {
   return (
@@ -50,27 +41,28 @@ function ModalLoader({ text = "Cargando..." }) {
 function badgeStyle(estado) {
   const base = {
     display: "inline-block",
-    padding: "6px 10px",
+    padding: "6px 12px",
     borderRadius: 999,
     fontSize: 12,
-    fontWeight: 700,
+    fontWeight: 800,
     textTransform: "capitalize",
     whiteSpace: "nowrap",
+    border: "1px solid transparent",
   };
 
   switch (estado) {
     case "pendiente_revision":
-      return { ...base, background: "#fff7ed", color: "#9a3412" };
+      return { ...base, background: "#fff7ed", color: "#9a3412", borderColor: "#fed7aa" };
     case "aprobado":
-      return { ...base, background: "#ecfeff", color: "#155e75" };
+      return { ...base, background: "#ecfeff", color: "#155e75", borderColor: "#a5f3fc" };
     case "preparando":
-      return { ...base, background: "#ecfdf5", color: "#166534" };
+      return { ...base, background: "#ecfdf5", color: "#166534", borderColor: "#bbf7d0" };
     case "en_ruta":
-      return { ...base, background: "#eff6ff", color: "#1d4ed8" };
+      return { ...base, background: "#eff6ff", color: "#1d4ed8", borderColor: "#bfdbfe" };
     case "entregado":
-      return { ...base, background: "#f3f4f6", color: "#374151" };
+      return { ...base, background: "#f3f4f6", color: "#374151", borderColor: "#d1d5db" };
     default:
-      return { ...base, background: "#eef2ff", color: "#3730a3" };
+      return { ...base, background: "#eef2ff", color: "#3730a3", borderColor: "#c7d2fe" };
   }
 }
 
@@ -88,23 +80,37 @@ function formatDate(value) {
 function mapDetalleToLinea(d) {
   const cantidadReal = num(d.cantidad);
   const cantidadBase = num(d.cantidad_base);
-  const precio = num(d.precio_unitario);
+  const cantidad = cantidadReal > 0 ? cantidadReal : cantidadBase;
+
+  const precioCosto = num(d.precio_costo);
+  const precioVenta = num(d.precio_unitario);
+  const subtotal = num(d.subtotal) || cantidad * precioVenta;
+  const gananciaUnitaria = num(d.ganancia_unitaria) || (precioVenta - precioCosto);
+  const gananciaTotal = num(d.ganancia_total) || (gananciaUnitaria * cantidad);
 
   return {
     id: d.id,
     producto_id: d.producto_id,
     producto_nombre: d.producto_nombre,
+    producto_sku: d.producto_sku,
     presentacion: d.presentacion || "unidad",
-    cantidad: cantidadReal > 0 ? cantidadReal : cantidadBase,
+    cantidad,
     cantidad_base: cantidadBase > 0 ? cantidadBase : (cantidadReal > 0 ? cantidadReal : 0),
-    precio_unitario: precio,
-    subtotal: num(d.subtotal) || (cantidadReal > 0 ? cantidadReal : cantidadBase) * precio,
+    precio_costo: precioCosto,
+    precio_unitario: precioVenta,
+    subtotal,
+    ganancia_unitaria: gananciaUnitaria,
+    ganancia_total: gananciaTotal,
     es_monto_variable: !!d.es_monto_variable,
-    sugeridos: [precio, precio + 2, precio + 5],
   };
 }
 
 export default function PedidosAdmin() {
+  const session = getSession();
+  const me = session?.user || {};
+  const rol = String(me?.rol || me?.role || "").toLowerCase();
+  const isSuperAdmin = rol === "super_admin" || rol === "superadmin";
+
   const [q, setQ] = useState("");
   const [estado, setEstado] = useState("pendiente_revision");
   const [items, setItems] = useState([]);
@@ -116,6 +122,7 @@ export default function PedidosAdmin() {
   const [loadingRuteros, setLoadingRuteros] = useState(true);
   const [ruteros, setRuteros] = useState([]);
   const [ruteroId, setRuteroId] = useState("");
+  const [ubicacionFiltro, setUbicacionFiltro] = useState("");
 
   async function loadPedidos(selectedId = null) {
     try {
@@ -124,6 +131,7 @@ export default function PedidosAdmin() {
       const res = await pedidosAdminApi.list({
         q,
         estado,
+        ubicacion_id: isSuperAdmin ? ubicacionFiltro : "",
         page: 1,
         per_page: 50,
       });
@@ -159,7 +167,7 @@ export default function PedidosAdmin() {
       }
     } catch (err) {
       console.error(err);
-      notify.error(err, "No se pudieron cargar los pedidos.");
+      notify.error("No se pudieron cargar los pedidos.");
     } finally {
       setLoading(false);
     }
@@ -172,7 +180,7 @@ export default function PedidosAdmin() {
       setRuteros(res?.data || []);
     } catch (err) {
       console.error(err);
-      notify.error(err, "No se pudieron cargar los ruteros.");
+      notify.error("No se pudieron cargar los ruteros.");
     } finally {
       setLoadingRuteros(false);
     }
@@ -181,7 +189,6 @@ export default function PedidosAdmin() {
   useEffect(() => {
     loadPedidos();
     loadRuteros();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function seleccionarPedido(item) {
@@ -200,8 +207,12 @@ export default function PedidosAdmin() {
 
         next.cantidad = Math.max(0, num(next.cantidad));
         next.cantidad_base = Math.max(0, num(next.cantidad_base));
+        next.precio_costo = Math.max(0, num(next.precio_costo));
         next.precio_unitario = Math.max(0, num(next.precio_unitario));
+
         next.subtotal = num(next.cantidad) * num(next.precio_unitario);
+        next.ganancia_unitaria = num(next.precio_unitario) - num(next.precio_costo);
+        next.ganancia_total = num(next.ganancia_unitaria) * num(next.cantidad);
 
         return next;
       })
@@ -210,6 +221,10 @@ export default function PedidosAdmin() {
 
   const total = useMemo(() => {
     return lineasEdit.reduce((acc, item) => acc + num(item.subtotal), 0);
+  }, [lineasEdit]);
+
+  const totalGanancia = useMemo(() => {
+    return lineasEdit.reduce((acc, item) => acc + num(item.ganancia_total), 0);
   }, [lineasEdit]);
 
   function buildDetallesPayload() {
@@ -224,8 +239,37 @@ export default function PedidosAdmin() {
     }));
   }
 
-  function guardarCambios() {
-    notify.error("Editar pedido aún no está implementado.");
+  async function guardarCambios() {
+    if (!pedidoActivo) {
+      notify.error("Selecciona un pedido.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const res = await pedidosAdminApi.update(pedidoActivo.id, {
+        observaciones,
+        detalles: buildDetallesPayload(),
+      });
+
+      const actualizado = res?.data || null;
+
+      if (actualizado) {
+        setPedidoActivo(actualizado);
+        setObservaciones(actualizado.observaciones || "");
+        setRuteroId(actualizado.rutero_id || "");
+        setLineasEdit((actualizado.detalles || []).map(mapDetalleToLinea));
+      }
+
+      notify.success(res?.message || "Pedido actualizado correctamente.");
+      await loadPedidos(pedidoActivo.id);
+    } catch (err) {
+      console.error(err);
+      notify.error(err?.response?.data?.message || "No se pudieron guardar los cambios.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function aprobarPedido() {
@@ -234,13 +278,25 @@ export default function PedidosAdmin() {
     try {
       setSaving(true);
 
-      await pedidosAdminApi.aprobar(pedidoActivo.id);
+      const res = await pedidosAdminApi.aprobar(pedidoActivo.id, {
+        observaciones,
+        detalles: buildDetallesPayload(),
+      });
 
-      notify.success("Pedido aprobado correctamente.");
+      const actualizado = res?.data || null;
+
+      if (actualizado) {
+        setPedidoActivo(actualizado);
+        setObservaciones(actualizado.observaciones || "");
+        setRuteroId(actualizado.rutero_id || "");
+        setLineasEdit((actualizado.detalles || []).map(mapDetalleToLinea));
+      }
+
+      notify.success(res?.message || "Pedido aprobado correctamente.");
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
-      notify.error(err, "No se pudo aprobar el pedido.");
+      notify.error(err?.response?.data?.message || "No se pudo aprobar el pedido.");
     } finally {
       setSaving(false);
     }
@@ -256,7 +312,7 @@ export default function PedidosAdmin() {
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
-      notify.error(err, "No se pudo actualizar el pedido.");
+      notify.error(err?.response?.data?.message || "No se pudo actualizar el pedido.");
     } finally {
       setSaving(false);
     }
@@ -300,7 +356,7 @@ export default function PedidosAdmin() {
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
-      notify.error(err, "No se pudo asignar el rutero.");
+      notify.error(err?.response?.data?.message || "No se pudo asignar el rutero.");
     } finally {
       setSaving(false);
     }
@@ -316,189 +372,10 @@ export default function PedidosAdmin() {
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
-      notify.error(err, "No se pudo actualizar el pedido.");
+      notify.error(err?.response?.data?.message || "No se pudo actualizar el pedido.");
     } finally {
       setSaving(false);
     }
-  }
-
-  function imprimirTicket() {
-    if (!pedidoActivo) {
-      notify.error("Selecciona un pedido para imprimir.");
-      return;
-    }
-
-    const detalles = lineasEdit.length > 0 ? lineasEdit : pedidoActivo?.detalles || [];
-    const totalTicket =
-      lineasEdit.length > 0
-        ? total
-        : (pedidoActivo?.detalles || []).reduce((acc, d) => acc + num(d.subtotal), 0);
-
-    const html = `
-      <!doctype html>
-      <html lang="es">
-      <head>
-        <meta charset="utf-8" />
-        <title>Ticket Pedido #${pedidoActivo.id}</title>
-        <style>
-          * { box-sizing: border-box; }
-          html, body {
-            margin: 0;
-            padding: 0;
-            background: #ffffff;
-            color: #111827;
-            font-family: Arial, Helvetica, sans-serif;
-          }
-          body { padding: 12px; }
-          .ticket { width: 80mm; margin: 0 auto; }
-          .center { text-align: center; }
-          .title { font-size: 20px; font-weight: 800; margin-bottom: 2px; }
-          .subtitle { font-size: 12px; color: #4b5563; margin-bottom: 10px; }
-          .box {
-            border-top: 1px dashed #9ca3af;
-            border-bottom: 1px dashed #9ca3af;
-            padding: 8px 0;
-            margin: 8px 0;
-          }
-          .row {
-            display: flex;
-            justify-content: space-between;
-            gap: 8px;
-            margin: 4px 0;
-            font-size: 12px;
-          }
-          .label { color: #4b5563; }
-          .line-item {
-            padding: 7px 0;
-            border-bottom: 1px dashed #d1d5db;
-          }
-          .prod {
-            font-size: 13px;
-            font-weight: 700;
-            margin-bottom: 4px;
-          }
-          .muted {
-            color: #6b7280;
-            font-size: 11px;
-          }
-          .totals {
-            margin-top: 10px;
-            border-top: 2px solid #111827;
-            padding-top: 8px;
-          }
-          .total-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 18px;
-            font-weight: 800;
-          }
-          .footer {
-            margin-top: 14px;
-            text-align: center;
-            font-size: 11px;
-            color: #6b7280;
-          }
-          @media print {
-            body { padding: 0; }
-            .ticket { width: 80mm; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="ticket">
-          <div class="center">
-            <div class="title">PLASTIMAX</div>
-            <div class="subtitle">Ticket de pedido</div>
-          </div>
-
-          <div class="box">
-            <div class="row"><span class="label">Pedido:</span><strong>#${pedidoActivo.id}</strong></div>
-            <div class="row"><span class="label">Fecha:</span><strong>${formatDate(
-              pedidoActivo.creado_en
-            )}</strong></div>
-            <div class="row"><span class="label">Estado:</span><strong>${estadoLabel(
-              pedidoActivo.estado
-            )}</strong></div>
-            <div class="row"><span class="label">Cliente:</span><strong>${
-              pedidoActivo.cliente_nombre || "—"
-            }</strong></div>
-            <div class="row"><span class="label">Vendedor:</span><strong>${
-              pedidoActivo.vendedor_nombre || "—"
-            }</strong></div>
-            <div class="row"><span class="label">Rutero:</span><strong>${
-              pedidoActivo.rutero?.nombre ||
-              pedidoActivo.rutero_nombre ||
-              "Sin asignar"
-            }</strong></div>
-          </div>
-
-          <div>
-            ${detalles
-              .map(
-                (d) => `
-              <div class="line-item">
-                <div class="prod">${d.producto_nombre || `Producto #${d.producto_id}`}</div>
-                <div class="row">
-                  <span class="muted">${num(d.cantidad)} x ${d.presentacion || "unidad"}</span>
-                  <strong>${money(d.precio_unitario)}</strong>
-                </div>
-                <div class="row">
-                  <span class="muted">Subtotal</span>
-                  <strong>${money(d.subtotal)}</strong>
-                </div>
-              </div>
-            `
-              )
-              .join("")}
-          </div>
-
-          ${
-            observaciones
-              ? `
-            <div class="box">
-              <div style="font-size:12px;font-weight:700;margin-bottom:4px;">Observaciones</div>
-              <div style="font-size:12px;">${String(observaciones)
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")}</div>
-            </div>
-          `
-              : ""
-          }
-
-          <div class="totals">
-            <div class="total-row">
-              <span>Total</span>
-              <span>${money(totalTicket)}</span>
-            </div>
-          </div>
-
-          <div class="footer">
-            Impreso el ${new Date().toLocaleString()}<br/>
-            Gracias por su pedido
-          </div>
-        </div>
-
-        <script>
-          window.onload = function() {
-            window.print();
-            window.onafterprint = function() {
-              window.close();
-            };
-          };
-        </script>
-      </body>
-      </html>
-    `;
-
-    const win = window.open("", "_blank", "width=420,height=760");
-    if (!win) {
-      notify.error("El navegador bloqueó la ventana de impresión.");
-      return;
-    }
-
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
   }
 
   return (
@@ -512,22 +389,14 @@ export default function PedidosAdmin() {
         </div>
       </header>
 
-      <div
-        style={{
-          marginTop: 12,
-          display: "grid",
-          gridTemplateColumns: "1.28fr 1fr",
-          gap: 16,
-          alignItems: "start",
-        }}
-      >
+      <div style={pageGridStyle}>
         <div>
           <div className="card pad" style={leftCardStyle}>
             <div style={toolbarWrapStyle}>
               <div style={toolbarGridStyle}>
                 <input
                   type="text"
-                  placeholder="Buscar por cliente o vendedor"
+                  placeholder="Buscar por cliente, vendedor o código"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   style={inputStyle}
@@ -559,18 +428,23 @@ export default function PedidosAdmin() {
                   {loading ? <InlineLoader /> : "Buscar"}
                 </button>
               </div>
+
+              {isSuperAdmin ? (
+                <div style={{ marginTop: 12 }}>
+                  <input
+                    type="number"
+                    placeholder="Filtrar por sucursal (ID)"
+                    value={ubicacionFiltro}
+                    onChange={(e) => setUbicacionFiltro(e.target.value)}
+                    style={inputStyle}
+                    disabled={loading || saving}
+                  />
+                </div>
+              ) : null}
             </div>
 
             <div style={{ marginTop: 18 }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  marginBottom: 12,
-                }}
-              >
+              <div style={listHeaderStyle}>
                 <h3 style={{ margin: 0 }}>Listado de pedidos</h3>
                 <div className="muted small">
                   {loading ? <InlineLoader /> : `${items.length} pedido(s)`}
@@ -602,29 +476,15 @@ export default function PedidosAdmin() {
                               : "1px solid #dbe1ea",
                           boxShadow:
                             pedidoActivo?.id === item.id
-                              ? "0 10px 25px rgba(15, 23, 42, 0.10)"
-                              : "0 4px 14px rgba(15, 23, 42, 0.04)",
+                              ? "0 12px 28px rgba(15, 23, 42, 0.10)"
+                              : "0 6px 16px rgba(15, 23, 42, 0.05)",
                           cursor: saving ? "not-allowed" : "pointer",
                           opacity: saving ? 0.7 : 1,
                         }}
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "flex-start",
-                            gap: 12,
-                          }}
-                        >
+                        <div style={pedidoItemTopStyle}>
                           <div style={{ minWidth: 0 }}>
-                            <div
-                              style={{
-                                fontWeight: 800,
-                                fontSize: 16,
-                                color: "#0f172a",
-                                marginBottom: 6,
-                              }}
-                            >
+                            <div style={pedidoTitleStyle}>
                               Pedido #{item.id}
                             </div>
 
@@ -634,34 +494,23 @@ export default function PedidosAdmin() {
                             <div className="muted" style={{ marginBottom: 3 }}>
                               Vendedor: {item.vendedor_nombre || "—"}
                             </div>
+                            <div className="muted" style={{ marginBottom: 3 }}>
+                              Sucursal: {item.ubicacion_nombre || "—"}
+                            </div>
                             <div className="muted">
-                              Rutero:{" "}
-                              {item.rutero?.nombre ||
-                                item.rutero_nombre ||
-                                "Sin asignar"}
+                              Rutero: {item.rutero?.nombre || item.rutero_nombre || "Sin asignar"}
                             </div>
                           </div>
 
-                          <div
-                            style={{
-                              textAlign: "right",
-                              display: "grid",
-                              gap: 8,
-                              justifyItems: "end",
-                              flexShrink: 0,
-                            }}
-                          >
+                          <div style={pedidoAmountWrapStyle}>
                             <div style={badgeStyle(item.estado)}>
                               {estadoLabel(item.estado)}
                             </div>
-                            <div
-                              style={{
-                                fontWeight: 900,
-                                fontSize: 20,
-                                color: "#0f172a",
-                              }}
-                            >
+                            <div style={pedidoAmountStyle}>
                               {money(item.total)}
+                            </div>
+                            <div style={pedidoGainMiniStyle}>
+                              Ganancia: {money(item.ganancia_total)}
                             </div>
                           </div>
                         </div>
@@ -675,8 +524,8 @@ export default function PedidosAdmin() {
         </div>
 
         <div style={{ display: "grid", gap: 16 }}>
-          <div className="card pad">
-            <h3 style={{ marginTop: 0 }}>Detalle del pedido</h3>
+          <div className="card pad" style={rightCardStyle}>
+            <h3 style={{ marginTop: 0, marginBottom: 14 }}>Detalle del pedido</h3>
 
             {!pedidoActivo ? (
               <div className="muted">Selecciona un pedido para ver su detalle.</div>
@@ -684,209 +533,212 @@ export default function PedidosAdmin() {
               <ModalLoader text="Procesando pedido..." />
             ) : (
               <>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <div>
-                    <b>Cliente:</b> {pedidoActivo.cliente_nombre}
+                <div style={heroSummaryStyle}>
+                  <div style={heroSummaryBlockStyle}>
+                    <span style={summaryLabelStyle}>Cliente</span>
+                    <strong>{pedidoActivo.cliente_nombre || "—"}</strong>
                   </div>
-                  <div>
-                    <b>Vendedor:</b> {pedidoActivo.vendedor_nombre}
+
+                  <div style={heroSummaryBlockStyle}>
+                    <span style={summaryLabelStyle}>Vendedor</span>
+                    <strong>{pedidoActivo.vendedor_nombre || "—"}</strong>
                   </div>
-                  <div>
-                    <b>Rutero:</b>{" "}
-                    {pedidoActivo.rutero?.nombre ||
-                      pedidoActivo.rutero_nombre ||
-                      "Sin asignar"}
+
+                  <div style={heroSummaryBlockStyle}>
+                    <span style={summaryLabelStyle}>Sucursal</span>
+                    <strong>{pedidoActivo.ubicacion_nombre || "—"}</strong>
                   </div>
-                  <div>
-                    <b>Estado:</b>{" "}
-                    <span style={badgeStyle(pedidoActivo.estado)}>
-                      {estadoLabel(pedidoActivo.estado)}
-                    </span>
+
+                  <div style={heroSummaryBlockStyle}>
+                    <span style={summaryLabelStyle}>Rutero</span>
+                    <strong>
+                      {pedidoActivo.rutero?.nombre ||
+                        pedidoActivo.rutero_nombre ||
+                        "Sin asignar"}
+                    </strong>
+                  </div>
+
+                  <div style={heroSummaryBlockStyle}>
+                    <span style={summaryLabelStyle}>Estado</span>
+                    <div>
+                      <span style={badgeStyle(pedidoActivo.estado)}>
+                        {estadoLabel(pedidoActivo.estado)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={heroSummaryBlockStyle}>
+                    <span style={summaryLabelStyle}>Fecha</span>
+                    <strong>{formatDate(pedidoActivo.creado_en)}</strong>
                   </div>
                 </div>
 
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 16 }}>
                   <label className="muted" style={{ display: "block", marginBottom: 6 }}>
                     Observaciones
                   </label>
                   <textarea
-                    rows={3}
+                    rows={4}
                     value={observaciones}
                     onChange={(e) => setObservaciones(e.target.value)}
-                    style={{ ...inputStyle, resize: "vertical" }}
+                    style={{ ...inputStyle, resize: "vertical", minHeight: 110 }}
                     disabled={saving}
                   />
                 </div>
 
-                <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-                  {lineasEdit.map((l) => (
-                    <div
-                      key={l.id}
-                      style={{
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 12,
-                        padding: 12,
-                      }}
-                    >
-                      <div style={{ fontWeight: 700 }}>{l.producto_nombre}</div>
+                <div style={totalsPanelStyle}>
+                  <div style={totalsItemStyle}>
+                    <span style={summaryLabelStyle}>Total venta</span>
+                    <strong style={{ fontSize: 28, color: "#0f172a" }}>{money(total)}</strong>
+                  </div>
 
-                      <div
-                        style={{
-                          marginTop: 10,
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: 10,
-                        }}
-                      >
-                        <div>
-                          <label
-                            className="muted"
-                            style={{ display: "block", marginBottom: 6 }}
-                          >
-                            Presentación
-                          </label>
-                          <select
-                            value={l.presentacion}
-                            onChange={(e) =>
-                              setLinea(l.id, { presentacion: e.target.value })
-                            }
-                            style={inputStyle}
-                            disabled={saving}
-                          >
-                            {PRESENTACIONES.map((p) => (
-                              <option key={p} value={p}>
-                                {p}
-                              </option>
-                            ))}
-                          </select>
+                  <div style={totalsItemGreenStyle}>
+                    <span style={summaryLabelStyle}>Ganancia estimada</span>
+                    <strong style={{ fontSize: 26, color: "#166534" }}>{money(totalGanancia)}</strong>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 20 }}>
+                  <div style={sectionTitleStyle}>Detalle comercial</div>
+
+                  <div style={{ marginTop: 12, display: "grid", gap: 14 }}>
+                    {lineasEdit.map((l) => (
+                      <div key={l.id} style={lineCardStyle}>
+                        <div style={lineCardHeaderStyle}>
+                          <div>
+                            <div style={{ fontWeight: 800, fontSize: 18, color: "#0f172a" }}>
+                              {l.producto_nombre}
+                            </div>
+                            <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+                              SKU: {l.producto_sku || "—"} · Presentación: {l.presentacion}
+                            </div>
+                          </div>
+
+                          <div style={gainPillStyle}>
+                            Ganancia total: {money(l.ganancia_total)}
+                          </div>
                         </div>
 
-                        <div>
-                          <label
-                            className="muted"
-                            style={{ display: "block", marginBottom: 6 }}
-                          >
-                            Cantidad
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={l.cantidad}
-                            onChange={(e) =>
-                              setLinea(l.id, {
-                                cantidad: num(e.target.value),
-                              })
-                            }
-                            style={inputStyle}
-                            disabled={saving}
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            className="muted"
-                            style={{ display: "block", marginBottom: 6 }}
-                          >
-                            Precio
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={l.precio_unitario}
-                            onChange={(e) =>
-                              setLinea(l.id, {
-                                precio_unitario: num(e.target.value),
-                              })
-                            }
-                            style={inputStyle}
-                            disabled={saving}
-                          />
-                        </div>
-                      </div>
-
-                      <div style={{ marginTop: 10 }}>
-                        <label
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!!l.es_monto_variable}
-                            onChange={(e) =>
-                              setLinea(l.id, {
-                                es_monto_variable: e.target.checked,
-                              })
-                            }
-                            disabled={saving}
-                          />
-                          <span>Habilitar monto variable</span>
-                        </label>
-                      </div>
-
-                      <div style={{ marginTop: 10 }}>
-                        <div className="muted" style={{ marginBottom: 6 }}>
-                          Precios sugeridos
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          {l.sugeridos.map((p) => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() =>
-                                setLinea(l.id, {
-                                  precio_unitario: p,
-                                  es_monto_variable: true,
-                                })
-                              }
-                              style={suggestBtn}
+                        <div style={lineGridStyle}>
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Presentación</label>
+                            <input
+                              value={l.presentacion}
+                              onChange={(e) => setLinea(l.id, { presentacion: e.target.value })}
+                              style={inputStyle}
                               disabled={saving}
-                            >
-                              {money(p)}
-                            </button>
-                          ))}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Cantidad</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={l.cantidad}
+                              onChange={(e) => setLinea(l.id, { cantidad: num(e.target.value) })}
+                              style={inputStyle}
+                              disabled={saving}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Cantidad base</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={l.cantidad_base}
+                              onChange={(e) =>
+                                setLinea(l.id, { cantidad_base: num(e.target.value) })
+                              }
+                              style={inputStyle}
+                              disabled={saving}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Precio venta</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={l.precio_unitario}
+                              onChange={(e) =>
+                                setLinea(l.id, { precio_unitario: num(e.target.value) })
+                              }
+                              style={inputStyle}
+                              disabled={saving}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Precio costo</label>
+                            <input
+                              type="number"
+                              value={l.precio_costo}
+                              style={{ ...inputStyle, background: "#f8fafc" }}
+                              disabled
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Ganancia unitaria</label>
+                            <input
+                              type="number"
+                              value={l.ganancia_unitaria}
+                              style={{ ...inputStyle, background: "#f8fafc" }}
+                              disabled
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Subtotal</label>
+                            <input
+                              type="number"
+                              value={l.subtotal}
+                              style={{ ...inputStyle, background: "#f8fafc" }}
+                              disabled
+                            />
+                          </div>
+
+                          <div>
+                            <label className="muted" style={fieldLabelStyle}>Ganancia total</label>
+                            <input
+                              type="number"
+                              value={l.ganancia_total}
+                              style={{
+                                ...inputStyle,
+                                background: "#ecfdf5",
+                                color: "#166534",
+                                fontWeight: 700,
+                              }}
+                              disabled
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ marginTop: 12 }}>
+                          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={!!l.es_monto_variable}
+                              onChange={(e) =>
+                                setLinea(l.id, { es_monto_variable: e.target.checked })
+                              }
+                              disabled={saving}
+                            />
+                            <span>Habilitar monto variable</span>
+                          </label>
                         </div>
                       </div>
-
-                      <div style={{ marginTop: 10, fontWeight: 800 }}>
-                        Subtotal: {money(l.subtotal)}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
 
-                <hr
-                  style={{
-                    margin: "14px 0",
-                    border: 0,
-                    borderTop: "1px solid #eee",
-                  }}
-                />
-
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontWeight: 800,
-                    fontSize: 18,
-                  }}
-                >
-                  <span>Total</span>
-                  <span>{money(total)}</span>
-                </div>
-
-                <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-                  <div
-                    style={{
-                      border: "1px solid #e5e7eb",
-                      borderRadius: 12,
-                      padding: 12,
-                    }}
-                  >
+                <div style={{ marginTop: 18, display: "grid", gap: 10 }}>
+                  <div style={actionCardStyle}>
                     <label className="muted" style={{ display: "block", marginBottom: 6 }}>
                       Asignar rutero
                     </label>
@@ -911,7 +763,7 @@ export default function PedidosAdmin() {
                         <button
                           type="button"
                           onClick={asignarRutero}
-                          style={{ ...primaryBtn, marginTop: 8, width: "100%" }}
+                          style={{ ...primaryBtn, marginTop: 10, width: "100%" }}
                           disabled={saving || loadingRuteros}
                         >
                           {saving ? "Asignando..." : "Asignar rutero"}
@@ -935,10 +787,6 @@ export default function PedidosAdmin() {
                   <button onClick={entregarPedido} disabled={saving} style={secondaryBtn}>
                     {saving ? "Procesando..." : "Marcar entregado"}
                   </button>
-
-                  <button onClick={imprimirTicket} disabled={saving} style={printBtn}>
-                    Imprimir ticket
-                  </button>
                 </div>
               </>
             )}
@@ -949,9 +797,23 @@ export default function PedidosAdmin() {
   );
 }
 
+const pageGridStyle = {
+  marginTop: 12,
+  display: "grid",
+  gridTemplateColumns: "1.08fr 1.22fr",
+  gap: 18,
+  alignItems: "start",
+};
+
 const leftCardStyle = {
-  borderRadius: 20,
+  borderRadius: 22,
   padding: 16,
+  background: "#ffffff",
+};
+
+const rightCardStyle = {
+  borderRadius: 24,
+  padding: 18,
   background: "#ffffff",
 };
 
@@ -967,29 +829,73 @@ const toolbarGridStyle = {
   alignItems: "center",
 };
 
+const listHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  marginBottom: 12,
+};
+
 const listWrapStyle = {
   display: "grid",
   gap: 12,
-  maxHeight: "calc(100vh - 320px)",
+  maxHeight: "calc(100vh - 280px)",
   minHeight: 220,
   overflowY: "auto",
   paddingRight: 4,
 };
 
 const pedidoItemStyle = {
-  borderRadius: 16,
+  borderRadius: 18,
   padding: 16,
-  background:
-    "linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(248,250,252,1) 100%)",
+  background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
   transition: "all .18s ease",
+};
+
+const pedidoItemTopStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: 12,
+};
+
+const pedidoTitleStyle = {
+  fontWeight: 900,
+  fontSize: 17,
+  color: "#0f172a",
+  marginBottom: 6,
+};
+
+const pedidoAmountWrapStyle = {
+  textAlign: "right",
+  display: "grid",
+  gap: 8,
+  justifyItems: "end",
+  flexShrink: 0,
+};
+
+const pedidoAmountStyle = {
+  fontWeight: 900,
+  fontSize: 22,
+  color: "#0f172a",
+};
+
+const pedidoGainMiniStyle = {
+  fontSize: 12,
+  fontWeight: 800,
+  color: "#166534",
+  background: "#ecfdf5",
+  border: "1px solid #bbf7d0",
+  borderRadius: 999,
+  padding: "6px 10px",
 };
 
 const emptyStateStyle = {
   minHeight: 220,
   borderRadius: 16,
   border: "1px dashed #d4dae3",
-  background:
-    "linear-gradient(180deg, rgba(248,250,252,0.85) 0%, rgba(255,255,255,1) 100%)",
+  background: "linear-gradient(180deg, rgba(248,250,252,0.85) 0%, rgba(255,255,255,1) 100%)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -1000,11 +906,109 @@ const emptyStateStyle = {
   padding: 24,
 };
 
+const heroSummaryStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 12,
+  padding: 14,
+  borderRadius: 18,
+  border: "1px solid #e5e7eb",
+  background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+};
+
+const heroSummaryBlockStyle = {
+  display: "grid",
+  gap: 4,
+  padding: 8,
+};
+
+const summaryLabelStyle = {
+  fontSize: 12,
+  color: "#64748b",
+  fontWeight: 700,
+};
+
+const totalsPanelStyle = {
+  marginTop: 16,
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: 12,
+};
+
+const totalsItemStyle = {
+  borderRadius: 18,
+  padding: 18,
+  border: "1px solid #e5e7eb",
+  background: "#f8fafc",
+  display: "grid",
+  gap: 8,
+};
+
+const totalsItemGreenStyle = {
+  borderRadius: 18,
+  padding: 18,
+  border: "1px solid #bbf7d0",
+  background: "#f0fdf4",
+  display: "grid",
+  gap: 8,
+};
+
+const sectionTitleStyle = {
+  fontSize: 20,
+  fontWeight: 900,
+  color: "#0f172a",
+};
+
+const lineCardStyle = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 18,
+  padding: 16,
+  background: "#fff",
+  boxShadow: "0 6px 18px rgba(15, 23, 42, 0.04)",
+};
+
+const lineCardHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  alignItems: "flex-start",
+  flexWrap: "wrap",
+  marginBottom: 12,
+};
+
+const gainPillStyle = {
+  fontSize: 13,
+  fontWeight: 800,
+  color: "#166534",
+  background: "#ecfdf5",
+  border: "1px solid #bbf7d0",
+  borderRadius: 999,
+  padding: "8px 12px",
+};
+
+const lineGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 12,
+};
+
+const fieldLabelStyle = {
+  display: "block",
+  marginBottom: 6,
+};
+
+const actionCardStyle = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 14,
+  padding: 14,
+  background: "#fff",
+};
+
 const inputStyle = {
   width: "100%",
   border: "1px solid #d1d5db",
-  borderRadius: 10,
-  padding: "10px 12px",
+  borderRadius: 12,
+  padding: "11px 12px",
   outline: "none",
   background: "#fff",
 };
@@ -1013,9 +1017,9 @@ const primaryBtn = {
   border: 0,
   background: "#111827",
   color: "#fff",
-  borderRadius: 10,
-  padding: "12px 14px",
-  fontWeight: 700,
+  borderRadius: 12,
+  padding: "13px 14px",
+  fontWeight: 800,
   cursor: "pointer",
 };
 
@@ -1023,28 +1027,8 @@ const secondaryBtn = {
   border: "1px solid #d1d5db",
   background: "#fff",
   color: "#111827",
-  borderRadius: 10,
-  padding: "12px 14px",
-  fontWeight: 700,
+  borderRadius: 12,
+  padding: "13px 14px",
+  fontWeight: 800,
   cursor: "pointer",
-};
-
-const printBtn = {
-  border: "1px solid #0f766e",
-  background: "#ecfeff",
-  color: "#134e4a",
-  borderRadius: 10,
-  padding: "12px 14px",
-  fontWeight: 700,
-  cursor: "pointer",
-};
-
-const suggestBtn = {
-  border: "1px solid #d1d5db",
-  background: "#fff",
-  color: "#111827",
-  borderRadius: 8,
-  padding: "8px 10px",
-  cursor: "pointer",
-  fontWeight: 700,
 };

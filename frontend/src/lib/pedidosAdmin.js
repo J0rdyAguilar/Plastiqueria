@@ -1,14 +1,42 @@
 import { httpV1 } from "./httpV1";
 
-export const pedidosAdminApi = {
-  list: async ({ q = "", estado = "", page = 1, per_page = 20 } = {}) => {
-    const params = new URLSearchParams();
-    if (q) params.set("q", q);
-    if (estado) params.set("estado", estado);
-    params.set("page", String(page));
-    params.set("per_page", String(per_page));
+function cleanParams(obj = {}) {
+  const params = new URLSearchParams();
 
-    const { data } = await httpV1.get(`/pedidos?${params.toString()}`);
+  Object.entries(obj).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+
+    const text = String(value).trim();
+    if (text === "") return;
+
+    params.set(key, text);
+  });
+
+  return params.toString();
+}
+
+export const pedidosAdminApi = {
+  list: async ({
+    q = "",
+    estado = "",
+    ubicacion_id = "",
+    page = 1,
+    per_page = 20,
+  } = {}) => {
+    const query = cleanParams({
+      q,
+      estado,
+      ubicacion_id,
+      page,
+      per_page,
+    });
+
+    const { data } = await httpV1.get(`/pedidos?${query}`);
+    return data;
+  },
+
+  update: async (id, payload = {}) => {
+    const { data } = await httpV1.put(`/pedidos/${id}`, payload);
     return data;
   },
 

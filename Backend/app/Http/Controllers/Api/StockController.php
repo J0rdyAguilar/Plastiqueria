@@ -25,7 +25,7 @@ class StockController extends Controller
 
         $query = Stock::query()->with([
             'producto:id,sku,nombre',
-            'productoPrecio:id,producto_id,presentacion,factor_base,precio,activo',
+            'productoPrecio:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo',
             'ubicacion:id,nombre,tipo',
         ]);
 
@@ -71,7 +71,14 @@ class StockController extends Controller
                     'producto_sku' => $s->producto?->sku,
                     'presentacion' => $s->productoPrecio?->presentacion,
                     'factor_base' => $s->productoPrecio?->factor_base,
-                    'precio' => $s->productoPrecio?->precio,
+
+                    // Para no romper el frontend viejo:
+                    'precio' => $s->productoPrecio?->precio_venta,
+
+                    // Nuevos campos correctos:
+                    'precio_costo' => $s->productoPrecio?->precio_costo,
+                    'precio_venta' => $s->productoPrecio?->precio_venta,
+
                     'cantidad' => (int) $s->cantidad,
                     'cantidad_base' => (int) $s->cantidad_base,
                     'actualizado_en' => $s->actualizado_en?->format('Y-m-d H:i:s'),

@@ -17,6 +17,8 @@ import {
   Banknote,
   ReceiptText,
   UserRound,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ventasTienda } from "../api/ventasTienda";
@@ -122,10 +124,7 @@ function imprimirTicketVenta({
     venta?.created_at ||
     new Date().toISOString();
 
-  const codigo =
-    venta?.codigo ||
-    venta?.id ||
-    `VT-${new Date().getTime()}`;
+  const codigo = venta?.codigo || venta?.id || `VT-${new Date().getTime()}`;
 
   const html = `
     <!doctype html>
@@ -274,8 +273,9 @@ export default function VentaTienda() {
 
   const [inventario, setInventario] = useState([]);
   const [items, setItems] = useState([]);
+  const [expandedItems, setExpandedItems] = useState({});
 
-  const [productoId, setProductoId] = useState("");
+  const [productoPrecioId, setProductoPrecioId] = useState("");
   const [cantidad, setCantidad] = useState(1);
   const [q, setQ] = useState("");
   const [metodoPago, setMetodoPago] = useState("efectivo");
@@ -330,9 +330,15 @@ export default function VentaTienda() {
         : [];
 
       const normalizados = rows.map((row, index) => {
+        const precioVenta = Number(row?.precio_venta ?? row?.precio ?? 0);
+        const precioCosto = Number(row?.precio_costo ?? 0);
+
         return {
-          key: row?.id ?? `${row?.producto_id ?? index}`,
+          key:
+            row?.id ??
+            `${row?.producto_id ?? index}-${row?.producto_precio_id ?? index}`,
           producto_id: String(row?.producto_id ?? ""),
+          producto_precio_id: Number(row?.producto_precio_id ?? 0),
           nombre:
             row?.producto_nombre ||
             row?.nombre ||
@@ -349,7 +355,8 @@ export default function VentaTienda() {
               row?.cantidad_base ??
               0
           ),
-          precio: Number(row?.precio ?? row?.precio_venta ?? 0),
+          precio: precioVenta,
+          precio_costo: precioCosto,
           presentacion: row?.presentacion || "",
           categoria: row?.categoria || "",
         };
@@ -403,8 +410,12 @@ export default function VentaTienda() {
   }, [q]);
 
   const productoSeleccionado = useMemo(() => {
-    return inventario.find((p) => p.producto_id === productoId) || null;
-  }, [inventario, productoId]);
+    return (
+      inventario.find(
+        (p) => String(p.producto_precio_id) === String(productoPrecioId)
+      ) || null
+    );
+  }, [inventario, productoPrecioId]);
 
   const subtotalPreview = useMemo(() => {
     if (!productoSeleccionado) return 0;
@@ -417,15 +428,27 @@ export default function VentaTienda() {
     return cantidadNum * precioNum;
   }, [productoSeleccionado, cantidad]);
 
+  const gananciaPreview = useMemo(() => {
+    if (!productoSeleccionado) return 0;
+
+    const cantidadNum = Number(cantidad || 0);
+    const venta = Number(productoSeleccionado?.precio || 0);
+    const costo = Number(productoSeleccionado?.precio_costo || 0);
+
+    return (venta - costo) * cantidadNum;
+  }, [productoSeleccionado, cantidad]);
+
   function seleccionarProducto(prodOrId) {
     const prod =
       typeof prodOrId === "string"
-        ? inventario.find((p) => p.producto_id === prodOrId)
+        ? inventario.find(
+            (p) => String(p.producto_precio_id) === String(prodOrId)
+          )
         : prodOrId;
 
     if (!prod) return;
 
-    setProductoId(prod.producto_id);
+    setProductoPrecioId(String(prod.producto_precio_id));
     setQ(`${prod.nombre}${prod.presentacion ? ` - ${prod.presentacion}` : ""}`);
     setShowSuggestions(false);
   }
@@ -464,8 +487,15 @@ export default function VentaTienda() {
     }
   }
 
+  function toggleItemDetail(key) {
+    setExpandedItems((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  }
+
   function agregarItem() {
-    if (!productoId) {
+    if (!productoPrecioId) {
       alert("Selecciona un producto.");
       return;
     }
@@ -475,7 +505,9 @@ export default function VentaTienda() {
       return;
     }
 
-    const prod = inventario.find((p) => p.producto_id === productoId);
+    const prod = inventario.find(
+      (p) => String(p.producto_precio_id) === String(productoPrecioId)
+    );
 
     if (!prod) {
       alert("El producto no existe en el inventario.");
@@ -496,13 +528,12 @@ export default function VentaTienda() {
     }
 
     const indexExistente = items.findIndex(
-      (item) => item.producto_id === productoId
+      (item) => Number(item.producto_precio_id) === Number(prod.producto_precio_id)
     );
 
     if (indexExistente >= 0) {
       const nuevos = [...items];
-      const nuevaCantidad =
-        Number(nuevos[indexExistente].cantidad) + cantidadNum;
+      const nuevaCantidad = Number(nuevos[indexExistente].cantidad) + cantidadNum;
 
       if (nuevaCantidad > Number(prod.stock)) {
         alert(`Stock insuficiente. Disponible: ${prod.stock}`);
@@ -514,22 +545,26 @@ export default function VentaTienda() {
         cantidad: nuevaCantidad,
         precio_unitario: precioNum,
       };
+
       setItems(nuevos);
     } else {
       setItems((prev) => [
         ...prev,
         {
+          key: `${prod.producto_id}-${prod.producto_precio_id}`,
           producto_id: String(prod.producto_id),
+          producto_precio_id: Number(prod.producto_precio_id),
           nombre: prod.nombre,
           codigo: prod.codigo,
           presentacion: prod.presentacion,
           cantidad: cantidadNum,
+          precio_costo: Number(prod.precio_costo || 0),
           precio_unitario: precioNum,
         },
       ]);
     }
 
-    setProductoId("");
+    setProductoPrecioId("");
     setCantidad(1);
     setQ("");
     setShowSuggestions(false);
@@ -543,6 +578,14 @@ export default function VentaTienda() {
   const total = useMemo(() => {
     return items.reduce((acc, item) => {
       return acc + Number(item.cantidad) * Number(item.precio_unitario);
+    }, 0);
+  }, [items]);
+
+  const totalGanancia = useMemo(() => {
+    return items.reduce((acc, item) => {
+      const ganancia =
+        Number(item.precio_unitario) - Number(item.precio_costo || 0);
+      return acc + ganancia * Number(item.cantidad);
     }, 0);
   }, [items]);
 
@@ -569,7 +612,9 @@ export default function VentaTienda() {
         metodo_pago: metodoPago,
         nombre_comprador: nombreComprador.trim(),
         items: items.map((item) => ({
-          producto_id: String(item.producto_id),
+          producto_id: Number(item.producto_id),
+          producto_precio_id: Number(item.producto_precio_id),
+          presentacion: item.presentacion,
           cantidad: Number(item.cantidad),
           precio_unitario: Number(item.precio_unitario),
         })),
@@ -587,6 +632,7 @@ export default function VentaTienda() {
 
       alert("Venta realizada correctamente.");
       setItems([]);
+      setExpandedItems({});
       setMetodoPago("efectivo");
       setNombreComprador("");
       await cargarInventario();
@@ -675,7 +721,7 @@ export default function VentaTienda() {
                   lineHeight: 1.6,
                 }}
               >
-                Registra ventas por sucursal, indicando comprador y método de pago.
+                Registra ventas por sucursal, indicando comprador, método de pago y ganancia.
               </p>
             </div>
 
@@ -712,6 +758,16 @@ export default function VentaTienda() {
                   }}
                 >
                   {money(total + subtotalPreview)}
+                </div>
+                <div
+                  style={{
+                    color: "rgba(255,255,255,0.82)",
+                    fontSize: 14,
+                    marginTop: 8,
+                    fontWeight: 700,
+                  }}
+                >
+                  Ganancia estimada: {money(totalGanancia + gananciaPreview)}
                 </div>
               </div>
 
@@ -969,7 +1025,8 @@ export default function VentaTienda() {
                                 >
                                   <span>ID: {highlightText(prod.producto_id, q)}</span>
                                   <span>Código: {highlightText(prod.codigo, q)}</span>
-                                  <span>Precio: {money(prod.precio)}</span>
+                                  <span>Costo: {money(prod.precio_costo)}</span>
+                                  <span>Venta: {money(prod.precio)}</span>
                                 </div>
                               </button>
                             );
@@ -1006,7 +1063,7 @@ export default function VentaTienda() {
                             productoSeleccionado.presentacion
                               ? ` - ${productoSeleccionado.presentacion}`
                               : ""
-                          } | ID: ${productoSeleccionado.producto_id}`
+                          } | Producto ID: ${productoSeleccionado.producto_id} | Presentación ID: ${productoSeleccionado.producto_precio_id}`
                         : "Selecciona un producto desde el buscador"}
                     </div>
                   </div>
@@ -1023,7 +1080,7 @@ export default function VentaTienda() {
                   </div>
 
                   <div>
-                    <label style={labelStyle}>Precio</label>
+                    <label style={labelStyle}>Precio venta</label>
                     <input
                       type="text"
                       value={productoSeleccionado ? money(productoSeleccionado.precio) : ""}
@@ -1082,7 +1139,7 @@ export default function VentaTienda() {
                     "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
                   border: "1px solid #e2e8f0",
                   display: "grid",
-                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gridTemplateColumns: "repeat(5, 1fr)",
                   gap: 14,
                 }}
               >
@@ -1103,7 +1160,12 @@ export default function VentaTienda() {
                 />
                 <InfoBox
                   icon={<DollarSign size={16} />}
-                  title="Precio base"
+                  title="Precio costo"
+                  value={money(productoSeleccionado.precio_costo)}
+                />
+                <InfoBox
+                  icon={<DollarSign size={16} />}
+                  title="Precio venta"
                   value={money(productoSeleccionado.precio)}
                 />
               </div>
@@ -1280,6 +1342,16 @@ export default function VentaTienda() {
               </div>
               <div
                 style={{
+                  color: "#86efac",
+                  fontSize: 14,
+                  marginTop: 10,
+                  fontWeight: 800,
+                }}
+              >
+                Ganancia estimada: {money(totalGanancia + gananciaPreview)}
+              </div>
+              <div
+                style={{
                   color: "rgba(255,255,255,0.82)",
                   fontSize: 14,
                   marginTop: 10,
@@ -1368,16 +1440,39 @@ export default function VentaTienda() {
 
             <div
               style={{
-                padding: "10px 14px",
-                borderRadius: 999,
-                background: "#eff6ff",
-                color: "#1d4ed8",
-                fontWeight: 700,
-                fontSize: 13,
-                border: "1px solid #bfdbfe",
+                display: "flex",
+                gap: 10,
+                flexWrap: "wrap",
+                alignItems: "center",
               }}
             >
-              {items.length} {items.length === 1 ? "registro" : "registros"}
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  border: "1px solid #bfdbfe",
+                }}
+              >
+                {items.length} {items.length === 1 ? "registro" : "registros"}
+              </div>
+
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  background: "#ecfdf5",
+                  color: "#166534",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  border: "1px solid #bbf7d0",
+                }}
+              >
+                Ganancia: {money(totalGanancia)}
+              </div>
             </div>
           </div>
 
@@ -1429,140 +1524,120 @@ export default function VentaTienda() {
               </p>
             </div>
           ) : (
-            <div
-              style={{
-                overflowX: "auto",
-                borderRadius: 22,
-                border: "1px solid #e2e8f0",
-              }}
-            >
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  minWidth: 840,
-                  background: "#fff",
-                }}
-              >
-                <thead>
-                  <tr
+            <div style={{ display: "grid", gap: 14 }}>
+              {items.map((item, index) => {
+                const subtotal =
+                  Number(item.cantidad) * Number(item.precio_unitario);
+                const gananciaUnitaria =
+                  Number(item.precio_unitario) -
+                  Number(item.precio_costo || 0);
+                const gananciaTotal = gananciaUnitaria * Number(item.cantidad);
+                const isOpen = !!expandedItems[item.key || index];
+
+                return (
+                  <div
+                    key={item.key || index}
                     style={{
-                      background:
-                        "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
+                      borderRadius: 22,
+                      border: "1px solid #e2e8f0",
+                      background: "#fff",
+                      overflow: "hidden",
                     }}
                   >
-                    <th style={thStyle}>Producto</th>
-                    <th style={thStyle}>ID</th>
-                    <th style={thStyle}>Cantidad</th>
-                    <th style={thStyle}>Precio unitario</th>
-                    <th style={thStyle}>Subtotal</th>
-                    <th style={{ ...thStyle, textAlign: "center" }}>Acción</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {items.map((item, index) => {
-                    const subtotal =
-                      Number(item.cantidad) * Number(item.precio_unitario);
-
-                    return (
-                      <tr key={index} style={{ borderTop: "1px solid #eef2f7" }}>
-                        <td style={tdStyle}>
-                          <div style={{ fontWeight: 800, color: "#0f172a" }}>
-                            {item.nombre}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 13,
-                              color: "#64748b",
-                              marginTop: 3,
-                            }}
-                          >
-                            Código: {item.codigo}
-                            {item.presentacion ? ` | ${item.presentacion}` : ""}
-                          </div>
-                        </td>
-
-                        <td style={tdStyle}>
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              minWidth: 88,
-                              padding: "8px 12px",
-                              borderRadius: 999,
-                              background: "#f1f5f9",
-                              color: "#0f172a",
-                              fontWeight: 800,
-                              fontSize: 13,
-                            }}
-                          >
-                            {item.producto_id}
-                          </span>
-                        </td>
-
-                        <td style={tdStyle}>{item.cantidad}</td>
-                        <td style={tdStyle}>{money(item.precio_unitario)}</td>
-                        <td style={tdStyle}>
-                          <span
-                            style={{
-                              fontWeight: 900,
-                              color: "#16a34a",
-                              fontSize: 16,
-                            }}
-                          >
-                            {money(subtotal)}
-                          </span>
-                        </td>
-
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <button
-                            type="button"
-                            onClick={() => eliminarItem(index)}
-                            style={dangerButtonStyle}
-                          >
-                            <Trash2 size={16} />
-                            Quitar
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-
-                <tfoot>
-                  <tr
-                    style={{
-                      background: "#fafcff",
-                      borderTop: "1px solid #e2e8f0",
-                    }}
-                  >
-                    <td
-                      colSpan={4}
+                    <div
                       style={{
-                        padding: "18px 20px",
-                        textAlign: "right",
-                        fontWeight: 800,
-                        color: "#334155",
+                        padding: 18,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 16,
+                        alignItems: "center",
+                        flexWrap: "wrap",
                       }}
                     >
-                      Total general
-                    </td>
-                    <td
-                      style={{
-                        padding: "18px 20px",
-                        fontWeight: 900,
-                        fontSize: 22,
-                        color: "#16a34a",
-                      }}
-                    >
-                      {money(total)}
-                    </td>
-                    <td style={{ padding: "18px 20px" }} />
-                  </tr>
-                </tfoot>
-              </table>
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: 900,
+                            color: "#0f172a",
+                            fontSize: 18,
+                          }}
+                        >
+                          {item.nombre}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "#64748b",
+                            marginTop: 4,
+                          }}
+                        >
+                          Código: {item.codigo}
+                          {item.presentacion ? ` · ${item.presentacion}` : ""}
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <span style={salePillBlue}>
+                          {item.cantidad} unidad(es)
+                        </span>
+                        <span style={salePillGreen}>
+                          Ganancia: {money(gananciaTotal)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleItemDetail(item.key || index)}
+                          style={secondaryButtonStyle}
+                        >
+                          {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                          {isOpen ? "Ocultar detalle" : "Ver detalle"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => eliminarItem(index)}
+                          style={dangerButtonStyle}
+                        >
+                          <Trash2 size={16} />
+                          Quitar
+                        </button>
+                      </div>
+                    </div>
+
+                    {isOpen ? (
+                      <div
+                        style={{
+                          borderTop: "1px solid #eef2f7",
+                          background: "#f8fafc",
+                          padding: 18,
+                          display: "grid",
+                          gridTemplateColumns: "repeat(4, 1fr)",
+                          gap: 14,
+                        }}
+                      >
+                        <InfoBox
+                          icon={<DollarSign size={16} />}
+                          title="Precio costo"
+                          value={money(item.precio_costo)}
+                        />
+                        <InfoBox
+                          icon={<DollarSign size={16} />}
+                          title="Precio venta"
+                          value={money(item.precio_unitario)}
+                        />
+                        <InfoBox
+                          icon={<BadgeDollarSign size={16} />}
+                          title="Ganancia unitaria"
+                          value={money(gananciaUnitaria)}
+                        />
+                        <InfoBox
+                          icon={<BadgeDollarSign size={16} />}
+                          title="Ganancia total"
+                          value={money(gananciaTotal)}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1590,6 +1665,10 @@ export default function VentaTienda() {
               grid-template-columns: 1fr !important;
             }
 
+            div[style*="grid-template-columns: repeat(5, 1fr)"] {
+              grid-template-columns: 1fr 1fr !important;
+            }
+
             div[style*="grid-template-columns: repeat(4, 1fr)"] {
               grid-template-columns: 1fr 1fr !important;
             }
@@ -1598,6 +1677,10 @@ export default function VentaTienda() {
           @media (max-width: 640px) {
             section[style] {
               padding: 16px !important;
+            }
+
+            div[style*="grid-template-columns: repeat(5, 1fr)"] {
+              grid-template-columns: 1fr !important;
             }
 
             div[style*="grid-template-columns: repeat(4, 1fr)"] {
@@ -1712,6 +1795,22 @@ const primaryButtonStyle = {
   boxShadow: "0 14px 28px rgba(37,99,235,0.25)",
 };
 
+const secondaryButtonStyle = {
+  height: 44,
+  border: "1px solid #dbe2ea",
+  borderRadius: 14,
+  padding: "0 14px",
+  background: "#fff",
+  color: "#0f172a",
+  fontWeight: 700,
+  fontSize: 14,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  cursor: "pointer",
+};
+
 const successButtonStyle = {
   border: "none",
   borderRadius: 18,
@@ -1740,19 +1839,28 @@ const dangerButtonStyle = {
   gap: 8,
 };
 
-const thStyle = {
-  textAlign: "left",
-  padding: "16px 20px",
+const salePillGreen = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "8px 12px",
+  borderRadius: 999,
   fontSize: 13,
   fontWeight: 800,
-  color: "#475569",
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
+  border: "1px solid #bbf7d0",
+  background: "#dcfce7",
+  color: "#166534",
 };
 
-const tdStyle = {
-  padding: "18px 20px",
-  fontSize: 15,
-  color: "#0f172a",
-  verticalAlign: "middle",
+const salePillBlue = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "8px 12px",
+  borderRadius: 999,
+  fontSize: 13,
+  fontWeight: 800,
+  border: "1px solid #bfdbfe",
+  background: "#dbeafe",
+  color: "#1d4ed8",
 };

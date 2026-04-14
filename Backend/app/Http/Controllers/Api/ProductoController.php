@@ -6,8 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductoResource;
 use App\Models\Producto;
 use App\Models\ProductoPrecio;
-use App\Models\Stock;
-use App\Models\Ubicacion;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -53,7 +51,6 @@ class ProductoController extends Controller
             'nombre' => 'required|string|max:150',
             'descripcion' => 'nullable|string',
             'unidad_base' => 'required|string|max:50',
-            'alerta_stock' => 'nullable|integer|min:0',
             'activo' => 'boolean',
 
             'precios' => 'required|array|min:1',
@@ -77,7 +74,6 @@ class ProductoController extends Controller
                 'nombre' => $data['nombre'],
                 'descripcion' => $data['descripcion'] ?? null,
                 'unidad_base' => $data['unidad_base'],
-                'alerta_stock' => $data['alerta_stock'] ?? 0,
                 'activo' => $data['activo'] ?? true,
                 'creado_en' => $ahora,
                 'actualizado_en' => $ahora,
@@ -96,24 +92,9 @@ class ProductoController extends Controller
                 ]);
             }
 
-            $ubicaciones = Ubicacion::query()->pluck('id');
-
-            foreach ($ubicaciones as $ubicacionId) {
-                Stock::query()->firstOrCreate(
-                    [
-                        'producto_id' => $producto->id,
-                        'ubicacion_id' => $ubicacionId,
-                    ],
-                    [
-                        'cantidad_base' => 0,
-                    ]
-                );
-            }
-
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
                 'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
-                'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ]);
 
             return response()->json([
@@ -129,7 +110,6 @@ class ProductoController extends Controller
             'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
             'imagenes',
             'imagenPrincipal',
-            'stocks',
         ]);
 
         return response()->json([
@@ -144,7 +124,6 @@ class ProductoController extends Controller
             'nombre' => 'required|string|max:150',
             'descripcion' => 'nullable|string',
             'unidad_base' => 'required|string|max:50',
-            'alerta_stock' => 'nullable|integer|min:0',
             'activo' => 'boolean',
 
             'precios' => 'required|array|min:1',
@@ -169,7 +148,6 @@ class ProductoController extends Controller
                 'nombre' => $data['nombre'],
                 'descripcion' => $data['descripcion'] ?? null,
                 'unidad_base' => $data['unidad_base'],
-                'alerta_stock' => $data['alerta_stock'] ?? 0,
                 'activo' => $data['activo'] ?? true,
                 'actualizado_en' => $ahora,
             ]);
@@ -234,7 +212,6 @@ class ProductoController extends Controller
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
                 'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
-                'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ]);
 
             return response()->json([
@@ -263,7 +240,6 @@ class ProductoController extends Controller
                 },
                 'imagenes' => fn ($q) => $q->orderBy('orden'),
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
-                'stocks:id,ubicacion_id,producto_id,cantidad_base,actualizado_en',
             ])
             ->orderBy('nombre')
             ->get();
