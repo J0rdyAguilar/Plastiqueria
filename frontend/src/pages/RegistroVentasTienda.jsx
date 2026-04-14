@@ -10,6 +10,9 @@ import {
   ChevronDown,
   ChevronUp,
   ShoppingBag,
+  BadgeDollarSign,
+  Package2,
+  DollarSign,
 } from "lucide-react";
 import { ventasTienda } from "../api/ventasTienda";
 
@@ -90,6 +93,10 @@ export default function RegistroVentasTienda() {
     return rows
       .filter((item) => item.metodo_pago === "tarjeta")
       .reduce((acc, item) => acc + Number(item.total || 0), 0);
+  }, [rows]);
+
+  const totalGanancia = useMemo(() => {
+    return rows.reduce((acc, item) => acc + Number(item.ganancia_total || 0), 0);
   }, [rows]);
 
   function toggleExpand(id) {
@@ -180,7 +187,8 @@ export default function RegistroVentasTienda() {
                   lineHeight: 1.6,
                 }}
               >
-                Aquí puedes ver las ventas del período, separadas por efectivo y tarjeta.
+                Aquí puedes ver las ventas del período, separadas por efectivo,
+                tarjeta y ganancia estimada.
               </p>
             </div>
 
@@ -307,7 +315,7 @@ export default function RegistroVentasTienda() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateColumns: "repeat(4, 1fr)",
             gap: 16,
           }}
         >
@@ -330,6 +338,13 @@ export default function RegistroVentasTienda() {
             value={money(totalTarjeta)}
             subtitle="Ventas cobradas con tarjeta"
             accent="blue"
+          />
+          <MetricCard
+            icon={<BadgeDollarSign size={18} />}
+            title="Ganancia"
+            value={money(totalGanancia)}
+            subtitle="Ganancia estimada del período"
+            accent="emerald"
           />
         </div>
 
@@ -367,7 +382,9 @@ export default function RegistroVentasTienda() {
           {loading ? (
             <div style={emptyBoxStyle}>Cargando ventas...</div>
           ) : rows.length === 0 ? (
-            <div style={emptyBoxStyle}>No hay ventas registradas en este período.</div>
+            <div style={emptyBoxStyle}>
+              No hay ventas registradas en este período.
+            </div>
           ) : (
             <div style={{ display: "grid", gap: 16 }}>
               {rows.map((venta) => {
@@ -416,7 +433,13 @@ export default function RegistroVentasTienda() {
                           </div>
                         </div>
 
-                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 10,
+                            flexWrap: "wrap",
+                          }}
+                        >
                           <span style={badgeStyle("green")}>
                             {venta.estado || "—"}
                           </span>
@@ -427,12 +450,19 @@ export default function RegistroVentasTienda() {
                           >
                             {venta.metodo_pago || "—"}
                           </span>
+                          <span style={badgeStyle("emerald")}>
+                            Ganancia {money(venta.ganancia_total)}
+                          </span>
                           <button
                             type="button"
                             onClick={() => toggleExpand(venta.id)}
                             style={secondaryButtonStyle}
                           >
-                            {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                            {isOpen ? (
+                              <ChevronUp size={18} />
+                            ) : (
+                              <ChevronDown size={18} />
+                            )}
                             {isOpen ? "Ocultar detalle" : "Ver detalle"}
                           </button>
                         </div>
@@ -453,17 +483,30 @@ export default function RegistroVentasTienda() {
                         <InfoCard
                           icon={<User size={16} />}
                           title="Vendedor"
-                          value={venta.usuario_nombre || venta.usuario?.nombre || venta.usuario?.usuario || "—"}
+                          value={
+                            venta.usuario_nombre ||
+                            venta.usuario?.nombre ||
+                            venta.usuario?.usuario ||
+                            "—"
+                          }
                         />
                         <InfoCard
                           icon={<Store size={16} />}
                           title="Sucursal"
-                          value={venta.ubicacion_nombre || venta.ubicacion?.nombre || "—"}
+                          value={
+                            venta.ubicacion_nombre ||
+                            venta.ubicacion?.nombre ||
+                            "—"
+                          }
                         />
                         <InfoCard
                           icon={<CreditCard size={16} />}
                           title="Cliente"
-                          value={venta.nombre_comprador || venta.cliente?.nombre || "Consumidor final"}
+                          value={
+                            venta.nombre_comprador ||
+                            venta.cliente?.nombre ||
+                            "Consumidor final"
+                          }
                         />
                       </div>
                     </div>
@@ -490,53 +533,111 @@ export default function RegistroVentasTienda() {
                           Productos vendidos
                         </div>
 
-                        {Array.isArray(venta.detalles) && venta.detalles.length > 0 ? (
+                        {Array.isArray(venta.detalles) &&
+                        venta.detalles.length > 0 ? (
                           <div
                             style={{
-                              overflowX: "auto",
-                              borderRadius: 18,
-                              border: "1px solid #e2e8f0",
-                              background: "#fff",
+                              display: "grid",
+                              gap: 14,
                             }}
                           >
-                            <table
-                              style={{
-                                width: "100%",
-                                borderCollapse: "collapse",
-                                minWidth: 800,
-                              }}
-                            >
-                              <thead>
-                                <tr
+                            {venta.detalles.map((d, idx) => (
+                              <div
+                                key={`${venta.id}-${idx}`}
+                                style={{
+                                  borderRadius: 20,
+                                  border: "1px solid #e2e8f0",
+                                  background: "#fff",
+                                  padding: 18,
+                                }}
+                              >
+                                <div
                                   style={{
-                                    background:
-                                      "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    gap: 12,
+                                    flexWrap: "wrap",
+                                    alignItems: "center",
+                                    marginBottom: 14,
                                   }}
                                 >
-                                  <th style={thStyle}>Producto</th>
-                                  <th style={thStyle}>ID</th>
-                                  <th style={thStyle}>Cantidad</th>
-                                  <th style={thStyle}>Precio unitario</th>
-                                  <th style={thStyle}>Subtotal</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {venta.detalles.map((d, idx) => (
-                                  <tr
-                                    key={`${venta.id}-${idx}`}
-                                    style={{ borderTop: "1px solid #eef2f7" }}
+                                  <div>
+                                    <div
+                                      style={{
+                                        fontWeight: 900,
+                                        fontSize: 18,
+                                        color: "#0f172a",
+                                      }}
+                                    >
+                                      {d.producto_nombre ||
+                                        d.producto?.nombre ||
+                                        "Producto"}
+                                    </div>
+                                    <div
+                                      style={{
+                                        fontSize: 13,
+                                        color: "#64748b",
+                                        marginTop: 4,
+                                      }}
+                                    >
+                                      ID: {d.producto_id} · Presentación:{" "}
+                                      {d.presentacion || "—"}
+                                    </div>
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      gap: 8,
+                                      flexWrap: "wrap",
+                                    }}
                                   >
-                                    <td style={tdStyle}>
-                                      {d.producto_nombre || d.producto?.nombre || "Producto"}
-                                    </td>
-                                    <td style={tdStyle}>{d.producto_id}</td>
-                                    <td style={tdStyle}>{d.cantidad}</td>
-                                    <td style={tdStyle}>{money(d.precio_unitario)}</td>
-                                    <td style={tdStyle}>{money(d.subtotal)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                                    <span style={badgeStyle("blue")}>
+                                      Cantidad {d.cantidad}
+                                    </span>
+                                    <span style={badgeStyle("emerald")}>
+                                      Ganancia {money(d.ganancia_total)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(5, 1fr)",
+                                    gap: 14,
+                                  }}
+                                >
+                                  <DetailMiniCard
+                                    icon={<Package2 size={16} />}
+                                    title="Presentación"
+                                    value={d.presentacion || "—"}
+                                  />
+                                  <DetailMiniCard
+                                    icon={<DollarSign size={16} />}
+                                    title="Precio costo"
+                                    value={money(d.precio_costo)}
+                                  />
+                                  <DetailMiniCard
+                                    icon={<DollarSign size={16} />}
+                                    title="Precio venta"
+                                    value={money(d.precio_unitario)}
+                                  />
+                                  <DetailMiniCard
+                                    icon={<BadgeDollarSign size={16} />}
+                                    title="Ganancia unitaria"
+                                    value={money(d.ganancia_unitaria)}
+                                  />
+                                  <DetailMiniCard
+                                    icon={<BadgeDollarSign size={16} />}
+                                    title="Subtotal / Ganancia"
+                                    value={`${money(d.subtotal)} / ${money(
+                                      d.ganancia_total
+                                    )}`}
+                                  />
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         ) : (
                           <div style={emptyBoxStyle}>
@@ -555,11 +656,17 @@ export default function RegistroVentasTienda() {
 
       <style>
         {`
-          @media (max-width: 980px) {
-            div[style*="grid-template-columns: repeat(3, 1fr)"] {
-              grid-template-columns: 1fr !important;
+          @media (max-width: 1100px) {
+            div[style*="grid-template-columns: repeat(4, 1fr)"] {
+              grid-template-columns: 1fr 1fr !important;
             }
 
+            div[style*="grid-template-columns: repeat(5, 1fr)"] {
+              grid-template-columns: 1fr 1fr !important;
+            }
+          }
+
+          @media (max-width: 980px) {
             div[style*="grid-template-columns: repeat(4, 1fr)"] {
               grid-template-columns: 1fr 1fr !important;
             }
@@ -571,6 +678,10 @@ export default function RegistroVentasTienda() {
             }
 
             div[style*="grid-template-columns: repeat(4, 1fr)"] {
+              grid-template-columns: 1fr !important;
+            }
+
+            div[style*="grid-template-columns: repeat(5, 1fr)"] {
               grid-template-columns: 1fr !important;
             }
 
@@ -602,6 +713,11 @@ function MetricCard({ icon, title, value, subtitle, accent = "slate" }) {
       bg: "linear-gradient(180deg, #ecfdf5 0%, #d1fae5 100%)",
       border: "#a7f3d0",
       iconBg: "#059669",
+    },
+    emerald: {
+      bg: "linear-gradient(180deg, #ecfdf5 0%, #bbf7d0 100%)",
+      border: "#86efac",
+      iconBg: "#15803d",
     },
     slate: {
       bg: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
@@ -695,6 +811,45 @@ function InfoCard({ icon, title, value }) {
   );
 }
 
+function DetailMiniCard({ icon, title, value }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 16,
+        background: "#fff",
+        border: "1px solid #e2e8f0",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          color: "#64748b",
+          fontSize: 12,
+          fontWeight: 700,
+          marginBottom: 8,
+        }}
+      >
+        {icon}
+        {title}
+      </div>
+      <div
+        style={{
+          color: "#0f172a",
+          fontWeight: 800,
+          fontSize: 14,
+          lineHeight: 1.4,
+          wordBreak: "break-word",
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function badgeStyle(kind) {
   const map = {
     green: {
@@ -711,6 +866,11 @@ function badgeStyle(kind) {
       background: "#dbeafe",
       color: "#1d4ed8",
       border: "#bfdbfe",
+    },
+    emerald: {
+      background: "#ecfdf5",
+      color: "#166534",
+      border: "#86efac",
     },
   };
 
@@ -780,23 +940,6 @@ const secondaryButtonStyle = {
   justifyContent: "center",
   gap: 8,
   cursor: "pointer",
-};
-
-const thStyle = {
-  textAlign: "left",
-  padding: "16px 20px",
-  fontSize: 13,
-  fontWeight: 800,
-  color: "#475569",
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
-};
-
-const tdStyle = {
-  padding: "18px 20px",
-  fontSize: 15,
-  color: "#0f172a",
-  verticalAlign: "middle",
 };
 
 const emptyBoxStyle = {

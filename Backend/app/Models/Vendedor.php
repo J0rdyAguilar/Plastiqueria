@@ -25,7 +25,7 @@ class Vendedor extends Model
 
     public function rutas(): BelongsToMany
     {
-        return $this->belongsToMany(Ruta::class, 'vendedor_rutas', 'vendedor_id', 'ruta_id');  
+        return $this->belongsToMany(Ruta::class, 'vendedor_rutas', 'vendedor_id', 'ruta_id');
     }
 
     public function clientes(): BelongsToMany

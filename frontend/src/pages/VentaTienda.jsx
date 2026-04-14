@@ -3,10 +3,8 @@ import {
   ShoppingCart,
   Package,
   Boxes,
-  DollarSign,
   Trash2,
   Plus,
-  BadgeDollarSign,
   Loader2,
   CheckCircle2,
   Store,
@@ -331,7 +329,6 @@ export default function VentaTienda() {
 
       const normalizados = rows.map((row, index) => {
         const precioVenta = Number(row?.precio_venta ?? row?.precio ?? 0);
-        const precioCosto = Number(row?.precio_costo ?? 0);
 
         return {
           key:
@@ -356,7 +353,6 @@ export default function VentaTienda() {
               0
           ),
           precio: precioVenta,
-          precio_costo: precioCosto,
           presentacion: row?.presentacion || "",
           categoria: row?.categoria || "",
         };
@@ -426,16 +422,6 @@ export default function VentaTienda() {
     if (cantidadNum <= 0 || precioNum <= 0) return 0;
 
     return cantidadNum * precioNum;
-  }, [productoSeleccionado, cantidad]);
-
-  const gananciaPreview = useMemo(() => {
-    if (!productoSeleccionado) return 0;
-
-    const cantidadNum = Number(cantidad || 0);
-    const venta = Number(productoSeleccionado?.precio || 0);
-    const costo = Number(productoSeleccionado?.precio_costo || 0);
-
-    return (venta - costo) * cantidadNum;
   }, [productoSeleccionado, cantidad]);
 
   function seleccionarProducto(prodOrId) {
@@ -558,7 +544,6 @@ export default function VentaTienda() {
           codigo: prod.codigo,
           presentacion: prod.presentacion,
           cantidad: cantidadNum,
-          precio_costo: Number(prod.precio_costo || 0),
           precio_unitario: precioNum,
         },
       ]);
@@ -578,14 +563,6 @@ export default function VentaTienda() {
   const total = useMemo(() => {
     return items.reduce((acc, item) => {
       return acc + Number(item.cantidad) * Number(item.precio_unitario);
-    }, 0);
-  }, [items]);
-
-  const totalGanancia = useMemo(() => {
-    return items.reduce((acc, item) => {
-      const ganancia =
-        Number(item.precio_unitario) - Number(item.precio_costo || 0);
-      return acc + ganancia * Number(item.cantidad);
     }, 0);
   }, [items]);
 
@@ -721,7 +698,7 @@ export default function VentaTienda() {
                   lineHeight: 1.6,
                 }}
               >
-                Registra ventas por sucursal, indicando comprador, método de pago y ganancia.
+                Registra ventas por sucursal, indicando comprador y método de pago.
               </p>
             </div>
 
@@ -758,16 +735,6 @@ export default function VentaTienda() {
                   }}
                 >
                   {money(total + subtotalPreview)}
-                </div>
-                <div
-                  style={{
-                    color: "rgba(255,255,255,0.82)",
-                    fontSize: 14,
-                    marginTop: 8,
-                    fontWeight: 700,
-                  }}
-                >
-                  Ganancia estimada: {money(totalGanancia + gananciaPreview)}
                 </div>
               </div>
 
@@ -1025,7 +992,6 @@ export default function VentaTienda() {
                                 >
                                   <span>ID: {highlightText(prod.producto_id, q)}</span>
                                   <span>Código: {highlightText(prod.codigo, q)}</span>
-                                  <span>Costo: {money(prod.precio_costo)}</span>
                                   <span>Venta: {money(prod.precio)}</span>
                                 </div>
                               </button>
@@ -1139,7 +1105,7 @@ export default function VentaTienda() {
                     "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
                   border: "1px solid #e2e8f0",
                   display: "grid",
-                  gridTemplateColumns: "repeat(5, 1fr)",
+                  gridTemplateColumns: "repeat(4, 1fr)",
                   gap: 14,
                 }}
               >
@@ -1159,12 +1125,7 @@ export default function VentaTienda() {
                   value={String(productoSeleccionado.stock)}
                 />
                 <InfoBox
-                  icon={<DollarSign size={16} />}
-                  title="Precio costo"
-                  value={money(productoSeleccionado.precio_costo)}
-                />
-                <InfoBox
-                  icon={<DollarSign size={16} />}
+                  icon={<Package size={16} />}
                   title="Precio venta"
                   value={money(productoSeleccionado.precio)}
                 />
@@ -1203,7 +1164,7 @@ export default function VentaTienda() {
                   color: "#fff",
                 }}
               >
-                <BadgeDollarSign size={22} />
+                <ReceiptText size={22} />
               </div>
 
               <div>
@@ -1342,16 +1303,6 @@ export default function VentaTienda() {
               </div>
               <div
                 style={{
-                  color: "#86efac",
-                  fontSize: 14,
-                  marginTop: 10,
-                  fontWeight: 800,
-                }}
-              >
-                Ganancia estimada: {money(totalGanancia + gananciaPreview)}
-              </div>
-              <div
-                style={{
                   color: "rgba(255,255,255,0.82)",
                   fontSize: 14,
                   marginTop: 10,
@@ -1459,20 +1410,6 @@ export default function VentaTienda() {
               >
                 {items.length} {items.length === 1 ? "registro" : "registros"}
               </div>
-
-              <div
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 999,
-                  background: "#ecfdf5",
-                  color: "#166534",
-                  fontWeight: 800,
-                  fontSize: 13,
-                  border: "1px solid #bbf7d0",
-                }}
-              >
-                Ganancia: {money(totalGanancia)}
-              </div>
             </div>
           </div>
 
@@ -1528,10 +1465,6 @@ export default function VentaTienda() {
               {items.map((item, index) => {
                 const subtotal =
                   Number(item.cantidad) * Number(item.precio_unitario);
-                const gananciaUnitaria =
-                  Number(item.precio_unitario) -
-                  Number(item.precio_costo || 0);
-                const gananciaTotal = gananciaUnitaria * Number(item.cantidad);
                 const isOpen = !!expandedItems[item.key || index];
 
                 return (
@@ -1580,9 +1513,6 @@ export default function VentaTienda() {
                         <span style={salePillBlue}>
                           {item.cantidad} unidad(es)
                         </span>
-                        <span style={salePillGreen}>
-                          Ganancia: {money(gananciaTotal)}
-                        </span>
                         <button
                           type="button"
                           onClick={() => toggleItemDetail(item.key || index)}
@@ -1609,29 +1539,24 @@ export default function VentaTienda() {
                           background: "#f8fafc",
                           padding: 18,
                           display: "grid",
-                          gridTemplateColumns: "repeat(4, 1fr)",
+                          gridTemplateColumns: "repeat(3, 1fr)",
                           gap: 14,
                         }}
                       >
                         <InfoBox
-                          icon={<DollarSign size={16} />}
-                          title="Precio costo"
-                          value={money(item.precio_costo)}
+                          icon={<Package size={16} />}
+                          title="Cantidad"
+                          value={String(item.cantidad)}
                         />
                         <InfoBox
-                          icon={<DollarSign size={16} />}
+                          icon={<Package size={16} />}
                           title="Precio venta"
                           value={money(item.precio_unitario)}
                         />
                         <InfoBox
-                          icon={<BadgeDollarSign size={16} />}
-                          title="Ganancia unitaria"
-                          value={money(gananciaUnitaria)}
-                        />
-                        <InfoBox
-                          icon={<BadgeDollarSign size={16} />}
-                          title="Ganancia total"
-                          value={money(gananciaTotal)}
+                          icon={<ReceiptText size={16} />}
+                          title="Subtotal"
+                          value={money(subtotal)}
                         />
                       </div>
                     ) : null}
@@ -1665,11 +1590,11 @@ export default function VentaTienda() {
               grid-template-columns: 1fr !important;
             }
 
-            div[style*="grid-template-columns: repeat(5, 1fr)"] {
+            div[style*="grid-template-columns: repeat(4, 1fr)"] {
               grid-template-columns: 1fr 1fr !important;
             }
 
-            div[style*="grid-template-columns: repeat(4, 1fr)"] {
+            div[style*="grid-template-columns: repeat(3, 1fr)"] {
               grid-template-columns: 1fr 1fr !important;
             }
           }
@@ -1679,11 +1604,11 @@ export default function VentaTienda() {
               padding: 16px !important;
             }
 
-            div[style*="grid-template-columns: repeat(5, 1fr)"] {
+            div[style*="grid-template-columns: repeat(4, 1fr)"] {
               grid-template-columns: 1fr !important;
             }
 
-            div[style*="grid-template-columns: repeat(4, 1fr)"] {
+            div[style*="grid-template-columns: repeat(3, 1fr)"] {
               grid-template-columns: 1fr !important;
             }
           }
@@ -1837,19 +1762,6 @@ const dangerButtonStyle = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-};
-
-const salePillGreen = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "8px 12px",
-  borderRadius: 999,
-  fontSize: 13,
-  fontWeight: 800,
-  border: "1px solid #bbf7d0",
-  background: "#dcfce7",
-  color: "#166534",
 };
 
 const salePillBlue = {

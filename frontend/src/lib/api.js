@@ -41,11 +41,9 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
 }
 
 export const api = {
-  // 🔐 AUTH
   login: (payload) =>
     request("/login", { method: "POST", body: payload }),
 
-  // 👤 USUARIOS
   usuariosList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/usuarios${qs ? `?${qs}` : ""}`);
@@ -63,7 +61,6 @@ export const api = {
   usuariosShow: (id) =>
     request(`/usuarios/${id}`),
 
-  // 📍 UBICACIONES
   ubicacionesList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/ubicaciones${qs ? `?${qs}` : ""}`);
@@ -84,7 +81,6 @@ export const api = {
   ubicacionesToggle: (id) =>
     request(`/ubicaciones/${id}/toggle`, { method: "PATCH" }),
 
-  // 🧍 VENDEDORES
   vendedoresList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/vendedores${qs ? `?${qs}` : ""}`);
@@ -108,7 +104,6 @@ export const api = {
   vendedoresShow: (id) =>
     request(`/vendedores/${id}`),
 
-  // 🗺️ RUTAS
   rutasList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/rutas${qs ? `?${qs}` : ""}`);
@@ -126,7 +121,6 @@ export const api = {
   rutasShow: (id) =>
     request(`/rutas/${id}`),
 
-  // 🌎 ZONAS
   zonasList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/zonas${qs ? `?${qs}` : ""}`);
@@ -144,7 +138,6 @@ export const api = {
   zonasShow: (id) =>
     request(`/zonas/${id}`),
 
-  // 💰 CAJA
   cajaActual: ({ ubicacion_id }) => {
     const qs = new URLSearchParams({
       ubicacion_id: String(ubicacion_id),
@@ -165,7 +158,6 @@ export const api = {
   cajaCerrar: (payload) =>
     request("/caja/cerrar", { method: "POST", body: payload }),
 
-  // 🛒 VENTAS TIENDA
   ventasTiendaList: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/ventas-tienda${qs ? `?${qs}` : ""}`);
@@ -174,3 +166,5 @@ export const api = {
   ventasTiendaCreate: (payload) =>
     request("/ventas-tienda", { method: "POST", body: payload }),
 };
+
+export default api;
