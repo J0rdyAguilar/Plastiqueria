@@ -883,35 +883,27 @@ class PedidoController extends Controller
         $soloActivos = $request->boolean('solo_activos', true);
 
         $query = Pedido::query()
-            ->where('rutero_id', (int) $user->id);
+            ->where('rutero_id', (int) $user->id)
+            ->with([
+                'cliente:id,nombre',
+                'vendedor:id,codigo,usuario_id',
+                'vendedor.usuario:id,usuario,nombre',
+                'rutero:id,usuario,nombre',
+                'ruta:id,nombre',
+                'zona:id,nombre',
+                'ubicacion:id,nombre',
+                'detalles.producto:id,nombre,sku',
+            ])
+            ->orderByDesc('id');
 
         if ($soloActivos) {
             $query->whereIn('estado', ['en_ruta', 'preparando', 'aprobado']);
         }
 
-        $pedidos = $query->orderByDesc('id')->get([
-            'id',
-            'codigo',
-            'estado',
-            'ubicacion_id',
-            'cliente_id',
-            'vendedor_id',
-            'rutero_id',
-            'ruta_id',
-            'zona_id',
-            'observaciones',
-            'total',
-            'creado_en',
-            'entregado_en',
-        ]);
+        $pedidos = $query->get();
 
         return response()->json([
-            'data' => $pedidos,
+            'data' => $pedidos->map(fn($p) => $this->pedidoResponse($p))->values(),
         ]);
-    }
-
-    private function generarCodigo(): string
-    {
-        return 'PED-' . now()->format('Ymd-His') . '-' . random_int(100, 999);
     }
 }

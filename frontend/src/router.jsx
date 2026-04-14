@@ -18,6 +18,7 @@ import VentaTienda from "./pages/VentaTienda";
 import RegistroVentasTienda from "./pages/RegistroVentasTienda";
 import PerfilUsuario from "./pages/PerfilUsuario";
 import Rutero from "./pages/Rutero";
+import HistorialRutero from "./pages/HistorialRutero";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 import { getSession, getToken } from "./lib/auth";
@@ -192,9 +193,18 @@ export const router = createBrowserRouter([
   {
     path: "/rutero",
     element: (
-      <Wrap roles={["rutero", "super_admin"]}>
+      <WrapWithLayout roles={["rutero", "super_admin"]}>
         <Rutero />
-      </Wrap>
+      </WrapWithLayout>
+    ),
+  },
+
+  {
+    path: "/rutero/historial",
+    element: (
+      <WrapWithLayout roles={["rutero", "super_admin"]}>
+        <HistorialRutero />
+      </WrapWithLayout>
     ),
   },
 
@@ -228,7 +238,9 @@ export const router = createBrowserRouter([
   {
     path: "/perfil",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin", "caja", "vendedor", "vendedor_tienda", "rutero"]}>
+      <WrapWithLayout
+        roles={["admin", "super_admin", "caja", "vendedor", "vendedor_tienda", "rutero"]}
+      >
         <PerfilUsuario />
       </WrapWithLayout>
     ),

@@ -35,6 +35,7 @@ function prettyRole(role) {
   if (role === "admin") return "Administrador";
   if (role === "vendedor") return "Vendedor";
   if (role === "vendedor_tienda") return "Vendedor tienda";
+  if (role === "rutero") return "Rutero";
   if (role === "caja") return "Caja";
   return role || "Usuario";
 }
@@ -53,21 +54,27 @@ export default function Layout({ children }) {
   const isAdminLike = logged && (rol === "admin" || rol === "super_admin");
   const isVendedor = logged && rol === "vendedor";
   const isVendedorTienda = logged && rol === "vendedor_tienda";
+  const isRutero = logged && rol === "rutero";
   const isCaja = logged && rol === "caja";
 
   const canAccessTienda = logged && (isAdmin || isSuperAdmin || isVendedorTienda);
 
   const homeLink = useMemo(() => {
     if (!logged) return "/login";
+    if (isRutero) return "/rutero";
     if (isVendedorTienda) return "/ventas-tienda";
     if (isAdminLike) return "/pedidos-admin";
     if (isCaja) return "/caja";
     if (isVendedor) return "/pedidos#crear-pedido";
     return "/login";
-  }, [logged, isVendedorTienda, isAdminLike, isCaja, isVendedor]);
+  }, [logged, isRutero, isVendedorTienda, isAdminLike, isCaja, isVendedor]);
 
   const vendedorEnPedidos = isVendedor && loc.pathname === "/pedidos";
   const vendedorVista = loc.hash === "#mis-pedidos" ? "mios" : "crear";
+
+  const ruteroEnVista =
+    isRutero &&
+    (loc.pathname === "/rutero" || loc.pathname === "/rutero/historial");
 
   function logout() {
     clearSession();
@@ -205,6 +212,26 @@ export default function Layout({ children }) {
                 </div>
               )}
 
+              {ruteroEnVista && (
+                <div className="lux-segmented desktop-only">
+                  <Link
+                    to="/rutero"
+                    className={`lux-chip ${loc.pathname === "/rutero" ? "is-active" : ""}`}
+                  >
+                    <Package size={15} />
+                    Pedidos asignados
+                  </Link>
+
+                  <Link
+                    to="/rutero/historial"
+                    className={`lux-chip ${loc.pathname === "/rutero/historial" ? "is-active" : ""}`}
+                  >
+                    <ReceiptText size={15} />
+                    Historial
+                  </Link>
+                </div>
+              )}
+
               {logged ? (
                 <div className="lux-user-box desktop-only">
                   <button
@@ -299,6 +326,28 @@ export default function Layout({ children }) {
                   >
                     <ReceiptText size={16} />
                     Mis pedidos
+                  </Link>
+                </div>
+              )}
+
+              {ruteroEnVista && (
+                <div className="lux-mobile-group">
+                  <Link
+                    to="/rutero"
+                    className={`lux-mobile-link ${loc.pathname === "/rutero" ? "is-active" : ""}`}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    <Package size={16} />
+                    Pedidos asignados
+                  </Link>
+
+                  <Link
+                    to="/rutero/historial"
+                    className={`lux-mobile-link ${loc.pathname === "/rutero/historial" ? "is-active" : ""}`}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    <ReceiptText size={16} />
+                    Historial
                   </Link>
                 </div>
               )}

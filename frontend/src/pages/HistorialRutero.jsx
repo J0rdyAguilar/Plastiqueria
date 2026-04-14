@@ -28,26 +28,23 @@ function estadoClase(estado) {
   }
 }
 
-export default function Rutero() {
+export default function HistorialRutero() {
   const session = getSession();
   const me = session?.user || {};
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [pedidos, setPedidos] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [q, setQ] = useState("");
+  const [estado, setEstado] = useState("");
   const [error, setError] = useState("");
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pedidoPendiente, setPedidoPendiente] = useState(null);
-
-  async function cargarPedidos() {
+  async function cargarHistorial() {
     try {
       setError("");
       setLoading(true);
 
-      const res = await ruteroApi.misPedidos({ soloActivos: true });
+      const res = await ruteroApi.misEntregas({ estado });
       const lista = Array.isArray(res?.data) ? res.data : [];
 
       setPedidos(lista);
@@ -61,15 +58,15 @@ export default function Rutero() {
         setSelectedId(null);
       }
     } catch (e) {
-      setError(e?.response?.data?.message || e?.message || "Error al cargar pedidos");
+      setError(e?.response?.data?.message || e?.message || "Error al cargar historial");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    cargarPedidos();
-  }, []);
+    cargarHistorial();
+  }, [estado]);
 
   const pedidosFiltrados = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -104,38 +101,6 @@ export default function Rutero() {
   const pedidoSeleccionado = useMemo(() => {
     return pedidos.find((p) => p.id === selectedId) || null;
   }, [pedidos, selectedId]);
-
-  function handleEntregado() {
-    if (!pedidoSeleccionado || saving) return;
-    setPedidoPendiente(pedidoSeleccionado);
-    setConfirmOpen(true);
-  }
-
-  async function confirmarEntregado() {
-    if (!pedidoPendiente || saving) return;
-
-    try {
-      setSaving(true);
-      await ruteroApi.entregar(pedidoPendiente.id);
-
-      const activos = pedidos.filter((p) => p.id !== pedidoPendiente.id);
-      setPedidos(activos);
-      setSelectedId(activos[0]?.id ?? null);
-
-      setConfirmOpen(false);
-      setPedidoPendiente(null);
-    } catch (e) {
-      alert(e?.response?.data?.message || e?.message || "No se pudo marcar como entregado");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function cancelarConfirmacion() {
-    if (saving) return;
-    setConfirmOpen(false);
-    setPedidoPendiente(null);
-  }
 
   return (
     <>
@@ -172,7 +137,8 @@ export default function Rutero() {
           display: flex;
           align-items: center;
           justify-content: flex-end;
-          flex-shrink: 0;
+          gap: 12px;
+          flex-wrap: wrap;
         }
 
         .rutero-chip {
@@ -240,10 +206,6 @@ export default function Rutero() {
           align-items: start;
         }
 
-        .rt-card {
-          background: #fff;
-        }
-
         .rt-card--panel {
           padding: 22px;
           border-radius: 28px;
@@ -302,11 +264,14 @@ export default function Rutero() {
           color: #64748b;
         }
 
-        .rt-search-wrap {
+        .rt-search-row {
+          display: grid;
+          grid-template-columns: 1fr 180px;
+          gap: 12px;
           margin-bottom: 16px;
         }
 
-        .rt-search-wrap--icon {
+        .rt-search-wrap {
           position: relative;
         }
 
@@ -320,13 +285,13 @@ export default function Rutero() {
           pointer-events: none;
         }
 
-        .rt-input {
+        .rt-input,
+        .rt-select {
           width: 100%;
           height: 52px;
           border: 1px solid rgba(148, 163, 184, 0.22);
           border-radius: 16px;
           background: #fff;
-          padding: 0 16px 0 44px;
           font-size: 14px;
           color: #0f172a;
           outline: none;
@@ -334,7 +299,16 @@ export default function Rutero() {
           box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
         }
 
-        .rt-input:focus {
+        .rt-input {
+          padding: 0 16px 0 44px;
+        }
+
+        .rt-select {
+          padding: 0 14px;
+        }
+
+        .rt-input:focus,
+        .rt-select:focus {
           border-color: rgba(99, 102, 241, 0.45);
           box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.10);
         }
@@ -363,7 +337,7 @@ export default function Rutero() {
           border: 1px solid rgba(148, 163, 184, 0.18);
           background: #fff;
           border-radius: 22px;
-          padding: 16px;
+          padding: 18px;
           text-align: left;
           cursor: pointer;
           transition: all 0.2s ease;
@@ -381,10 +355,6 @@ export default function Rutero() {
           box-shadow: 0 18px 34px rgba(99, 102, 241, 0.12);
         }
 
-        .rt-order-card--modern {
-          padding: 18px;
-        }
-
         .rt-order-card__top {
           display: flex;
           justify-content: space-between;
@@ -397,7 +367,6 @@ export default function Rutero() {
           display: flex;
           align-items: center;
           gap: 10px;
-          min-width: 0;
         }
 
         .rt-order-card__id h3 {
@@ -425,7 +394,6 @@ export default function Rutero() {
 
         .rt-order-meta {
           flex: 1;
-          min-width: 0;
         }
 
         .rt-order-meta__row,
@@ -450,7 +418,6 @@ export default function Rutero() {
           font-size: 14px;
           font-weight: 700;
           line-height: 1.4;
-          word-break: break-word;
         }
 
         .rt-order-meta__grid {
@@ -559,13 +526,6 @@ export default function Rutero() {
           color: #0f172a;
           font-size: 15px;
           line-height: 1.45;
-          word-break: break-word;
-        }
-
-        .rt-box {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
         }
 
         .rt-box--soft {
@@ -576,19 +536,20 @@ export default function Rutero() {
           box-shadow: 0 12px 26px rgba(15, 23, 42, 0.04);
         }
 
-        .rt-box label {
-          font-size: 12px;
-          font-weight: 800;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: #64748b;
-        }
-
         .rt-box__head {
           display: flex;
           justify-content: space-between;
           align-items: center;
           gap: 12px;
+          margin-bottom: 12px;
+        }
+
+        .rt-box__head label {
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #64748b;
         }
 
         .rt-box__head span {
@@ -617,17 +578,13 @@ export default function Rutero() {
           align-items: center;
           justify-content: space-between;
           gap: 14px;
-          padding: 14px 0;
+          padding: 14px 2px;
           border-bottom: 1px solid rgba(148, 163, 184, 0.12);
         }
 
         .rt-item-row:last-child {
           border-bottom: 0;
           padding-bottom: 0;
-        }
-
-        .rt-item-row--modern {
-          padding: 14px 2px;
         }
 
         .rt-item-row__left {
@@ -667,14 +624,6 @@ export default function Rutero() {
           font-weight: 800;
           color: #0f172a;
           white-space: nowrap;
-          flex-shrink: 0;
-        }
-
-        .rt-total {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 16px;
         }
 
         .rt-total--modern {
@@ -683,6 +632,10 @@ export default function Rutero() {
           background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
           color: #fff;
           box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
         }
 
         .rt-total--modern span {
@@ -712,12 +665,6 @@ export default function Rutero() {
           font-weight: 800;
         }
 
-        .rt-btn:disabled {
-          opacity: 0.65;
-          cursor: not-allowed;
-          transform: none !important;
-        }
-
         .rt-btn--dark {
           height: 48px;
           padding: 0 20px;
@@ -727,51 +674,7 @@ export default function Rutero() {
           box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
         }
 
-        .rt-btn--dark:hover:not(:disabled) {
-          transform: translateY(-2px);
-        }
-
-        .rt-btn--success {
-          height: 54px;
-          padding: 0 20px;
-          border-radius: 18px;
-          color: #fff;
-          background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-          box-shadow: 0 16px 28px rgba(34, 197, 94, 0.24);
-        }
-
-        .rt-btn--success:hover:not(:disabled) {
-          transform: translateY(-2px);
-        }
-
-        .rt-btn--full {
-          width: 100%;
-        }
-
-        .rt-btn--ghost {
-          height: 50px;
-          padding: 0 20px;
-          border-radius: 16px;
-          background: #ffffff;
-          color: #0f172a;
-          border: 1px solid rgba(148, 163, 184, 0.2);
-          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
-        }
-
-        .rt-btn--ghost:hover:not(:disabled) {
-          transform: translateY(-2px);
-        }
-
-        .rt-btn--danger {
-          height: 50px;
-          padding: 0 22px;
-          border-radius: 16px;
-          color: #fff;
-          background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-          box-shadow: 0 16px 28px rgba(34, 197, 94, 0.24);
-        }
-
-        .rt-btn--danger:hover:not(:disabled) {
+        .rt-btn--dark:hover {
           transform: translateY(-2px);
         }
 
@@ -820,99 +723,6 @@ export default function Rutero() {
           color: #6d28d9;
         }
 
-        .rt-modal-backdrop {
-          position: fixed;
-          inset: 0;
-          background: rgba(15, 23, 42, 0.45);
-          backdrop-filter: blur(4px);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-          z-index: 9999;
-        }
-
-        .rt-modal {
-          width: 100%;
-          max-width: 520px;
-          border-radius: 28px;
-          background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-          border: 1px solid rgba(148, 163, 184, 0.18);
-          box-shadow: 0 30px 70px rgba(15, 23, 42, 0.28);
-          overflow: hidden;
-          animation: rtModalIn 0.22s ease;
-        }
-
-        .rt-modal__top {
-          padding: 22px 24px 12px;
-        }
-
-        .rt-modal__chip {
-          display: inline-flex;
-          align-items: center;
-          padding: 8px 14px;
-          border-radius: 999px;
-          background: rgba(99, 102, 241, 0.1);
-          color: #4f46e5;
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .rt-modal__title {
-          margin: 14px 0 8px;
-          font-size: 28px;
-          line-height: 1.05;
-          font-weight: 900;
-          color: #0f172a;
-        }
-
-        .rt-modal__text {
-          margin: 0;
-          color: #475569;
-          font-size: 15px;
-          line-height: 1.6;
-        }
-
-        .rt-modal__pedido {
-          margin: 18px 24px 0;
-          padding: 16px 18px;
-          border-radius: 20px;
-          background: linear-gradient(135deg, #eef2ff 0%, #f8fbff 100%);
-          border: 1px solid rgba(99, 102, 241, 0.14);
-        }
-
-        .rt-modal__pedido strong {
-          display: block;
-          color: #0f172a;
-          font-size: 18px;
-          margin-bottom: 4px;
-        }
-
-        .rt-modal__pedido span {
-          color: #64748b;
-          font-size: 14px;
-        }
-
-        .rt-modal__actions {
-          display: flex;
-          gap: 12px;
-          justify-content: flex-end;
-          padding: 22px 24px 24px;
-        }
-
-        @keyframes rtModalIn {
-          from {
-            opacity: 0;
-            transform: translateY(10px) scale(0.98);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-
         @media (max-width: 1180px) {
           .rutero-grid {
             grid-template-columns: 1fr;
@@ -920,10 +730,6 @@ export default function Rutero() {
         }
 
         @media (max-width: 768px) {
-          .rutero-page {
-            gap: 18px;
-          }
-
           .rutero-hero {
             padding: 20px;
             border-radius: 24px;
@@ -952,6 +758,10 @@ export default function Rutero() {
             width: 100%;
           }
 
+          .rt-search-row {
+            grid-template-columns: 1fr;
+          }
+
           .rt-order-card__body {
             flex-direction: column;
             align-items: stretch;
@@ -974,8 +784,7 @@ export default function Rutero() {
             grid-column: auto;
           }
 
-          .rt-item-row,
-          .rt-item-row--modern {
+          .rt-item-row {
             flex-direction: column;
             align-items: stretch;
           }
@@ -993,35 +802,15 @@ export default function Rutero() {
             font-size: 24px;
           }
         }
-
-        @media (max-width: 640px) {
-          .rt-modal {
-            max-width: 100%;
-            border-radius: 22px;
-          }
-
-          .rt-modal__title {
-            font-size: 24px;
-          }
-
-          .rt-modal__actions {
-            flex-direction: column-reverse;
-          }
-
-          .rt-btn--ghost,
-          .rt-btn--danger {
-            width: 100%;
-          }
-        }
       `}</style>
 
       <div className="rutero-page">
         <div className="rutero-hero">
           <div className="rutero-hero__left">
-            <div className="rutero-chip">Panel rutero</div>
-            <h1 className="rutero-title">Pedidos para entrega</h1>
+            <div className="rutero-chip">Historial rutero</div>
+            <h1 className="rutero-title">Historial de entregas</h1>
             <p className="rutero-subtitle">
-              Gestiona tus pedidos asignados, revisa sus detalles y marca las entregas de forma rápida.
+              Consulta tus pedidos entregados y revisa el detalle completo de cada entrega.
             </p>
 
             <div className="rutero-userbar">
@@ -1040,12 +829,20 @@ export default function Rutero() {
           </div>
 
           <div className="rutero-hero__right">
-            <button
-              className="rt-btn rt-btn--dark"
-              onClick={cargarPedidos}
-              disabled={loading}
+            <select
+              className="rt-select"
+              value={estado}
+              onChange={(e) => setEstado(e.target.value)}
             >
-              {loading ? "Cargando..." : "Actualizar"}
+              <option value="">Todos</option>
+              <option value="entregado">Entregado</option>
+              <option value="en_ruta">En ruta</option>
+              <option value="aprobado">Aprobado</option>
+              <option value="preparando">Preparando</option>
+            </select>
+
+            <button className="rt-btn rt-btn--dark" onClick={cargarHistorial}>
+              Actualizar
             </button>
           </div>
         </div>
@@ -1053,45 +850,57 @@ export default function Rutero() {
         {error ? <div className="rt-alert">{error}</div> : null}
 
         <div className="rutero-grid">
-          <section className="rt-card rt-card--panel">
+          <section className="rt-card--panel">
             <div className="rt-card-head rt-card-head--between">
               <div>
-                <h2>Mis pedidos asignados</h2>
+                <h2>Mis entregas</h2>
                 <p className="rt-card-subtext">
-                  Revisa los pedidos activos pendientes por entregar.
+                  Busca por cliente, código, ruta o zona.
                 </p>
               </div>
 
               <div className="rt-counter">
                 <strong>{pedidosFiltrados.length}</strong>
-                <span>pedido(s)</span>
+                <span>registro(s)</span>
               </div>
             </div>
 
-            <div className="rt-search-wrap rt-search-wrap--icon">
-              <span className="rt-search-icon">⌕</span>
-              <input
-                className="rt-input"
-                type="text"
-                placeholder="Buscar por cliente, código, ruta o zona..."
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
+            <div className="rt-search-row">
+              <div className="rt-search-wrap">
+                <span className="rt-search-icon">⌕</span>
+                <input
+                  className="rt-input"
+                  type="text"
+                  placeholder="Buscar por cliente, código, ruta o zona..."
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+              </div>
+
+              <select
+                className="rt-select"
+                value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+              >
+                <option value="">Todos los estados</option>
+                <option value="entregado">Entregado</option>
+                <option value="en_ruta">En ruta</option>
+                <option value="aprobado">Aprobado</option>
+                <option value="preparando">Preparando</option>
+              </select>
             </div>
 
-            <div className="rt-list rt-list--modern">
+            <div className="rt-list">
               {loading ? (
-                <div className="rt-empty">Cargando pedidos...</div>
+                <div className="rt-empty">Cargando historial...</div>
               ) : pedidosFiltrados.length === 0 ? (
-                <div className="rt-empty">No tienes pedidos asignados para entregar.</div>
+                <div className="rt-empty">No hay registros en tu historial.</div>
               ) : (
                 pedidosFiltrados.map((pedido) => (
                   <button
                     key={pedido.id}
                     type="button"
-                    className={`rt-order-card rt-order-card--modern ${
-                      selectedId === pedido.id ? "is-active" : ""
-                    }`}
+                    className={`rt-order-card ${selectedId === pedido.id ? "is-active" : ""}`}
                     onClick={() => setSelectedId(pedido.id)}
                   >
                     <div className="rt-order-card__top">
@@ -1118,8 +927,8 @@ export default function Rutero() {
                             <strong>{pedido?.ruta_nombre || "Sin ruta"}</strong>
                           </div>
                           <div>
-                            <span>Zona</span>
-                            <strong>{pedido?.zona_nombre || "Sin zona"}</strong>
+                            <span>Fecha entrega</span>
+                            <strong>{fmtDate(pedido?.entregado_en || pedido?.creado_en)}</strong>
                           </div>
                         </div>
                       </div>
@@ -1135,10 +944,10 @@ export default function Rutero() {
             </div>
           </section>
 
-          <aside className="rt-card rt-card--panel">
+          <aside className="rt-card--panel">
             <div className="rt-card-head">
               <div>
-                <h2>Detalle del pedido</h2>
+                <h2>Detalle de la entrega</h2>
                 <p className="rt-card-subtext">
                   Visualiza toda la información del pedido seleccionado.
                 </p>
@@ -1146,26 +955,21 @@ export default function Rutero() {
             </div>
 
             {!pedidoSeleccionado ? (
-              <div className="rt-empty">Selecciona un pedido para ver el detalle.</div>
+              <div className="rt-empty">Selecciona una entrega para ver el detalle.</div>
             ) : (
               <div className="rt-detail">
                 <div className="rt-detail-hero">
-                  <div className="rt-detail-hero__main">
-                    <div className="rt-detail-hero__eyebrow">Pedido seleccionado</div>
+                  <div>
+                    <div className="rt-detail-hero__eyebrow">Entrega seleccionada</div>
                     <h3>Pedido #{pedidoSeleccionado.id}</h3>
                     <p>
-                      Cliente:{" "}
-                      <strong>
-                        {pedidoSeleccionado?.cliente_nombre || "Consumidor final"}
-                      </strong>
+                      Cliente: <strong>{pedidoSeleccionado?.cliente_nombre || "Consumidor final"}</strong>
                     </p>
                   </div>
 
-                  <div className="rt-detail-hero__status">
-                    <span className={estadoClase(pedidoSeleccionado.estado)}>
-                      {pedidoSeleccionado.estado || "—"}
-                    </span>
-                  </div>
+                  <span className={estadoClase(pedidoSeleccionado.estado)}>
+                    {pedidoSeleccionado.estado || "—"}
+                  </span>
                 </div>
 
                 <div className="rt-info-grid">
@@ -1186,27 +990,25 @@ export default function Rutero() {
 
                   <div className="rt-info-box">
                     <span>Sucursal</span>
-                    <strong>
-                      {pedidoSeleccionado?.ubicacion_nombre ||
-                        pedidoSeleccionado?.ubicacion_id ||
-                        "—"}
-                    </strong>
+                    <strong>{pedidoSeleccionado?.ubicacion_nombre || pedidoSeleccionado?.ubicacion_id || "—"}</strong>
                   </div>
 
                   <div className="rt-info-box rt-info-box--full">
-                    <span>Fecha del pedido</span>
-                    <strong>{fmtDate(pedidoSeleccionado?.creado_en)}</strong>
+                    <span>Fecha de entrega</span>
+                    <strong>{fmtDate(pedidoSeleccionado?.entregado_en || pedidoSeleccionado?.creado_en)}</strong>
                   </div>
                 </div>
 
-                <div className="rt-box rt-box--soft">
-                  <label>Observaciones</label>
+                <div className="rt-box--soft">
+                  <div className="rt-box__head">
+                    <label>Observaciones</label>
+                  </div>
                   <div className="rt-note">
                     {pedidoSeleccionado?.observaciones?.trim() || "Sin observaciones"}
                   </div>
                 </div>
 
-                <div className="rt-box rt-box--soft">
+                <div className="rt-box--soft">
                   <div className="rt-box__head">
                     <label>Productos</label>
                     <span>{(pedidoSeleccionado?.detalles || []).length} item(s)</span>
@@ -1214,13 +1016,10 @@ export default function Rutero() {
 
                   <div className="rt-items">
                     {(pedidoSeleccionado?.detalles || []).length === 0 ? (
-                      <div className="rt-empty-mini">Este pedido no tiene detalle.</div>
+                      <div className="rt-empty-mini">Esta entrega no tiene detalle.</div>
                     ) : (
                       pedidoSeleccionado.detalles.map((item, index) => (
-                        <div
-                          className="rt-item-row rt-item-row--modern"
-                          key={item.id || index}
-                        >
+                        <div className="rt-item-row" key={item.id || index}>
                           <div className="rt-item-row__left">
                             <div className="rt-item-avatar">
                               {(item?.producto_nombre || "P").charAt(0).toUpperCase()}
@@ -1243,72 +1042,18 @@ export default function Rutero() {
                   </div>
                 </div>
 
-                <div className="rt-total rt-total--modern">
+                <div className="rt-total--modern">
                   <div>
                     <span>Total del pedido</span>
                     <small>Incluye todos los productos del detalle</small>
                   </div>
                   <strong>{money(pedidoSeleccionado.total)}</strong>
                 </div>
-
-                <button
-                  className="rt-btn rt-btn--success rt-btn--full"
-                  onClick={handleEntregado}
-                  disabled={
-                    saving ||
-                    !pedidoSeleccionado ||
-                    String(pedidoSeleccionado.estado).toLowerCase() === "entregado"
-                  }
-                >
-                  {saving ? "Guardando..." : "Marcar como entregado"}
-                </button>
               </div>
             )}
           </aside>
         </div>
       </div>
-
-      {confirmOpen && pedidoPendiente ? (
-        <div className="rt-modal-backdrop">
-          <div className="rt-modal">
-            <div className="rt-modal__top">
-              <span className="rt-modal__chip">Confirmar entrega</span>
-              <h3 className="rt-modal__title">¿Marcar como entregado?</h3>
-              <p className="rt-modal__text">
-                Esta acción marcará el pedido como entregado y lo quitará de tu lista de pedidos activos.
-              </p>
-            </div>
-
-            <div className="rt-modal__pedido">
-              <strong>Pedido #{pedidoPendiente.id}</strong>
-              <span>
-                Cliente: {pedidoPendiente?.cliente_nombre || "Consumidor final"} ·
-                Total: {money(pedidoPendiente?.total || 0)}
-              </span>
-            </div>
-
-            <div className="rt-modal__actions">
-              <button
-                type="button"
-                className="rt-btn rt-btn--ghost"
-                onClick={cancelarConfirmacion}
-                disabled={saving}
-              >
-                Cancelar
-              </button>
-
-              <button
-                type="button"
-                className="rt-btn rt-btn--danger"
-                onClick={confirmarEntregado}
-                disabled={saving}
-              >
-                {saving ? "Guardando..." : "Sí, marcar entregado"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }
