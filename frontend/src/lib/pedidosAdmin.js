@@ -20,6 +20,8 @@ export const pedidosAdminApi = {
     q = "",
     estado = "",
     ubicacion_id = "",
+    fecha_desde = "",
+    fecha_hasta = "",
     page = 1,
     per_page = 20,
   } = {}) => {
@@ -27,11 +29,14 @@ export const pedidosAdminApi = {
       q,
       estado,
       ubicacion_id,
+      fecha_desde,
+      fecha_hasta,
       page,
       per_page,
     });
 
-    const { data } = await httpV1.get(`/pedidos?${query}`);
+    const url = query ? `/pedidos?${query}` : "/pedidos";
+    const { data } = await httpV1.get(url);
     return data;
   },
 
