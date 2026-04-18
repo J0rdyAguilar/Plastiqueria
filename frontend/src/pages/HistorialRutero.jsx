@@ -837,8 +837,6 @@ export default function HistorialRutero() {
               <option value="">Todos</option>
               <option value="entregado">Entregado</option>
               <option value="en_ruta">En ruta</option>
-              <option value="aprobado">Aprobado</option>
-              <option value="preparando">Preparando</option>
             </select>
 
             <button className="rt-btn rt-btn--dark" onClick={cargarHistorial}>
@@ -885,8 +883,6 @@ export default function HistorialRutero() {
                 <option value="">Todos los estados</option>
                 <option value="entregado">Entregado</option>
                 <option value="en_ruta">En ruta</option>
-                <option value="aprobado">Aprobado</option>
-                <option value="preparando">Preparando</option>
               </select>
             </div>
 
