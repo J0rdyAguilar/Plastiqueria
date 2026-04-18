@@ -28,6 +28,12 @@ function estadoClase(estado) {
   }
 }
 
+function getMetodoPagoLabel(value) {
+  if (value === "tarjeta") return "Tarjeta";
+  if (value === "cuotas") return "Crédito";
+  return "Efectivo";
+}
+
 export default function Rutero() {
   const session = getSession();
   const me = session?.user || {};
@@ -41,6 +47,11 @@ export default function Rutero() {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pedidoPendiente, setPedidoPendiente] = useState(null);
+
+  const [metodoPago, setMetodoPago] = useState("efectivo");
+  const [nombrePagador, setNombrePagador] = useState("");
+  const [referenciaPago, setReferenciaPago] = useState("");
+  const [observacionEntrega, setObservacionEntrega] = useState("");
 
   async function cargarPedidos() {
     try {
@@ -105,8 +116,37 @@ export default function Rutero() {
     return pedidos.find((p) => p.id === selectedId) || null;
   }, [pedidos, selectedId]);
 
+  useEffect(() => {
+    if (!pedidoSeleccionado) return;
+
+    setNombrePagador(
+      pedidoSeleccionado?.cliente_nombre ||
+        pedidoSeleccionado?.nombre_comprador ||
+        ""
+    );
+    setMetodoPago("efectivo");
+    setReferenciaPago("");
+    setObservacionEntrega("");
+  }, [pedidoSeleccionado?.id]);
+
   function handleEntregado() {
     if (!pedidoSeleccionado || saving) return;
+
+    if (!metodoPago) {
+      alert("Selecciona un método de pago.");
+      return;
+    }
+
+    if (!nombrePagador.trim()) {
+      alert("Ingresa el nombre de quien paga.");
+      return;
+    }
+
+    if (metodoPago === "cuotas" && !pedidoSeleccionado?.cliente_id) {
+      alert("Este pedido necesita cliente para entregarse a crédito.");
+      return;
+    }
+
     setPedidoPendiente(pedidoSeleccionado);
     setConfirmOpen(true);
   }
@@ -116,7 +156,14 @@ export default function Rutero() {
 
     try {
       setSaving(true);
-      await ruteroApi.entregar(pedidoPendiente.id);
+
+      await ruteroApi.entregar(pedidoPendiente.id, {
+        metodo_pago: metodoPago,
+        nombre_pagador: nombrePagador.trim(),
+        referencia_pago: referenciaPago.trim() || null,
+        observacion_entrega: observacionEntrega.trim() || null,
+        cliente_id: pedidoPendiente?.cliente_id || null,
+      });
 
       const activos = pedidos.filter((p) => p.id !== pedidoPendiente.id);
       setPedidos(activos);
@@ -124,6 +171,10 @@ export default function Rutero() {
 
       setConfirmOpen(false);
       setPedidoPendiente(null);
+      setMetodoPago("efectivo");
+      setNombrePagador("");
+      setReferenciaPago("");
+      setObservacionEntrega("");
     } catch (e) {
       alert(e?.response?.data?.message || e?.message || "No se pudo marcar como entregado");
     } finally {
@@ -326,7 +377,7 @@ export default function Rutero() {
           border: 1px solid rgba(148, 163, 184, 0.22);
           border-radius: 16px;
           background: #fff;
-          padding: 0 16px 0 44px;
+          padding: 0 16px;
           font-size: 14px;
           color: #0f172a;
           outline: none;
@@ -334,9 +385,27 @@ export default function Rutero() {
           box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
         }
 
-        .rt-input:focus {
+        .rt-input--search {
+          padding-left: 44px;
+        }
+
+        .rt-input:focus,
+        .rt-textarea:focus {
           border-color: rgba(99, 102, 241, 0.45);
           box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.10);
+        }
+
+        .rt-textarea {
+          width: 100%;
+          min-height: 84px;
+          border: 1px solid rgba(148, 163, 184, 0.22);
+          border-radius: 16px;
+          background: #fff;
+          padding: 12px 14px;
+          font-size: 14px;
+          color: #0f172a;
+          outline: none;
+          resize: vertical;
         }
 
         .rt-list {
@@ -379,10 +448,6 @@ export default function Rutero() {
           border-color: rgba(99, 102, 241, 0.35);
           background: linear-gradient(180deg, #ffffff 0%, #f6f7ff 100%);
           box-shadow: 0 18px 34px rgba(99, 102, 241, 0.12);
-        }
-
-        .rt-order-card--modern {
-          padding: 18px;
         }
 
         .rt-order-card__top {
@@ -626,10 +691,6 @@ export default function Rutero() {
           padding-bottom: 0;
         }
 
-        .rt-item-row--modern {
-          padding: 14px 2px;
-        }
-
         .rt-item-row__left {
           display: flex;
           align-items: center;
@@ -704,6 +765,29 @@ export default function Rutero() {
           white-space: nowrap;
         }
 
+        .rt-pay-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 12px;
+        }
+
+        .rt-pay-btn {
+          height: 46px;
+          border-radius: 14px;
+          border: 1px solid #dbe2ea;
+          background: #f8fafc;
+          color: #0f172a;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .rt-pay-btn.is-active {
+          background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+          color: #fff;
+          border: 1px solid #2563eb;
+          box-shadow: 0 10px 20px rgba(37,99,235,0.20);
+        }
+
         .rt-btn {
           border: 0;
           outline: none;
@@ -727,10 +811,6 @@ export default function Rutero() {
           box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
         }
 
-        .rt-btn--dark:hover:not(:disabled) {
-          transform: translateY(-2px);
-        }
-
         .rt-btn--success {
           height: 54px;
           padding: 0 20px;
@@ -738,10 +818,6 @@ export default function Rutero() {
           color: #fff;
           background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
           box-shadow: 0 16px 28px rgba(34, 197, 94, 0.24);
-        }
-
-        .rt-btn--success:hover:not(:disabled) {
-          transform: translateY(-2px);
         }
 
         .rt-btn--full {
@@ -755,11 +831,6 @@ export default function Rutero() {
           background: #ffffff;
           color: #0f172a;
           border: 1px solid rgba(148, 163, 184, 0.2);
-          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
-        }
-
-        .rt-btn--ghost:hover:not(:disabled) {
-          transform: translateY(-2px);
         }
 
         .rt-btn--danger {
@@ -768,11 +839,6 @@ export default function Rutero() {
           border-radius: 16px;
           color: #fff;
           background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-          box-shadow: 0 16px 28px rgba(34, 197, 94, 0.24);
-        }
-
-        .rt-btn--danger:hover:not(:disabled) {
-          transform: translateY(-2px);
         }
 
         .rt-alert {
@@ -834,13 +900,12 @@ export default function Rutero() {
 
         .rt-modal {
           width: 100%;
-          max-width: 520px;
+          max-width: 560px;
           border-radius: 28px;
           background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
           border: 1px solid rgba(148, 163, 184, 0.18);
           box-shadow: 0 30px 70px rgba(15, 23, 42, 0.28);
           overflow: hidden;
-          animation: rtModalIn 0.22s ease;
         }
 
         .rt-modal__top {
@@ -902,17 +967,6 @@ export default function Rutero() {
           padding: 22px 24px 24px;
         }
 
-        @keyframes rtModalIn {
-          from {
-            opacity: 0;
-            transform: translateY(10px) scale(0.98);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-
         @media (max-width: 1180px) {
           .rutero-grid {
             grid-template-columns: 1fr;
@@ -920,97 +974,20 @@ export default function Rutero() {
         }
 
         @media (max-width: 768px) {
-          .rutero-page {
-            gap: 18px;
+          .rt-pay-grid {
+            grid-template-columns: 1fr;
           }
 
-          .rutero-hero {
-            padding: 20px;
-            border-radius: 24px;
-            flex-direction: column;
-          }
-
-          .rutero-hero__right {
-            width: 100%;
-          }
-
-          .rt-btn--dark {
-            width: 100%;
-          }
-
-          .rt-card--panel {
-            padding: 18px;
-            border-radius: 22px;
-          }
-
-          .rt-card-head--between {
+          .rt-order-card__body,
+          .rt-total--modern,
+          .rt-detail-hero,
+          .rt-item-row {
             flex-direction: column;
             align-items: stretch;
-          }
-
-          .rt-counter {
-            width: 100%;
-          }
-
-          .rt-order-card__body {
-            flex-direction: column;
-            align-items: stretch;
-          }
-
-          .rt-order-total {
-            width: 100%;
-            text-align: left;
-          }
-
-          .rt-detail-hero {
-            flex-direction: column;
           }
 
           .rt-info-grid {
             grid-template-columns: 1fr;
-          }
-
-          .rt-info-box--full {
-            grid-column: auto;
-          }
-
-          .rt-item-row,
-          .rt-item-row--modern {
-            flex-direction: column;
-            align-items: stretch;
-          }
-
-          .rt-item-price {
-            text-align: right;
-          }
-
-          .rt-total--modern {
-            flex-direction: column;
-            align-items: flex-start;
-          }
-
-          .rt-total--modern strong {
-            font-size: 24px;
-          }
-        }
-
-        @media (max-width: 640px) {
-          .rt-modal {
-            max-width: 100%;
-            border-radius: 22px;
-          }
-
-          .rt-modal__title {
-            font-size: 24px;
-          }
-
-          .rt-modal__actions {
-            flex-direction: column-reverse;
-          }
-
-          .rt-btn--ghost,
-          .rt-btn--danger {
-            width: 100%;
           }
         }
       `}</style>
@@ -1021,7 +998,7 @@ export default function Rutero() {
             <div className="rutero-chip">Panel rutero</div>
             <h1 className="rutero-title">Pedidos para entrega</h1>
             <p className="rutero-subtitle">
-              Gestiona tus pedidos asignados, revisa sus detalles y marca las entregas de forma rápida.
+              Gestiona tus pedidos asignados, revisa sus detalles y cobra con efectivo, tarjeta o crédito.
             </p>
 
             <div className="rutero-userbar">
@@ -1071,7 +1048,7 @@ export default function Rutero() {
             <div className="rt-search-wrap rt-search-wrap--icon">
               <span className="rt-search-icon">⌕</span>
               <input
-                className="rt-input"
+                className="rt-input rt-input--search"
                 type="text"
                 placeholder="Buscar por cliente, código, ruta o zona..."
                 value={q}
@@ -1079,7 +1056,7 @@ export default function Rutero() {
               />
             </div>
 
-            <div className="rt-list rt-list--modern">
+            <div className="rt-list">
               {loading ? (
                 <div className="rt-empty">Cargando pedidos...</div>
               ) : pedidosFiltrados.length === 0 ? (
@@ -1089,9 +1066,7 @@ export default function Rutero() {
                   <button
                     key={pedido.id}
                     type="button"
-                    className={`rt-order-card rt-order-card--modern ${
-                      selectedId === pedido.id ? "is-active" : ""
-                    }`}
+                    className={`rt-order-card ${selectedId === pedido.id ? "is-active" : ""}`}
                     onClick={() => setSelectedId(pedido.id)}
                   >
                     <div className="rt-order-card__top">
@@ -1140,7 +1115,7 @@ export default function Rutero() {
               <div>
                 <h2>Detalle del pedido</h2>
                 <p className="rt-card-subtext">
-                  Visualiza toda la información del pedido seleccionado.
+                  Visualiza la información del pedido y cobra al momento de entregar.
                 </p>
               </div>
             </div>
@@ -1150,18 +1125,15 @@ export default function Rutero() {
             ) : (
               <div className="rt-detail">
                 <div className="rt-detail-hero">
-                  <div className="rt-detail-hero__main">
+                  <div>
                     <div className="rt-detail-hero__eyebrow">Pedido seleccionado</div>
                     <h3>Pedido #{pedidoSeleccionado.id}</h3>
                     <p>
-                      Cliente:{" "}
-                      <strong>
-                        {pedidoSeleccionado?.cliente_nombre || "Consumidor final"}
-                      </strong>
+                      Cliente: <strong>{pedidoSeleccionado?.cliente_nombre || "Consumidor final"}</strong>
                     </p>
                   </div>
 
-                  <div className="rt-detail-hero__status">
+                  <div>
                     <span className={estadoClase(pedidoSeleccionado.estado)}>
                       {pedidoSeleccionado.estado || "—"}
                     </span>
@@ -1217,10 +1189,7 @@ export default function Rutero() {
                       <div className="rt-empty-mini">Este pedido no tiene detalle.</div>
                     ) : (
                       pedidoSeleccionado.detalles.map((item, index) => (
-                        <div
-                          className="rt-item-row rt-item-row--modern"
-                          key={item.id || index}
-                        >
+                        <div className="rt-item-row" key={item.id || index}>
                           <div className="rt-item-row__left">
                             <div className="rt-item-avatar">
                               {(item?.producto_nombre || "P").charAt(0).toUpperCase()}
@@ -1243,10 +1212,79 @@ export default function Rutero() {
                   </div>
                 </div>
 
+                <div className="rt-box rt-box--soft">
+                  <label>Método de pago</label>
+                  <div className="rt-pay-grid">
+                    <button
+                      type="button"
+                      className={`rt-pay-btn ${metodoPago === "efectivo" ? "is-active" : ""}`}
+                      onClick={() => setMetodoPago("efectivo")}
+                    >
+                      Efectivo
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`rt-pay-btn ${metodoPago === "tarjeta" ? "is-active" : ""}`}
+                      onClick={() => setMetodoPago("tarjeta")}
+                    >
+                      Tarjeta
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`rt-pay-btn ${metodoPago === "cuotas" ? "is-active" : ""}`}
+                      onClick={() => setMetodoPago("cuotas")}
+                    >
+                      Crédito
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rt-box rt-box--soft">
+                  <label>Nombre de quien paga</label>
+                  <input
+                    className="rt-input"
+                    type="text"
+                    value={nombrePagador}
+                    onChange={(e) => setNombrePagador(e.target.value)}
+                    placeholder="Ej. Tienda La Bendición"
+                  />
+                </div>
+
+                <div className="rt-box rt-box--soft">
+                  <label>
+                    {metodoPago === "cuotas" ? "Referencia de crédito" : "Referencia de pago"}
+                  </label>
+                  <input
+                    className="rt-input"
+                    type="text"
+                    value={referenciaPago}
+                    onChange={(e) => setReferenciaPago(e.target.value)}
+                    placeholder={
+                      metodoPago === "cuotas"
+                        ? "Ej. libreta / acuerdo"
+                        : metodoPago === "tarjeta"
+                        ? "Ej. voucher / últimos 4"
+                        : "Ej. pago completo"
+                    }
+                  />
+                </div>
+
+                <div className="rt-box rt-box--soft">
+                  <label>Observación de entrega</label>
+                  <textarea
+                    className="rt-textarea"
+                    value={observacionEntrega}
+                    onChange={(e) => setObservacionEntrega(e.target.value)}
+                    placeholder="Ej. Cliente recibió conforme..."
+                  />
+                </div>
+
                 <div className="rt-total rt-total--modern">
                   <div>
                     <span>Total del pedido</span>
-                    <small>Incluye todos los productos del detalle</small>
+                    <small>Método: {getMetodoPagoLabel(metodoPago)}</small>
                   </div>
                   <strong>{money(pedidoSeleccionado.total)}</strong>
                 </div>
@@ -1260,7 +1298,7 @@ export default function Rutero() {
                     String(pedidoSeleccionado.estado).toLowerCase() === "entregado"
                   }
                 >
-                  {saving ? "Guardando..." : "Marcar como entregado"}
+                  {saving ? "Guardando..." : "Cobrar y marcar como entregado"}
                 </button>
               </div>
             )}
@@ -1273,9 +1311,9 @@ export default function Rutero() {
           <div className="rt-modal">
             <div className="rt-modal__top">
               <span className="rt-modal__chip">Confirmar entrega</span>
-              <h3 className="rt-modal__title">¿Marcar como entregado?</h3>
+              <h3 className="rt-modal__title">¿Confirmar cobro y entrega?</h3>
               <p className="rt-modal__text">
-                Esta acción marcará el pedido como entregado y lo quitará de tu lista de pedidos activos.
+                Se marcará el pedido como entregado con el método de pago seleccionado.
               </p>
             </div>
 
@@ -1283,7 +1321,8 @@ export default function Rutero() {
               <strong>Pedido #{pedidoPendiente.id}</strong>
               <span>
                 Cliente: {pedidoPendiente?.cliente_nombre || "Consumidor final"} ·
-                Total: {money(pedidoPendiente?.total || 0)}
+                Total: {money(pedidoPendiente?.total || 0)} ·
+                Método: {getMetodoPagoLabel(metodoPago)}
               </span>
             </div>
 
@@ -1303,7 +1342,7 @@ export default function Rutero() {
                 onClick={confirmarEntregado}
                 disabled={saving}
               >
-                {saving ? "Guardando..." : "Sí, marcar entregado"}
+                {saving ? "Guardando..." : "Sí, confirmar"}
               </button>
             </div>
           </div>

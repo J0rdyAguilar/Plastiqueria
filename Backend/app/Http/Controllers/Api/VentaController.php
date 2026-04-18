@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Caja;
 use App\Models\Cliente;
+use App\Models\MovimientoCaja;
 use App\Models\Venta;
 use App\Models\VentaDetalle;
 use App\Models\Vendedor;
@@ -104,6 +106,7 @@ class VentaController extends Controller
             'estado' => $venta->estado,
             'total' => (float) $venta->total,
             'observaciones' => $venta->observaciones,
+            'metodo_pago' => $venta->metodo_pago,
 
             'creado_en' => optional($venta->creado_en)?->format('Y-m-d H:i:s'),
             'actualizado_en' => optional($venta->actualizado_en)?->format('Y-m-d H:i:s'),
@@ -383,16 +386,83 @@ class VentaController extends Controller
             ], 422);
         }
 
-        $venta->estado = 'entregado';
-        $venta->entregado_en = now();
-        $venta->save();
-
-        $this->loadVentaRelations($venta);
-
-        return response()->json([
-            'message' => 'Pedido entregado.',
-            'data' => $this->ventaResponse($venta),
+        $data = $request->validate([
+            'metodo_pago' => ['required', 'in:efectivo,tarjeta,cuotas'],
+            'nombre_pagador' => ['nullable', 'string', 'max:255'],
+            'referencia_pago' => ['nullable', 'string', 'max:255'],
+            'observacion_entrega' => ['nullable', 'string', 'max:1000'],
+            'cliente_id' => ['nullable', 'integer'],
         ]);
+
+        return DB::transaction(function () use ($venta, $user, $data) {
+            $metodoPago = $data['metodo_pago'];
+            $ubicacionId = (int) $venta->ubicacion_id;
+
+            if ($metodoPago === 'cuotas' && empty($data['cliente_id']) && empty($venta->cliente_id)) {
+                return response()->json([
+                    'message' => 'Para entregar a crédito debes seleccionar un cliente.'
+                ], 422);
+            }
+
+            $venta->metodo_pago = $metodoPago;
+
+            if ($metodoPago === 'cuotas') {
+                $venta->cliente_id = !empty($data['cliente_id'])
+                    ? (int) $data['cliente_id']
+                    : $venta->cliente_id;
+            }
+
+            if (!empty($data['observacion_entrega'])) {
+                $obsActual = trim((string) ($venta->observaciones ?? ''));
+                $obsNueva = trim((string) $data['observacion_entrega']);
+
+                $venta->observaciones = $obsActual !== ''
+                    ? $obsActual . "\n" . $obsNueva
+                    : $obsNueva;
+            }
+
+            $venta->estado = 'entregado';
+            $venta->entregado_en = now();
+            $venta->save();
+
+            if (in_array($metodoPago, ['efectivo', 'tarjeta'], true)) {
+                $caja = Caja::query()
+                    ->where('ubicacion_id', $ubicacionId)
+                    ->whereNull('cerrado_en')
+                    ->latest('id')
+                    ->first();
+
+                if (!$caja) {
+                    return response()->json([
+                        'message' => 'No hay una caja abierta en esta sucursal para registrar el cobro.'
+                    ], 422);
+                }
+
+                MovimientoCaja::create([
+                    'caja_id' => (int) $caja->id,
+                    'ubicacion_id' => $ubicacionId,
+                    'usuario_id' => (int) $user->id,
+                    'tipo' => 'ingreso',
+                    'concepto' => 'venta_rutero',
+                    'monto' => round((float) $venta->total, 2),
+                    'metodo_pago' => $metodoPago,
+                    'referencia_id' => (int) $venta->id,
+                    'referencia_tipo' => 'venta',
+                    'notas' => 'Cobro de pedido entregado por rutero'
+                        . (!empty($data['nombre_pagador']) ? ' | Pagador: ' . $data['nombre_pagador'] : '')
+                        . (!empty($data['referencia_pago']) ? ' | Ref: ' . $data['referencia_pago'] : ''),
+                ]);
+            }
+
+            $this->loadVentaRelations($venta);
+
+            return response()->json([
+                'message' => $metodoPago === 'cuotas'
+                    ? 'Pedido entregado a crédito correctamente.'
+                    : 'Pedido entregado y cobrado correctamente.',
+                'data' => $this->ventaResponse($venta),
+            ]);
+        });
     }
 
     public function actualizarPedidoAdmin(Request $request, Venta $venta)

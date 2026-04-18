@@ -17,10 +17,13 @@ import {
   UserRound,
   ChevronDown,
   ChevronUp,
+  Wallet,
+  Users,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ventasTienda } from "../api/ventasTienda";
 import { stockApi } from "../lib/stock";
+import { clientesApi } from "../lib/clientes";
 
 function money(value) {
   return `Q${Number(value || 0).toFixed(2)}`;
@@ -109,12 +112,49 @@ function safeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function getMetodoPagoLabel(value) {
+  if (value === "tarjeta") return "Tarjeta";
+  if (value === "cuotas") return "Crédito";
+  return "Efectivo";
+}
+
+function extractArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.data)) return payload.data.data;
+  return [];
+}
+
+function getErrorMessage(err, fallback = "Ocurrió un error") {
+  const data = err?.response?.data;
+
+  if (data?.errors && typeof data.errors === "object") {
+    const firstKey = Object.keys(data.errors)[0];
+    const firstVal = firstKey ? data.errors[firstKey] : null;
+
+    if (Array.isArray(firstVal) && firstVal[0]) return firstVal[0];
+    if (typeof firstVal === "string" && firstVal.trim()) return firstVal;
+  }
+
+  if (typeof data?.message === "string" && data.message.trim()) {
+    return data.message;
+  }
+
+  if (typeof err?.message === "string" && err.message.trim()) {
+    return err.message;
+  }
+
+  return fallback;
+}
+
 function imprimirTicketVenta({
   venta = null,
   items = [],
   total = 0,
   metodoPago = "",
   nombreComprador = "",
+  clienteNombre = "",
+  saldoPendiente = 0,
 }) {
   const fecha =
     venta?.creado_en ||
@@ -204,8 +244,17 @@ function imprimirTicketVenta({
         <div class="box">
           <div class="row"><span class="label">Venta:</span><strong>#${safeHtml(codigo)}</strong></div>
           <div class="row"><span class="label">Fecha:</span><strong>${safeHtml(formatDate(fecha))}</strong></div>
-          <div class="row"><span class="label">Comprador:</span><strong>${safeHtml(nombreComprador || "Consumidor final")}</strong></div>
-          <div class="row"><span class="label">Pago:</span><strong>${safeHtml(metodoPago === "tarjeta" ? "Tarjeta" : "Efectivo")}</strong></div>
+          <div class="row"><span class="label">Comprador:</span><strong>${safeHtml(nombreComprador || clienteNombre || "Consumidor final")}</strong></div>
+          <div class="row"><span class="label">Pago:</span><strong>${safeHtml(getMetodoPagoLabel(metodoPago))}</strong></div>
+          ${
+            metodoPago === "cuotas"
+              ? `
+                <div class="row"><span class="label">Saldo pendiente:</span><strong>${safeHtml(
+                  money(saldoPendiente || total)
+                )}</strong></div>
+              `
+              : ""
+          }
         </div>
 
         <div>
@@ -214,12 +263,14 @@ function imprimirTicketVenta({
               (d) => `
             <div class="line-item">
               <div class="prod">${safeHtml(
-                `${d.nombre || "Producto"}${d.presentacion ? ` - ${d.presentacion}` : ""}`
+                `${d.nombre || "Producto"}${
+                  d.presentacion ? ` - ${d.presentacion}` : ""
+                }`
               )}</div>
               <div class="row">
-                <span class="muted">${safeHtml(Number(d.cantidad || 0))} x ${safeHtml(
-                money(d.precio_unitario)
-              )}</span>
+                <span class="muted">${safeHtml(
+                  Number(d.cantidad || 0)
+                )} x ${safeHtml(money(d.precio_unitario))}</span>
                 <strong>${safeHtml(
                   money(Number(d.cantidad || 0) * Number(d.precio_unitario || 0))
                 )}</strong>
@@ -278,9 +329,23 @@ export default function VentaTienda() {
   const [q, setQ] = useState("");
   const [metodoPago, setMetodoPago] = useState("efectivo");
   const [nombreComprador, setNombreComprador] = useState("");
+  const [clienteId, setClienteId] = useState("");
+  const [clientes, setClientes] = useState([]);
+  const [referenciaPago, setReferenciaPago] = useState("");
+
+  const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false);
+  const [guardandoCliente, setGuardandoCliente] = useState(false);
+  const [nuevoCliente, setNuevoCliente] = useState({
+    nombre: "",
+    propietario: "",
+    telefono: "",
+    direccion: "",
+    referencia: "",
+  });
 
   const [loadingInventario, setLoadingInventario] = useState(true);
   const [loadingVenta, setLoadingVenta] = useState(false);
+  const [loadingClientes, setLoadingClientes] = useState(false);
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
@@ -290,6 +355,7 @@ export default function VentaTienda() {
 
   useEffect(() => {
     cargarInventario();
+    cargarClientes();
   }, []);
 
   useEffect(() => {
@@ -302,6 +368,25 @@ export default function VentaTienda() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  async function cargarClientes() {
+    try {
+      setLoadingClientes(true);
+
+      const resp = await clientesApi.list({
+        activo: 1,
+        per_page: 500,
+      });
+
+      const rows = extractArray(resp);
+      setClientes(rows);
+    } catch (error) {
+      console.error("ERROR CLIENTES:", error);
+      setClientes([]);
+    } finally {
+      setLoadingClientes(false);
+    }
+  }
 
   async function cargarInventario() {
     try {
@@ -371,6 +456,51 @@ export default function VentaTienda() {
     }
   }
 
+  async function handleCrearCliente() {
+    if (!nuevoCliente.nombre.trim()) {
+      alert("Debes ingresar el nombre de la tienda.");
+      return;
+    }
+
+    try {
+      setGuardandoCliente(true);
+
+      const payload = {
+        nombre: nuevoCliente.nombre.trim(),
+        propietario: nuevoCliente.propietario.trim() || "",
+        telefono: nuevoCliente.telefono.trim() || "",
+        direccion: nuevoCliente.direccion.trim() || "Sin dirección",
+        referencia: nuevoCliente.referencia.trim() || "",
+        activo: 1,
+      };
+
+      const res = await clientesApi.create(payload);
+      const creado = res?.data?.data || res?.data || res;
+
+      await cargarClientes();
+
+      if (creado?.id) {
+        setClienteId(String(creado.id));
+      }
+
+      setMostrarNuevoCliente(false);
+      setNuevoCliente({
+        nombre: "",
+        propietario: "",
+        telefono: "",
+        direccion: "",
+        referencia: "",
+      });
+
+      alert("Cliente creado correctamente.");
+    } catch (error) {
+      console.error("ERROR CREANDO CLIENTE:", error);
+      alert(getErrorMessage(error, "No se pudo crear el cliente."));
+    } finally {
+      setGuardandoCliente(false);
+    }
+  }
+
   const inventarioFiltrado = useMemo(() => {
     const term = normalizeText(q);
 
@@ -413,6 +543,10 @@ export default function VentaTienda() {
     );
   }, [inventario, productoPrecioId]);
 
+  const clienteSeleccionado = useMemo(() => {
+    return clientes.find((c) => String(c.id) === String(clienteId)) || null;
+  }, [clientes, clienteId]);
+
   const subtotalPreview = useMemo(() => {
     if (!productoSeleccionado) return 0;
 
@@ -423,6 +557,12 @@ export default function VentaTienda() {
 
     return cantidadNum * precioNum;
   }, [productoSeleccionado, cantidad]);
+
+  const total = useMemo(() => {
+    return items.reduce((acc, item) => {
+      return acc + Number(item.cantidad) * Number(item.precio_unitario);
+    }, 0);
+  }, [items]);
 
   function seleccionarProducto(prodOrId) {
     const prod =
@@ -560,19 +700,13 @@ export default function VentaTienda() {
     setItems((prev) => prev.filter((_, i) => i !== index));
   }
 
-  const total = useMemo(() => {
-    return items.reduce((acc, item) => {
-      return acc + Number(item.cantidad) * Number(item.precio_unitario);
-    }, 0);
-  }, [items]);
-
   async function finalizarVenta() {
     if (items.length === 0) {
       alert("Agrega al menos un producto.");
       return;
     }
 
-    if (!nombreComprador.trim()) {
+    if (!nombreComprador.trim() && metodoPago !== "cuotas") {
       alert("Ingresa el nombre del comprador.");
       return;
     }
@@ -582,12 +716,22 @@ export default function VentaTienda() {
       return;
     }
 
+    if (metodoPago === "cuotas" && !clienteId) {
+      alert("Selecciona un cliente para crédito.");
+      return;
+    }
+
     try {
       setLoadingVenta(true);
 
-      const resp = await ventasTienda.crear({
+      const payload = {
         metodo_pago: metodoPago,
-        nombre_comprador: nombreComprador.trim(),
+        nombre_comprador:
+          metodoPago === "cuotas"
+            ? clienteSeleccionado?.nombre || nombreComprador.trim() || ""
+            : nombreComprador.trim(),
+        cliente_id: metodoPago === "cuotas" ? Number(clienteId) : null,
+        referencia_pago: referenciaPago.trim() || null,
         items: items.map((item) => ({
           producto_id: Number(item.producto_id),
           producto_precio_id: Number(item.producto_precio_id),
@@ -595,8 +739,9 @@ export default function VentaTienda() {
           cantidad: Number(item.cantidad),
           precio_unitario: Number(item.precio_unitario),
         })),
-      });
+      };
 
+      const resp = await ventasTienda.crear(payload);
       const ventaCreada = resp?.data || resp?.venta || resp || null;
 
       imprimirTicketVenta({
@@ -604,15 +749,33 @@ export default function VentaTienda() {
         items,
         total,
         metodoPago,
-        nombreComprador: nombreComprador.trim(),
+        nombreComprador:
+          metodoPago === "cuotas"
+            ? clienteSeleccionado?.nombre || nombreComprador.trim()
+            : nombreComprador.trim(),
+        clienteNombre: clienteSeleccionado?.nombre || "",
+        saldoPendiente:
+          metodoPago === "cuotas"
+            ? Number(ventaCreada?.saldo_pendiente ?? total)
+            : 0,
       });
 
-      alert("Venta realizada correctamente.");
+      alert(
+        metodoPago === "cuotas"
+          ? "Venta a crédito realizada correctamente."
+          : "Venta realizada correctamente."
+      );
+
       setItems([]);
       setExpandedItems({});
       setMetodoPago("efectivo");
       setNombreComprador("");
+      setClienteId("");
+      setReferenciaPago("");
+      setMostrarNuevoCliente(false);
+
       await cargarInventario();
+      await cargarClientes();
     } catch (error) {
       console.error("ERROR VENTA:", error);
       alert(
@@ -698,7 +861,7 @@ export default function VentaTienda() {
                   lineHeight: 1.6,
                 }}
               >
-                Registra ventas por sucursal, indicando comprador y método de pago.
+                Registra ventas por sucursal, indicando comprador, cliente y método de pago.
               </p>
             </div>
 
@@ -825,20 +988,7 @@ export default function VentaTienda() {
             </div>
 
             {loadingInventario ? (
-              <div
-                style={{
-                  padding: 30,
-                  borderRadius: 22,
-                  background: "#f8fafc",
-                  border: "1px solid #e2e8f0",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 12,
-                  color: "#334155",
-                  fontWeight: 700,
-                }}
-              >
+              <div style={loaderWrapStyle}>
                 <Loader2 size={18} className="spin-icon" />
                 Cargando inventario...
               </div>
@@ -894,28 +1044,9 @@ export default function VentaTienda() {
                     </div>
 
                     {showSuggestions && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "calc(100% + 10px)",
-                          left: 0,
-                          right: 0,
-                          zIndex: 30,
-                          background: "#fff",
-                          border: "1px solid #dbe2ea",
-                          borderRadius: 20,
-                          boxShadow: "0 20px 50px rgba(15,23,42,0.14)",
-                          overflow: "hidden",
-                        }}
-                      >
+                      <div style={suggestionsStyle}>
                         {inventarioFiltrado.length === 0 ? (
-                          <div
-                            style={{
-                              padding: 18,
-                              color: "#64748b",
-                              fontSize: 14,
-                            }}
-                          >
+                          <div style={suggestionEmptyStyle}>
                             No se encontraron productos.
                           </div>
                         ) : (
@@ -929,67 +1060,36 @@ export default function VentaTienda() {
                                 onMouseEnter={() => setSelectedSuggestionIndex(index)}
                                 onClick={() => seleccionarProducto(prod)}
                                 style={{
-                                  width: "100%",
-                                  border: "none",
+                                  ...suggestionButtonStyle,
                                   background: active
                                     ? "linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)"
                                     : "#fff",
-                                  padding: "14px 16px",
-                                  textAlign: "left",
-                                  cursor: "pointer",
                                   borderBottom:
                                     index !== inventarioFiltrado.length - 1
                                       ? "1px solid #eef2f7"
                                       : "none",
-                                  display: "grid",
-                                  gap: 6,
                                 }}
                               >
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    gap: 14,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      fontWeight: 800,
-                                      color: "#0f172a",
-                                      fontSize: 15,
-                                    }}
-                                  >
+                                <div style={suggestionTopStyle}>
+                                  <div style={suggestionTitleStyle}>
                                     {highlightText(prod.nombre, q)}
                                     {prod.presentacion ? ` - ${prod.presentacion}` : ""}
                                   </div>
 
                                   <div
                                     style={{
-                                      flexShrink: 0,
-                                      padding: "6px 10px",
-                                      borderRadius: 999,
+                                      ...stockBadgeStyle,
                                       background:
                                         Number(prod.stock) > 0 ? "#ecfdf5" : "#fef2f2",
                                       color:
                                         Number(prod.stock) > 0 ? "#047857" : "#b91c1c",
-                                      fontSize: 12,
-                                      fontWeight: 800,
                                     }}
                                   >
                                     Stock: {prod.stock}
                                   </div>
                                 </div>
 
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    flexWrap: "wrap",
-                                    gap: 10,
-                                    fontSize: 13,
-                                    color: "#64748b",
-                                  }}
-                                >
+                                <div style={suggestionMetaStyle}>
                                   <span>ID: {highlightText(prod.producto_id, q)}</span>
                                   <span>Código: {highlightText(prod.codigo, q)}</span>
                                   <span>Venta: {money(prod.precio)}</span>
@@ -1003,14 +1103,7 @@ export default function VentaTienda() {
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "2fr 1fr 1fr 1fr auto",
-                    gap: 14,
-                    alignItems: "end",
-                  }}
-                >
+                <div style={productEntryGridStyle}>
                   <div>
                     <label style={labelStyle}>Producto seleccionado</label>
                     <div
@@ -1052,14 +1145,7 @@ export default function VentaTienda() {
                       value={productoSeleccionado ? money(productoSeleccionado.precio) : ""}
                       readOnly
                       disabled
-                      style={{
-                        ...inputStyle,
-                        background: "#eef2f7",
-                        color: "#0f172a",
-                        cursor: "not-allowed",
-                        fontWeight: 800,
-                        opacity: 1,
-                      }}
+                      style={disabledInputStyle}
                       placeholder="Selecciona un producto"
                     />
                   </div>
@@ -1071,14 +1157,7 @@ export default function VentaTienda() {
                       value={subtotalPreview ? money(subtotalPreview) : ""}
                       readOnly
                       disabled
-                      style={{
-                        ...inputStyle,
-                        background: "#eef2f7",
-                        color: "#0f172a",
-                        cursor: "not-allowed",
-                        fontWeight: 800,
-                        opacity: 1,
-                      }}
+                      style={disabledInputStyle}
                       placeholder="Q0.00"
                     />
                   </div>
@@ -1096,19 +1175,7 @@ export default function VentaTienda() {
             )}
 
             {productoSeleccionado && (
-              <div
-                style={{
-                  marginTop: 18,
-                  padding: 18,
-                  borderRadius: 20,
-                  background:
-                    "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
-                  border: "1px solid #e2e8f0",
-                  display: "grid",
-                  gridTemplateColumns: "repeat(4, 1fr)",
-                  gap: 14,
-                }}
-              >
+              <div style={selectedInfoGridStyle}>
                 <InfoBox
                   icon={<ClipboardList size={16} />}
                   title="ID producto"
@@ -1133,88 +1200,33 @@ export default function VentaTienda() {
             )}
           </div>
 
-          <div
-            style={{
-              background: "rgba(255,255,255,0.82)",
-              borderRadius: 28,
-              padding: 24,
-              border: "1px solid rgba(148,163,184,0.18)",
-              boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
-              display: "grid",
-              gap: 16,
-              alignContent: "start",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              <div
-                style={{
-                  width: 46,
-                  height: 46,
-                  borderRadius: 16,
-                  display: "grid",
-                  placeItems: "center",
-                  background:
-                    "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                  color: "#fff",
-                }}
-              >
+          <div style={summaryPanelStyle}>
+            <div style={summaryHeaderStyle}>
+              <div style={summaryIconStyle}>
                 <ReceiptText size={22} />
               </div>
 
               <div>
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: 22,
-                    fontWeight: 800,
-                    color: "#0f172a",
-                  }}
-                >
-                  Resumen
-                </h2>
-                <p
-                  style={{
-                    margin: "4px 0 0",
-                    color: "#64748b",
-                    fontSize: 14,
-                  }}
-                >
-                  Estado actual de la venta.
-                </p>
+                <h2 style={summaryTitleStyle}>Resumen</h2>
+                <p style={summaryTextStyle}>Estado actual de la venta.</p>
               </div>
             </div>
 
-            <div
-              style={{
-                borderRadius: 18,
-                border: "1px solid #e2e8f0",
-                background: "#fff",
-                padding: 16,
-              }}
-            >
-              <label style={labelStyle}>Nombre del comprador</label>
+            <div style={cardBlockStyle}>
+              <label style={labelStyle}>
+                {metodoPago === "cuotas" ? "Nombre de referencia" : "Nombre del comprador"}
+              </label>
               <div style={{ position: "relative" }}>
-                <UserRound
-                  size={18}
-                  style={{
-                    position: "absolute",
-                    left: 14,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    color: "#64748b",
-                  }}
-                />
+                <UserRound size={18} style={leadingIconStyle} />
                 <input
                   type="text"
                   value={nombreComprador}
                   onChange={(e) => setNombreComprador(e.target.value)}
-                  placeholder="Ej. Juan Pérez"
+                  placeholder={
+                    metodoPago === "cuotas"
+                      ? "Ej. nombre visible en ticket"
+                      : "Ej. Juan Pérez"
+                  }
                   style={{
                     ...inputStyle,
                     paddingLeft: 42,
@@ -1223,22 +1235,9 @@ export default function VentaTienda() {
               </div>
             </div>
 
-            <div
-              style={{
-                borderRadius: 18,
-                border: "1px solid #e2e8f0",
-                background: "#fff",
-                padding: 16,
-              }}
-            >
+            <div style={cardBlockStyle}>
               <label style={labelStyle}>Método de pago</label>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 12,
-                }}
-              >
+              <div style={payGridStyle}>
                 <button
                   type="button"
                   onClick={() => setMetodoPago("efectivo")}
@@ -1262,65 +1261,189 @@ export default function VentaTienda() {
                   <CreditCard size={18} />
                   Tarjeta
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMetodoPago("cuotas")}
+                  style={{
+                    ...payButtonStyle,
+                    ...(metodoPago === "cuotas" ? activePayButtonStyle : {}),
+                  }}
+                >
+                  <Wallet size={18} />
+                  Crédito
+                </button>
               </div>
             </div>
 
-            <div
-              style={{
-                borderRadius: 22,
-                background:
-                  "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.96) 100%)",
-                padding: 22,
-                color: "#fff",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 13,
-                  color: "rgba(255,255,255,0.70)",
-                  marginBottom: 10,
-                }}
-              >
-                Total a cobrar
-              </div>
-              <div
-                style={{
-                  fontSize: 34,
-                  fontWeight: 900,
-                  letterSpacing: "-0.03em",
-                  marginBottom: 8,
-                }}
-              >
-                {money(total + subtotalPreview)}
-              </div>
-              <div
-                style={{
-                  color: "rgba(255,255,255,0.70)",
-                  fontSize: 14,
-                }}
-              >
+            {metodoPago === "cuotas" && (
+              <>
+                <div style={cardBlockStyle}>
+                  <div style={cardBlockHeaderStyle}>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>Cliente</label>
+
+                    <button
+                      type="button"
+                      onClick={() => setMostrarNuevoCliente((v) => !v)}
+                      style={miniButtonStyle}
+                    >
+                      {mostrarNuevoCliente ? "Cancelar" : "Nuevo cliente"}
+                    </button>
+                  </div>
+
+                  {!mostrarNuevoCliente ? (
+                    <>
+                      <div style={{ position: "relative" }}>
+                        <Users size={18} style={leadingIconStyle} />
+                        <select
+                          value={clienteId}
+                          onChange={(e) => setClienteId(e.target.value)}
+                          style={{
+                            ...inputStyle,
+                            paddingLeft: 42,
+                            appearance: "none",
+                            background: "#f8fafc",
+                          }}
+                          disabled={loadingClientes}
+                        >
+                          <option value="">
+                            {loadingClientes ? "Cargando clientes..." : "Selecciona cliente"}
+                          </option>
+                          {clientes.map((cliente) => (
+                            <option key={cliente.id} value={cliente.id}>
+                              {cliente.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {clienteSeleccionado ? (
+                        <div style={clientPreviewStyle}>
+                          <div>
+                            <strong>Cliente:</strong> {clienteSeleccionado.nombre || "—"}
+                          </div>
+                          {clienteSeleccionado.propietario ? (
+                            <div>
+                              <strong>Propietario:</strong> {clienteSeleccionado.propietario}
+                            </div>
+                          ) : null}
+                          {clienteSeleccionado.telefono ? (
+                            <div>
+                              <strong>Teléfono:</strong> {clienteSeleccionado.telefono}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <input
+                        type="text"
+                        value={nuevoCliente.nombre}
+                        onChange={(e) =>
+                          setNuevoCliente((p) => ({ ...p, nombre: e.target.value }))
+                        }
+                        placeholder="Nombre tienda"
+                        style={inputStyle}
+                      />
+
+                      <input
+                        type="text"
+                        value={nuevoCliente.propietario}
+                        onChange={(e) =>
+                          setNuevoCliente((p) => ({ ...p, propietario: e.target.value }))
+                        }
+                        placeholder="Propietario"
+                        style={inputStyle}
+                      />
+
+                      <input
+                        type="text"
+                        value={nuevoCliente.telefono}
+                        onChange={(e) =>
+                          setNuevoCliente((p) => ({ ...p, telefono: e.target.value }))
+                        }
+                        placeholder="Teléfono"
+                        style={inputStyle}
+                      />
+
+                      <textarea
+                        rows={2}
+                        value={nuevoCliente.direccion}
+                        onChange={(e) =>
+                          setNuevoCliente((p) => ({ ...p, direccion: e.target.value }))
+                        }
+                        placeholder="Dirección"
+                        style={textareaStyle}
+                      />
+
+                      <input
+                        type="text"
+                        value={nuevoCliente.referencia}
+                        onChange={(e) =>
+                          setNuevoCliente((p) => ({ ...p, referencia: e.target.value }))
+                        }
+                        placeholder="Referencia"
+                        style={inputStyle}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={handleCrearCliente}
+                        disabled={guardandoCliente}
+                        style={{
+                          ...successButtonStyle,
+                          padding: "12px 16px",
+                          borderRadius: 14,
+                          boxShadow: "none",
+                        }}
+                      >
+                        {guardandoCliente ? (
+                          <>
+                            <Loader2 size={18} className="spin-icon" />
+                            Guardando cliente...
+                          </>
+                        ) : (
+                          <>
+                            <Plus size={18} />
+                            Guardar cliente
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div style={cardBlockStyle}>
+                  <label style={labelStyle}>Referencia de crédito</label>
+                  <input
+                    type="text"
+                    value={referenciaPago}
+                    onChange={(e) => setReferenciaPago(e.target.value)}
+                    placeholder="Ej. Crédito tienda, libreta, acuerdo verbal..."
+                    style={inputStyle}
+                  />
+                </div>
+              </>
+            )}
+
+            <div style={totalCardStyle}>
+              <div style={totalCardLabelStyle}>Total a cobrar</div>
+              <div style={totalCardValueStyle}>{money(total + subtotalPreview)}</div>
+              <div style={totalCardMetaStyle}>
                 {items.length} {items.length === 1 ? "producto" : "productos"} agregados
               </div>
-              <div
-                style={{
-                  color: "rgba(255,255,255,0.82)",
-                  fontSize: 14,
-                  marginTop: 10,
-                  fontWeight: 700,
-                }}
-              >
-                Método: {metodoPago === "efectivo" ? "Efectivo" : "Tarjeta"}
+              <div style={totalCardLineStyle}>
+                Método: {getMetodoPagoLabel(metodoPago)}
               </div>
-              <div
-                style={{
-                  color: "rgba(255,255,255,0.82)",
-                  fontSize: 14,
-                  marginTop: 6,
-                  fontWeight: 700,
-                }}
-              >
+              <div style={totalCardLineStyle}>
                 Comprador: {nombreComprador.trim() || "Sin ingresar"}
               </div>
+              {metodoPago === "cuotas" ? (
+                <div style={totalCardLineStyle}>
+                  Cliente: {clienteSeleccionado?.nombre || "No seleccionado"}
+                </div>
+              ) : null}
             </div>
 
             <button
@@ -1341,122 +1464,37 @@ export default function VentaTienda() {
               ) : (
                 <>
                   <CheckCircle2 size={18} />
-                  Finalizar venta
+                  {metodoPago === "cuotas"
+                    ? "Guardar venta a crédito"
+                    : "Finalizar venta"}
                 </>
               )}
             </button>
           </div>
         </div>
 
-        <div
-          style={{
-            background: "rgba(255,255,255,0.82)",
-            borderRadius: 28,
-            padding: 24,
-            border: "1px solid rgba(148,163,184,0.18)",
-            boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 16,
-              flexWrap: "wrap",
-              marginBottom: 20,
-            }}
-          >
+        <div style={itemsPanelStyle}>
+          <div style={itemsPanelHeaderStyle}>
             <div>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 24,
-                  fontWeight: 800,
-                  color: "#0f172a",
-                }}
-              >
-                Productos en la venta
-              </h2>
-              <p
-                style={{
-                  margin: "6px 0 0",
-                  color: "#64748b",
-                  fontSize: 14,
-                }}
-              >
+              <h2 style={itemsPanelTitleStyle}>Productos en la venta</h2>
+              <p style={itemsPanelTextStyle}>
                 Revisa el detalle antes de confirmar.
               </p>
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                gap: 10,
-                flexWrap: "wrap",
-                alignItems: "center",
-              }}
-            >
-              <div
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 999,
-                  background: "#eff6ff",
-                  color: "#1d4ed8",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  border: "1px solid #bfdbfe",
-                }}
-              >
-                {items.length} {items.length === 1 ? "registro" : "registros"}
-              </div>
+            <div style={itemsBadgeStyle}>
+              {items.length} {items.length === 1 ? "registro" : "registros"}
             </div>
           </div>
 
           {items.length === 0 ? (
-            <div
-              style={{
-                borderRadius: 24,
-                border: "1px dashed #cbd5e1",
-                padding: "48px 20px",
-                textAlign: "center",
-                background:
-                  "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.95) 100%)",
-              }}
-            >
-              <div
-                style={{
-                  width: 74,
-                  height: 74,
-                  borderRadius: 24,
-                  margin: "0 auto 16px",
-                  display: "grid",
-                  placeItems: "center",
-                  background: "#e2e8f0",
-                  color: "#334155",
-                }}
-              >
+            <div style={emptyWrapStyle}>
+              <div style={emptyIconStyle}>
                 <ShoppingCart size={30} />
               </div>
 
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: 22,
-                  color: "#0f172a",
-                  fontWeight: 800,
-                }}
-              >
-                No hay productos en la venta
-              </h3>
-              <p
-                style={{
-                  margin: "8px auto 0",
-                  maxWidth: 460,
-                  color: "#64748b",
-                  lineHeight: 1.6,
-                }}
-              >
+              <h3 style={emptyTitleStyle}>No hay productos en la venta</h3>
+              <p style={emptyTextStyle}>
                 Selecciona un producto del inventario para comenzar.
               </p>
             </div>
@@ -1468,48 +1506,17 @@ export default function VentaTienda() {
                 const isOpen = !!expandedItems[item.key || index];
 
                 return (
-                  <div
-                    key={item.key || index}
-                    style={{
-                      borderRadius: 22,
-                      border: "1px solid #e2e8f0",
-                      background: "#fff",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: 18,
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 16,
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                      }}
-                    >
+                  <div key={item.key || index} style={itemCardStyle}>
+                    <div style={itemCardHeaderStyle}>
                       <div>
-                        <div
-                          style={{
-                            fontWeight: 900,
-                            color: "#0f172a",
-                            fontSize: 18,
-                          }}
-                        >
-                          {item.nombre}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 13,
-                            color: "#64748b",
-                            marginTop: 4,
-                          }}
-                        >
+                        <div style={itemNameStyle}>{item.nombre}</div>
+                        <div style={itemMetaStyle}>
                           Código: {item.codigo}
                           {item.presentacion ? ` · ${item.presentacion}` : ""}
                         </div>
                       </div>
 
-                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <div style={itemActionsStyle}>
                         <span style={salePillBlue}>
                           {item.cantidad} unidad(es)
                         </span>
@@ -1533,16 +1540,7 @@ export default function VentaTienda() {
                     </div>
 
                     {isOpen ? (
-                      <div
-                        style={{
-                          borderTop: "1px solid #eef2f7",
-                          background: "#f8fafc",
-                          padding: 18,
-                          display: "grid",
-                          gridTemplateColumns: "repeat(3, 1fr)",
-                          gap: 14,
-                        }}
-                      >
+                      <div style={itemDetailGridStyle}>
                         <InfoBox
                           icon={<Package size={16} />}
                           title="Cantidad"
@@ -1614,7 +1612,8 @@ export default function VentaTienda() {
           }
 
           input:focus,
-          select:focus {
+          select:focus,
+          textarea:focus {
             outline: none;
             border-color: #60a5fa !important;
             box-shadow: 0 0 0 4px rgba(96,165,250,0.18);
@@ -1681,6 +1680,27 @@ const inputStyle = {
   fontSize: 15,
   color: "#0f172a",
   boxSizing: "border-box",
+};
+
+const disabledInputStyle = {
+  ...inputStyle,
+  background: "#eef2f7",
+  color: "#0f172a",
+  cursor: "not-allowed",
+  fontWeight: 800,
+  opacity: 1,
+};
+
+const textareaStyle = {
+  width: "100%",
+  borderRadius: 16,
+  border: "1px solid #dbe2ea",
+  background: "#f8fafc",
+  padding: "12px 14px",
+  fontSize: 15,
+  color: "#0f172a",
+  boxSizing: "border-box",
+  resize: "vertical",
 };
 
 const payButtonStyle = {
@@ -1775,4 +1795,333 @@ const salePillBlue = {
   border: "1px solid #bfdbfe",
   background: "#dbeafe",
   color: "#1d4ed8",
+};
+
+const miniButtonStyle = {
+  border: "1px solid #dbe2ea",
+  background: "#fff",
+  borderRadius: 12,
+  padding: "8px 12px",
+  cursor: "pointer",
+  fontWeight: 700,
+  color: "#0f172a",
+};
+
+const loaderWrapStyle = {
+  padding: 30,
+  borderRadius: 22,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 12,
+  color: "#334155",
+  fontWeight: 700,
+};
+
+const suggestionsStyle = {
+  position: "absolute",
+  top: "calc(100% + 10px)",
+  left: 0,
+  right: 0,
+  zIndex: 30,
+  background: "#fff",
+  border: "1px solid #dbe2ea",
+  borderRadius: 20,
+  boxShadow: "0 20px 50px rgba(15,23,42,0.14)",
+  overflow: "hidden",
+};
+
+const suggestionEmptyStyle = {
+  padding: 18,
+  color: "#64748b",
+  fontSize: 14,
+};
+
+const suggestionButtonStyle = {
+  width: "100%",
+  border: "none",
+  padding: "14px 16px",
+  textAlign: "left",
+  cursor: "pointer",
+  display: "grid",
+  gap: 6,
+};
+
+const suggestionTopStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 14,
+  alignItems: "center",
+};
+
+const suggestionTitleStyle = {
+  fontWeight: 800,
+  color: "#0f172a",
+  fontSize: 15,
+};
+
+const stockBadgeStyle = {
+  flexShrink: 0,
+  padding: "6px 10px",
+  borderRadius: 999,
+  fontSize: 12,
+  fontWeight: 800,
+};
+
+const suggestionMetaStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 10,
+  fontSize: 13,
+  color: "#64748b",
+};
+
+const productEntryGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "2fr 1fr 1fr 1fr auto",
+  gap: 14,
+  alignItems: "end",
+};
+
+const selectedInfoGridStyle = {
+  marginTop: 18,
+  padding: 18,
+  borderRadius: 20,
+  background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
+  border: "1px solid #e2e8f0",
+  display: "grid",
+  gridTemplateColumns: "repeat(4, 1fr)",
+  gap: 14,
+};
+
+const summaryPanelStyle = {
+  background: "rgba(255,255,255,0.82)",
+  borderRadius: 28,
+  padding: 24,
+  border: "1px solid rgba(148,163,184,0.18)",
+  boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+  display: "grid",
+  gap: 16,
+  alignContent: "start",
+};
+
+const summaryHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+};
+
+const summaryIconStyle = {
+  width: 46,
+  height: 46,
+  borderRadius: 16,
+  display: "grid",
+  placeItems: "center",
+  background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+  color: "#fff",
+};
+
+const summaryTitleStyle = {
+  margin: 0,
+  fontSize: 22,
+  fontWeight: 800,
+  color: "#0f172a",
+};
+
+const summaryTextStyle = {
+  margin: "4px 0 0",
+  color: "#64748b",
+  fontSize: 14,
+};
+
+const cardBlockStyle = {
+  borderRadius: 18,
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  padding: 16,
+};
+
+const cardBlockHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 10,
+  alignItems: "center",
+  marginBottom: 8,
+  flexWrap: "wrap",
+};
+
+const clientPreviewStyle = {
+  marginTop: 10,
+  padding: "10px 12px",
+  borderRadius: 14,
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  fontSize: 13,
+  color: "#475569",
+};
+
+const leadingIconStyle = {
+  position: "absolute",
+  left: 14,
+  top: "50%",
+  transform: "translateY(-50%)",
+  color: "#64748b",
+};
+
+const payGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr 1fr",
+  gap: 12,
+};
+
+const totalCardStyle = {
+  borderRadius: 22,
+  background:
+    "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(30,41,59,0.96) 100%)",
+  padding: 22,
+  color: "#fff",
+};
+
+const totalCardLabelStyle = {
+  fontSize: 13,
+  color: "rgba(255,255,255,0.70)",
+  marginBottom: 10,
+};
+
+const totalCardValueStyle = {
+  fontSize: 34,
+  fontWeight: 900,
+  letterSpacing: "-0.03em",
+  marginBottom: 8,
+};
+
+const totalCardMetaStyle = {
+  color: "rgba(255,255,255,0.70)",
+  fontSize: 14,
+};
+
+const totalCardLineStyle = {
+  color: "rgba(255,255,255,0.82)",
+  fontSize: 14,
+  marginTop: 6,
+  fontWeight: 700,
+};
+
+const itemsPanelStyle = {
+  background: "rgba(255,255,255,0.82)",
+  borderRadius: 28,
+  padding: 24,
+  border: "1px solid rgba(148,163,184,0.18)",
+  boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+};
+
+const itemsPanelHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 16,
+  flexWrap: "wrap",
+  marginBottom: 20,
+};
+
+const itemsPanelTitleStyle = {
+  margin: 0,
+  fontSize: 24,
+  fontWeight: 800,
+  color: "#0f172a",
+};
+
+const itemsPanelTextStyle = {
+  margin: "6px 0 0",
+  color: "#64748b",
+  fontSize: 14,
+};
+
+const itemsBadgeStyle = {
+  padding: "10px 14px",
+  borderRadius: 999,
+  background: "#eff6ff",
+  color: "#1d4ed8",
+  fontWeight: 700,
+  fontSize: 13,
+  border: "1px solid #bfdbfe",
+};
+
+const emptyWrapStyle = {
+  borderRadius: 24,
+  border: "1px dashed #cbd5e1",
+  padding: "48px 20px",
+  textAlign: "center",
+  background:
+    "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.95) 100%)",
+};
+
+const emptyIconStyle = {
+  width: 74,
+  height: 74,
+  borderRadius: 24,
+  margin: "0 auto 16px",
+  display: "grid",
+  placeItems: "center",
+  background: "#e2e8f0",
+  color: "#334155",
+};
+
+const emptyTitleStyle = {
+  margin: 0,
+  fontSize: 22,
+  color: "#0f172a",
+  fontWeight: 800,
+};
+
+const emptyTextStyle = {
+  margin: "8px auto 0",
+  maxWidth: 460,
+  color: "#64748b",
+  lineHeight: 1.6,
+};
+
+const itemCardStyle = {
+  borderRadius: 22,
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  overflow: "hidden",
+};
+
+const itemCardHeaderStyle = {
+  padding: 18,
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 16,
+  alignItems: "center",
+  flexWrap: "wrap",
+};
+
+const itemNameStyle = {
+  fontWeight: 900,
+  color: "#0f172a",
+  fontSize: 18,
+};
+
+const itemMetaStyle = {
+  fontSize: 13,
+  color: "#64748b",
+  marginTop: 4,
+};
+
+const itemActionsStyle = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap",
+};
+
+const itemDetailGridStyle = {
+  borderTop: "1px solid #eef2f7",
+  background: "#f8fafc",
+  padding: 18,
+  display: "grid",
+  gridTemplateColumns: "repeat(3, 1fr)",
+  gap: 14,
 };

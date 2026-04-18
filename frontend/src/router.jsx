@@ -19,6 +19,7 @@ import RegistroVentasTienda from "./pages/RegistroVentasTienda";
 import PerfilUsuario from "./pages/PerfilUsuario";
 import Rutero from "./pages/Rutero";
 import HistorialRutero from "./pages/HistorialRutero";
+import Cuotas from "./pages/cuotas";
 
 import ProtectedRoute from "./api/auth/ProtectedRoute";
 import { getSession, getToken } from "./lib/auth";
@@ -236,10 +237,26 @@ export const router = createBrowserRouter([
   },
 
   {
+    path: "/cuotas",
+    element: (
+      <WrapWithLayout roles={["super_admin"]}>
+        <Cuotas />
+      </WrapWithLayout>
+    ),
+  },
+
+  {
     path: "/perfil",
     element: (
       <WrapWithLayout
-        roles={["admin", "super_admin", "caja", "vendedor", "vendedor_tienda", "rutero"]}
+        roles={[
+          "admin",
+          "super_admin",
+          "caja",
+          "vendedor",
+          "vendedor_tienda",
+          "rutero",
+        ]}
       >
         <PerfilUsuario />
       </WrapWithLayout>

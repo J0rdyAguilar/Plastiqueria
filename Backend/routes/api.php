@@ -14,7 +14,7 @@ require __DIR__.'/api/movimientos_stock.php';
 require __DIR__.'/api/VentaTienda.php';
 require __DIR__.'/api/clientes.php';
 require __DIR__.'/api/ventas.php';
-require __DIR__ . '/api/perfil.php';
+require __DIR__.'/api/perfil.php';
 
 Route::prefix('v1')->group(function () {
     Route::prefix('pedidos')
@@ -36,4 +36,8 @@ Route::prefix('v1')->group(function () {
     Route::prefix('producto-imagenes')
         ->middleware('auth:sanctum')
         ->group(base_path('routes/api/producto_imagenes.php'));
+
+    Route::prefix('cuotas')
+        ->middleware('auth:sanctum')
+        ->group(base_path('routes/api/cuotas.php'));
 });

@@ -7,6 +7,7 @@ import Vendedores from "./pages/Vendedores";
 import Zonas from "./pages/Zonas";
 import Rutas from "./pages/Rutas";
 import Caja from "./pages/Caja";
+import Cuotas from "./pages/cuotas";
 
 import { isLoggedIn } from "./lib/auth";
 
@@ -21,11 +22,54 @@ export default function App() {
         <Route path="/" element={<Navigate to="/usuarios" replace />} />
         <Route path="/login" element={<Login />} />
 
-        <Route path="/usuarios" element={<Private><Usuarios /></Private>} />
-        <Route path="/vendedores" element={<Private><Vendedores /></Private>} />
-        <Route path="/zonas" element={<Private><Zonas /></Private>} />
-        <Route path="/rutas" element={<Private><Rutas /></Private>} />
-        <Route path="/caja" element={<Private><Caja /></Private>} />
+        <Route
+          path="/usuarios"
+          element={
+            <Private>
+              <Usuarios />
+            </Private>
+          }
+        />
+        <Route
+          path="/vendedores"
+          element={
+            <Private>
+              <Vendedores />
+            </Private>
+          }
+        />
+        <Route
+          path="/zonas"
+          element={
+            <Private>
+              <Zonas />
+            </Private>
+          }
+        />
+        <Route
+          path="/rutas"
+          element={
+            <Private>
+              <Rutas />
+            </Private>
+          }
+        />
+        <Route
+          path="/caja"
+          element={
+            <Private>
+              <Caja />
+            </Private>
+          }
+        />
+        <Route
+          path="/cuotas"
+          element={
+            <Private>
+              <Cuotas />
+            </Private>
+          }
+        />
 
         {/* ⚠️ CATCH ALL */}
         <Route path="*" element={<Navigate to="/usuarios" replace />} />

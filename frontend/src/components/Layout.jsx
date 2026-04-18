@@ -164,6 +164,13 @@ export default function Layout({ children }) {
       show: logged && (isAdminLike || isCaja),
       active: loc.pathname.startsWith("/caja"),
     },
+    {
+      to: "/cuotas",
+      label: "Cuotas",
+      icon: <Wallet size={18} />,
+      show: isSuperAdmin,
+      active: loc.pathname.startsWith("/cuotas"),
+    },
   ].filter((item) => item.show);
 
   return (
@@ -224,7 +231,9 @@ export default function Layout({ children }) {
 
                   <Link
                     to="/rutero/historial"
-                    className={`lux-chip ${loc.pathname === "/rutero/historial" ? "is-active" : ""}`}
+                    className={`lux-chip ${
+                      loc.pathname === "/rutero/historial" ? "is-active" : ""
+                    }`}
                   >
                     <ReceiptText size={15} />
                     Historial
@@ -312,7 +321,9 @@ export default function Layout({ children }) {
                 <div className="lux-mobile-group">
                   <Link
                     to="/pedidos#crear-pedido"
-                    className={`lux-mobile-link ${vendedorVista === "crear" ? "is-active" : ""}`}
+                    className={`lux-mobile-link ${
+                      vendedorVista === "crear" ? "is-active" : ""
+                    }`}
                     onClick={() => setMobileOpen(false)}
                   >
                     <PlusCircle size={16} />
@@ -321,7 +332,9 @@ export default function Layout({ children }) {
 
                   <Link
                     to="/pedidos#mis-pedidos"
-                    className={`lux-mobile-link ${vendedorVista === "mios" ? "is-active" : ""}`}
+                    className={`lux-mobile-link ${
+                      vendedorVista === "mios" ? "is-active" : ""
+                    }`}
                     onClick={() => setMobileOpen(false)}
                   >
                     <ReceiptText size={16} />
@@ -334,7 +347,9 @@ export default function Layout({ children }) {
                 <div className="lux-mobile-group">
                   <Link
                     to="/rutero"
-                    className={`lux-mobile-link ${loc.pathname === "/rutero" ? "is-active" : ""}`}
+                    className={`lux-mobile-link ${
+                      loc.pathname === "/rutero" ? "is-active" : ""
+                    }`}
                     onClick={() => setMobileOpen(false)}
                   >
                     <Package size={16} />
@@ -343,7 +358,9 @@ export default function Layout({ children }) {
 
                   <Link
                     to="/rutero/historial"
-                    className={`lux-mobile-link ${loc.pathname === "/rutero/historial" ? "is-active" : ""}`}
+                    className={`lux-mobile-link ${
+                      loc.pathname === "/rutero/historial" ? "is-active" : ""
+                    }`}
                     onClick={() => setMobileOpen(false)}
                   >
                     <ReceiptText size={16} />
@@ -430,7 +447,9 @@ function NavItem({ to, active, label, icon, vertical = false }) {
   return (
     <Link
       to={to}
-      className={`lux-nav-link ${vertical ? "is-vertical" : ""} ${active ? "is-active" : ""}`}
+      className={`lux-nav-link ${vertical ? "is-vertical" : ""} ${
+        active ? "is-active" : ""
+      }`}
     >
       <span className="lux-nav-icon">{icon}</span>
       <span>{label}</span>

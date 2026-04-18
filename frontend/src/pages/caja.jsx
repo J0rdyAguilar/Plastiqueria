@@ -10,8 +10,11 @@ import {
   Unlock,
   Landmark,
   AlertTriangle,
-  CheckCircle2,
   ReceiptText,
+  TrendingUp,
+  TrendingDown,
+  Building2,
+  CalendarRange,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { getSession } from "../lib/auth";
@@ -57,12 +60,34 @@ function normalizeRole(role) {
   return x;
 }
 
+function extractRows(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  return [];
+}
+
+function buildParams(ubicacionId, isSuperAdmin) {
+  if (isSuperAdmin && !ubicacionId) return {};
+  if (!ubicacionId) return {};
+  return { ubicacion_id: Number(ubicacionId) };
+}
+
+function currentMonthValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
 export default function Caja() {
   const nav = useNavigate();
   const me = getSession()?.user || {};
 
   const usuarioNombre = me?.nombre || me?.usuario || "—";
   const usuarioRol = normalizeRole(me?.rol || me?.role || "");
+  const isSuperAdmin = usuarioRol === "super_admin";
+
   const ubicacionIdSesion = Number(me?.ubicacion_id || 0) || null;
 
   const ubicacionNombreSesion =
@@ -72,11 +97,14 @@ export default function Caja() {
     me?.nombre_ubicacion ||
     "Sucursal asignada";
 
-  const [ubicacionId] = useState(ubicacionIdSesion);
+  const [ubicacionId, setUbicacionId] = useState(
+    isSuperAdmin ? "" : ubicacionIdSesion
+  );
+
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const [actual, setActual] = useState(null);
+  const [actualRaw, setActualRaw] = useState(null);
   const [historial, setHistorial] = useState([]);
 
   const [notasAbrir, setNotasAbrir] = useState("Apertura");
@@ -86,19 +114,68 @@ export default function Caja() {
   const [efectivoFinal, setEfectivoFinal] = useState(100);
 
   const [openedOnce, setOpenedOnce] = useState(false);
+  const [mesFiltro, setMesFiltro] = useState(currentMonthValue());
 
-  const hasUbicacion = !!ubicacionId;
-  const isAbierta = !!actual && !actual?.cerrado_en;
+  const hasUbicacion =
+    isSuperAdmin ? String(ubicacionId || "").trim() !== "" : !!ubicacionId;
+
+  const actualLista = useMemo(() => {
+    if (Array.isArray(actualRaw)) return actualRaw;
+    if (actualRaw && typeof actualRaw === "object") return [actualRaw];
+    return [];
+  }, [actualRaw]);
+
+  const actual = useMemo(() => {
+    if (Array.isArray(actualRaw)) return null;
+    return actualRaw && typeof actualRaw === "object" ? actualRaw : null;
+  }, [actualRaw]);
+
+  const vistaTodasSucursales = isSuperAdmin && !hasUbicacion;
+
+  const ubicacionesDisponibles = useMemo(() => {
+    const map = new Map();
+
+    if (ubicacionIdSesion) {
+      map.set(String(ubicacionIdSesion), {
+        id: Number(ubicacionIdSesion),
+        nombre: ubicacionNombreSesion || `Sucursal #${ubicacionIdSesion}`,
+      });
+    }
+
+    actualLista.forEach((item) => {
+      const id = Number(item?.ubicacion_id || item?.ubicacion?.id || 0);
+      if (!id) return;
+      map.set(String(id), {
+        id,
+        nombre: item?.ubicacion?.nombre || `Sucursal #${id}`,
+      });
+    });
+
+    historial.forEach((item) => {
+      const id = Number(item?.ubicacion_id || item?.ubicacion?.id || 0);
+      if (!id) return;
+      map.set(String(id), {
+        id,
+        nombre: item?.ubicacion?.nombre || `Sucursal #${id}`,
+      });
+    });
+
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.nombre).localeCompare(String(b.nombre))
+    );
+  }, [actualLista, historial, ubicacionIdSesion, ubicacionNombreSesion]);
 
   const nombreSucursal =
     actual?.ubicacion?.nombre ||
     historial?.[0]?.ubicacion?.nombre ||
+    ubicacionesDisponibles.find((u) => Number(u.id) === Number(ubicacionId))
+      ?.nombre ||
     ubicacionNombreSesion ||
-    (hasUbicacion ? `Sucursal #${ubicacionId}` : "No asignada");
+    (hasUbicacion ? `Sucursal #${ubicacionId}` : "Todas las sucursales");
 
   async function load(showToastError = false) {
-    if (!ubicacionId) {
-      setActual(null);
+    if (!isSuperAdmin && !ubicacionId) {
+      setActualRaw(null);
       setHistorial([]);
       setLoading(false);
       return;
@@ -107,24 +184,25 @@ export default function Caja() {
     setLoading(true);
 
     try {
-      const r1 = await api.cajaActual({ ubicacion_id: Number(ubicacionId) });
-      const cajaActual = r1?.data || null;
-      setActual(cajaActual);
+      const paramsActual = buildParams(ubicacionId, isSuperAdmin);
+      const paramsHistorial = {
+        ...buildParams(ubicacionId, isSuperAdmin),
+        per_page: 50,
+        mes: mesFiltro,
+      };
 
-      const r2 = await api.cajaHistorial({
-        ubicacion_id: Number(ubicacionId),
-        per_page: 20,
-      });
+      const r1 = await api.cajaActual(paramsActual);
+      const dataActual = r1?.data ?? null;
+      setActualRaw(dataActual);
 
-      const raw = Array.isArray(r2)
-        ? r2
-        : Array.isArray(r2?.data)
-        ? r2.data
-        : [];
-
+      const r2 = await api.cajaHistorial(paramsHistorial);
+      const raw = extractRows(r2);
       setHistorial(raw);
 
-      if (cajaActual && !openedOnce) {
+      const cajaAbierta =
+        Array.isArray(dataActual) ? dataActual.length > 0 : !!dataActual;
+
+      if (cajaAbierta && !openedOnce) {
         setOpenedOnce(true);
       }
     } catch (err) {
@@ -147,19 +225,13 @@ export default function Caja() {
   useEffect(() => {
     load(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ubicacionId]);
+  }, [ubicacionId, isSuperAdmin, mesFiltro]);
 
   useEffect(() => {
-    if (actual?.efectivo_inicial != null && !isAbierta) {
-      setEfectivoInicial(actual.efectivo_inicial);
+    if (actual?.efectivo_inicial != null && !actual?.cerrado_en) {
+      setEfectivoFinal(actual.saldo_esperado ?? actual.efectivo_inicial);
     }
-  }, [actual, isAbierta]);
-
-  useEffect(() => {
-    if (actual?.efectivo_inicial != null && isAbierta) {
-      setEfectivoFinal(actual.efectivo_inicial);
-    }
-  }, [actual, isAbierta]);
+  }, [actual]);
 
   const resumen = useMemo(() => {
     if (!actual) return null;
@@ -176,10 +248,19 @@ export default function Caja() {
     };
   }, [actual]);
 
+  const totalIngresos = useMemo(() => {
+    return Number(actual?.total_ingresos ?? 0);
+  }, [actual]);
+
+  const totalEgresos = useMemo(() => {
+    return Number(actual?.total_egresos ?? 0);
+  }, [actual]);
+
   const cajaEsperada = useMemo(() => {
-    if (!resumen) return 0;
-    return Number(resumen.efectivo_inicial ?? 0);
-  }, [resumen]);
+    return Number(actual?.saldo_esperado ?? 0);
+  }, [actual]);
+
+  const isAbierta = !!actual && !actual?.cerrado_en;
 
   const cajaContada = useMemo(() => {
     if (!isAbierta) {
@@ -192,16 +273,64 @@ export default function Caja() {
     return cajaContada - cajaEsperada;
   }, [cajaContada, cajaEsperada]);
 
+  const resumenGlobal = useMemo(() => {
+    const rows = actualLista;
+
+    const sucursales = rows.length;
+    const abiertas = rows.filter((x) => !x?.cerrado_en).length;
+    const ingresos = rows.reduce(
+      (acc, x) => acc + Number(x?.total_ingresos ?? 0),
+      0
+    );
+    const egresos = rows.reduce(
+      (acc, x) => acc + Number(x?.total_egresos ?? 0),
+      0
+    );
+    const esperado = rows.reduce(
+      (acc, x) => acc + Number(x?.saldo_esperado ?? 0),
+      0
+    );
+    const base = rows.reduce(
+      (acc, x) => acc + Number(x?.efectivo_inicial ?? 0),
+      0
+    );
+
+    return {
+      sucursales,
+      abiertas,
+      ingresos,
+      egresos,
+      esperado,
+      base,
+    };
+  }, [actualLista]);
+
+  const resumenHistorialMes = useMemo(() => {
+    return historial.reduce(
+      (acc, item) => {
+        acc.ingresos += Number(item?.total_ingresos ?? 0);
+        acc.egresos += Number(item?.total_egresos ?? 0);
+        acc.inicial += Number(item?.efectivo_inicial ?? 0);
+        acc.final += Number(item?.efectivo_final ?? 0);
+        return acc;
+      },
+      { ingresos: 0, egresos: 0, inicial: 0, final: 0 }
+    );
+  }, [historial]);
+
   const estadoCajaLabel = loading
     ? "Cargando…"
+    : vistaTodasSucursales
+    ? `${resumenGlobal.abiertas} abierta(s)`
     : isAbierta
     ? "Caja abierta"
     : "Caja cerrada";
 
   async function abrirCaja(e) {
     e.preventDefault();
+
     if (!ubicacionId) {
-      notify.error("El usuario no tiene una sucursal asignada.");
+      notify.error("Debes seleccionar una sucursal.");
       return;
     }
 
@@ -231,8 +360,9 @@ export default function Caja() {
 
   async function cerrarCaja(e) {
     e.preventDefault();
+
     if (!ubicacionId) {
-      notify.error("El usuario no tiene una sucursal asignada.");
+      notify.error("Debes seleccionar una sucursal.");
       return;
     }
 
@@ -333,8 +463,9 @@ export default function Caja() {
                   lineHeight: 1.6,
                 }}
               >
-                Gestión de apertura, cierre y control operativo de caja ligado a
-                la sucursal del usuario actual.
+                Gestión de apertura, cierre y control operativo de caja por
+                sucursal. El super admin puede visualizar todas las cajas y
+                operar una específica cuando la seleccione.
               </p>
             </div>
 
@@ -376,13 +507,50 @@ export default function Caja() {
                   fontSize: 14,
                 }}
               >
-                Sucursal asignada: {hasUbicacion ? nombreSucursal : "No asignada"}
+                {vistaTodasSucursales
+                  ? "Vista: Todas las sucursales"
+                  : `Sucursal activa: ${
+                      hasUbicacion ? nombreSucursal : "No asignada"
+                    }`}
               </div>
             </div>
           </div>
         </div>
 
-        {!hasUbicacion ? (
+        {isSuperAdmin ? (
+          <div
+            style={{
+              background: "rgba(255,255,255,0.82)",
+              borderRadius: 24,
+              padding: 18,
+              border: "1px solid rgba(148,163,184,0.18)",
+              boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <label style={labelStyle}>Sucursal a visualizar / operar</label>
+            <select
+              value={ubicacionId}
+              onChange={(e) => setUbicacionId(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="">Todas las sucursales</option>
+              {ubicacionesDisponibles.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.nombre}
+                </option>
+              ))}
+            </select>
+
+            <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
+              En “Todas las sucursales” solo se muestra el resumen global. Para
+              abrir o cerrar caja, selecciona una sucursal específica.
+            </div>
+          </div>
+        ) : null}
+
+        {!isSuperAdmin && !hasUbicacion ? (
           <div
             style={{
               borderRadius: 22,
@@ -411,399 +579,745 @@ export default function Caja() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(6, 1fr)",
             gap: 16,
           }}
         >
           <MetricCard
-            icon={<Store size={20} />}
-            title="Sucursal actual"
-            value={hasUbicacion ? nombreSucursal : "—"}
-            subtitle="Tomada desde la sesión"
+            icon={
+              vistaTodasSucursales ? (
+                <Building2 size={20} />
+              ) : (
+                <Store size={20} />
+              )
+            }
+            title={vistaTodasSucursales ? "Sucursales abiertas" : "Sucursal actual"}
+            value={
+              vistaTodasSucursales
+                ? String(resumenGlobal.sucursales)
+                : hasUbicacion
+                ? nombreSucursal
+                : "—"
+            }
+            subtitle={
+              vistaTodasSucursales
+                ? "Cajas activas visibles"
+                : "Tomada desde sesión / selector"
+            }
           />
           <MetricCard
             icon={isAbierta ? <Unlock size={20} /> : <Lock size={20} />}
             title="Estado"
             value={estadoCajaLabel}
-            subtitle={isAbierta ? "Operación habilitada" : "Pendiente de apertura"}
-            accent={isAbierta ? "green" : "slate"}
+            subtitle={
+              vistaTodasSucursales
+                ? "Resumen general del sistema"
+                : isAbierta
+                ? "Operación habilitada"
+                : "Pendiente de apertura"
+            }
+            accent={isAbierta || vistaTodasSucursales ? "green" : "slate"}
           />
           <MetricCard
             icon={<Landmark size={20} />}
             title="Base de caja"
-            value={money(cajaEsperada)}
-            subtitle="Monto inicial/esperado"
+            value={
+              vistaTodasSucursales
+                ? money(resumenGlobal.base)
+                : resumen
+                ? money(resumen.efectivo_inicial)
+                : "—"
+            }
+            subtitle={
+              vistaTodasSucursales ? "Suma de bases abiertas" : "Monto inicial"
+            }
+          />
+          <MetricCard
+            icon={<TrendingUp size={20} />}
+            title="Ingresos del día"
+            value={
+              vistaTodasSucursales
+                ? money(resumenGlobal.ingresos)
+                : money(totalIngresos)
+            }
+            subtitle="Ventas, abonos e ingresos"
+            accent="green"
+          />
+          <MetricCard
+            icon={<TrendingDown size={20} />}
+            title="Egresos del día"
+            value={
+              vistaTodasSucursales
+                ? money(resumenGlobal.egresos)
+                : money(totalEgresos)
+            }
+            subtitle="Salidas registradas"
+            accent="red"
           />
           <MetricCard
             icon={<CircleDollarSign size={20} />}
-            title="Diferencia"
-            value={money(diferencia)}
-            subtitle="Contado vs esperado"
-            accent={
-              Number(diferencia) === 0
-                ? "green"
-                : Number(diferencia) > 0
-                ? "blue"
-                : "red"
+            title="Saldo esperado"
+            value={
+              vistaTodasSucursales
+                ? money(resumenGlobal.esperado)
+                : money(cajaEsperada)
             }
+            subtitle={vistaTodasSucursales ? "Total esperado" : "Caja contable"}
+            accent="blue"
           />
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.05fr 0.95fr",
-            gap: 24,
-          }}
-        >
-          <div
-            style={{
-              background: "rgba(255,255,255,0.82)",
-              borderRadius: 28,
-              padding: 24,
-              border: "1px solid rgba(148,163,184,0.18)",
-              boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
-              display: "grid",
-              gap: 18,
-            }}
-          >
+        {vistaTodasSucursales ? (
+          <>
             <div
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 16,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: 24,
-                    fontWeight: 800,
-                    color: "#0f172a",
-                  }}
-                >
-                  Caja actual
-                </h2>
-                <p
-                  style={{
-                    margin: "6px 0 0",
-                    color: "#64748b",
-                    fontSize: 14,
-                  }}
-                >
-                  Resumen operativo de la caja asociada a esta sucursal.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => load(true)}
-                disabled={loading || busy || !hasUbicacion}
-                style={{
-                  ...secondaryButtonStyle,
-                  opacity: loading || busy || !hasUbicacion ? 0.6 : 1,
-                  cursor:
-                    loading || busy || !hasUbicacion ? "not-allowed" : "pointer",
-                }}
-              >
-                <RefreshCw size={16} />
-                Refrescar
-              </button>
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, 1fr)",
-                gap: 14,
-              }}
-            >
-              <InfoPanel
-                icon={<Clock3 size={16} />}
-                title="Apertura"
-                value={resumen?.abierto_en ? formatDate(resumen.abierto_en) : "—"}
-              />
-              <InfoPanel
-                icon={<ShieldCheck size={16} />}
-                title="Cierre"
-                value={resumen?.cerrado_en ? formatDate(resumen.cerrado_en) : "—"}
-              />
-              <InfoPanel
-                icon={<Wallet size={16} />}
-                title="Efectivo inicial"
-                value={resumen ? money(resumen.efectivo_inicial) : "—"}
-              />
-              <InfoPanel
-                icon={<ReceiptText size={16} />}
-                title="Efectivo final"
-                value={
-                  resumen?.efectivo_final != null
-                    ? money(resumen.efectivo_final)
-                    : isAbierta
-                    ? money(efectivoFinal)
-                    : "—"
-                }
-              />
-            </div>
-
-            <div
-              style={{
-                borderRadius: 22,
-                padding: 18,
-                background:
-                  "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.95) 100%)",
-                border: "1px solid #e2e8f0",
+                background: "rgba(255,255,255,0.82)",
+                borderRadius: 28,
+                padding: 24,
+                border: "1px solid rgba(148,163,184,0.18)",
+                boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
               }}
             >
               <div
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  gap: 16,
                   alignItems: "center",
+                  gap: 16,
                   flexWrap: "wrap",
-                  marginBottom: 12,
+                  marginBottom: 16,
                 }}
               >
-                <div style={{ fontWeight: 800, color: "#0f172a" }}>
-                  Estado operativo
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: 24,
+                      fontWeight: 800,
+                      color: "#0f172a",
+                    }}
+                  >
+                    Cajas abiertas por sucursal
+                  </h2>
+                  <p
+                    style={{
+                      margin: "6px 0 0",
+                      color: "#64748b",
+                      fontSize: 14,
+                    }}
+                  >
+                    Vista global para super admin.
+                  </p>
                 </div>
 
-                {loading ? (
-                  <span style={badgeStyle("slate")}>Cargando…</span>
-                ) : isAbierta ? (
-                  <span style={badgeStyle("green")}>Abierta</span>
-                ) : (
-                  <span style={badgeStyle("gray")}>Cerrada</span>
-                )}
+                <button
+                  type="button"
+                  onClick={() => load(true)}
+                  disabled={loading || busy}
+                  style={{
+                    ...secondaryButtonStyle,
+                    opacity: loading || busy ? 0.6 : 1,
+                    cursor: loading || busy ? "not-allowed" : "pointer",
+                  }}
+                >
+                  <RefreshCw size={16} />
+                  Refrescar
+                </button>
               </div>
 
               <div
                 style={{
-                  color: "#475569",
-                  lineHeight: 1.7,
-                  fontSize: 14,
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                  gap: 16,
                 }}
               >
-                <div>
-                  <strong>ID de caja:</strong> {resumen?.id ?? "—"}
-                </div>
-                <div>
-                  <strong>Sucursal:</strong> {nombreSucursal}
-                </div>
-                <div>
-                  <strong>Notas:</strong> {resumen?.notas || "Sin observaciones"}
-                </div>
-                <div>
-                  <strong>Diferencia actual:</strong> {money(diferencia)}
-                </div>
+                {loading ? (
+                  <div style={panelEmptyStyle}>Cargando sucursales…</div>
+                ) : actualLista.length === 0 ? (
+                  <div style={panelEmptyStyle}>No hay cajas abiertas.</div>
+                ) : (
+                  actualLista.map((caja) => {
+                    const abierta = !caja?.cerrado_en;
+                    const nombre =
+                      caja?.ubicacion?.nombre ||
+                      (caja?.ubicacion_id
+                        ? `Sucursal #${caja.ubicacion_id}`
+                        : "Sucursal");
+
+                    return (
+                      <div
+                        key={caja.id}
+                        style={{
+                          borderRadius: 22,
+                          padding: 18,
+                          background:
+                            "linear-gradient(180deg, rgba(248,250,252,0.96) 0%, rgba(241,245,249,0.96) 100%)",
+                          border: "1px solid #e2e8f0",
+                          display: "grid",
+                          gap: 12,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            alignItems: "center",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 900,
+                              color: "#0f172a",
+                              fontSize: 18,
+                            }}
+                          >
+                            {nombre}
+                          </div>
+                          {abierta ? (
+                            <span style={badgeStyle("green")}>Abierta</span>
+                          ) : (
+                            <span style={badgeStyle("gray")}>Cerrada</span>
+                          )}
+                        </div>
+
+                        <div
+                          style={{ color: "#475569", fontSize: 14, lineHeight: 1.7 }}
+                        >
+                          <div>
+                            <strong>ID caja:</strong> {caja?.id ?? "—"}
+                          </div>
+                          <div>
+                            <strong>Apertura:</strong> {formatDate(caja?.abierto_en)}
+                          </div>
+                          <div>
+                            <strong>Base:</strong> {money(caja?.efectivo_inicial)}
+                          </div>
+                          <div>
+                            <strong>Ingresos:</strong> {money(caja?.total_ingresos)}
+                          </div>
+                          <div>
+                            <strong>Egresos:</strong> {money(caja?.total_egresos)}
+                          </div>
+                          <div>
+                            <strong>Esperado:</strong> {money(caja?.saldo_esperado)}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setUbicacionId(String(caja?.ubicacion_id || ""))}
+                          style={{
+                            ...primaryButtonStyle,
+                            width: "100%",
+                            height: 46,
+                          }}
+                        >
+                          Ver esta sucursal
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
-          </div>
+          </>
+        ) : (
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1.05fr 0.95fr",
+                gap: 24,
+              }}
+            >
+              <div
+                style={{
+                  background: "rgba(255,255,255,0.82)",
+                  borderRadius: 28,
+                  padding: 24,
+                  border: "1px solid rgba(148,163,184,0.18)",
+                  boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+                  display: "grid",
+                  gap: 18,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 16,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <h2
+                      style={{
+                        margin: 0,
+                        fontSize: 24,
+                        fontWeight: 800,
+                        color: "#0f172a",
+                      }}
+                    >
+                      Caja actual
+                    </h2>
+                    <p
+                      style={{
+                        margin: "6px 0 0",
+                        color: "#64748b",
+                        fontSize: 14,
+                      }}
+                    >
+                      Resumen operativo de la caja asociada a esta sucursal.
+                    </p>
+                  </div>
 
-          <div
-            style={{
-              background: "rgba(255,255,255,0.82)",
-              borderRadius: 28,
-              padding: 24,
-              border: "1px solid rgba(148,163,184,0.18)",
-              boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
-              display: "grid",
-              gap: 18,
-              alignContent: "start",
-            }}
-          >
-            <div>
-              <h2
+                  <button
+                    type="button"
+                    onClick={() => load(true)}
+                    disabled={loading || busy || !hasUbicacion}
+                    style={{
+                      ...secondaryButtonStyle,
+                      opacity: loading || busy || !hasUbicacion ? 0.6 : 1,
+                      cursor:
+                        loading || busy || !hasUbicacion ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <RefreshCw size={16} />
+                    Refrescar
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, 1fr)",
+                    gap: 14,
+                  }}
+                >
+                  <InfoPanel
+                    icon={<Clock3 size={16} />}
+                    title="Apertura"
+                    value={resumen?.abierto_en ? formatDate(resumen.abierto_en) : "—"}
+                  />
+                  <InfoPanel
+                    icon={<ShieldCheck size={16} />}
+                    title="Cierre"
+                    value={resumen?.cerrado_en ? formatDate(resumen.cerrado_en) : "—"}
+                  />
+                  <InfoPanel
+                    icon={<Wallet size={16} />}
+                    title="Efectivo inicial"
+                    value={resumen ? money(resumen.efectivo_inicial) : "—"}
+                  />
+                  <InfoPanel
+                    icon={<ReceiptText size={16} />}
+                    title="Saldo esperado"
+                    value={money(cajaEsperada)}
+                  />
+                </div>
+
+                <div
+                  style={{
+                    borderRadius: 22,
+                    padding: 18,
+                    background:
+                      "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.95) 100%)",
+                    border: "1px solid #e2e8f0",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 16,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div style={{ fontWeight: 800, color: "#0f172a" }}>
+                      Estado operativo
+                    </div>
+
+                    {loading ? (
+                      <span style={badgeStyle("slate")}>Cargando…</span>
+                    ) : isAbierta ? (
+                      <span style={badgeStyle("green")}>Abierta</span>
+                    ) : (
+                      <span style={badgeStyle("gray")}>Cerrada</span>
+                    )}
+                  </div>
+
+                  <div
+                    style={{
+                      color: "#475569",
+                      lineHeight: 1.7,
+                      fontSize: 14,
+                    }}
+                  >
+                    <div>
+                      <strong>ID de caja:</strong> {resumen?.id ?? "—"}
+                    </div>
+                    <div>
+                      <strong>Sucursal:</strong> {nombreSucursal}
+                    </div>
+                    <div>
+                      <strong>Notas:</strong> {resumen?.notas || "Sin observaciones"}
+                    </div>
+                    <div>
+                      <strong>Ingresos del día:</strong> {money(totalIngresos)}
+                    </div>
+                    <div>
+                      <strong>Egresos del día:</strong> {money(totalEgresos)}
+                    </div>
+                    <div>
+                      <strong>Diferencia actual:</strong> {money(diferencia)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
                 style={{
-                  margin: 0,
-                  fontSize: 24,
-                  fontWeight: 800,
-                  color: "#0f172a",
+                  background: "rgba(255,255,255,0.82)",
+                  borderRadius: 28,
+                  padding: 24,
+                  border: "1px solid rgba(148,163,184,0.18)",
+                  boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+                  display: "grid",
+                  gap: 18,
+                  alignContent: "start",
                 }}
               >
-                Operaciones
-              </h2>
-              <p
-                style={{
-                  margin: "6px 0 0",
-                  color: "#64748b",
-                  fontSize: 14,
-                }}
-              >
-                Apertura y cierre de caja con mejor control visual.
-              </p>
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: 24,
+                      fontWeight: 800,
+                      color: "#0f172a",
+                    }}
+                  >
+                    Operaciones
+                  </h2>
+                  <p
+                    style={{
+                      margin: "6px 0 0",
+                      color: "#64748b",
+                      fontSize: 14,
+                    }}
+                  >
+                    Apertura y cierre de caja con mejor control visual.
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 16,
+                  }}
+                >
+                  <form
+                    onSubmit={abrirCaja}
+                    style={{
+                      borderRadius: 22,
+                      padding: 18,
+                      border: "1px solid #dbeafe",
+                      background:
+                        "linear-gradient(180deg, rgba(239,246,255,0.95) 0%, rgba(219,234,254,0.85) 100%)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        alignItems: "center",
+                        marginBottom: 14,
+                      }}
+                    >
+                      <div style={{ fontWeight: 800, color: "#0f172a" }}>
+                        Abrir caja
+                      </div>
+                      {isAbierta ? (
+                        <span style={badgeStyle("green")}>Activa</span>
+                      ) : (
+                        <span style={badgeStyle("blue")}>Lista</span>
+                      )}
+                    </div>
+
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={labelStyle}>Notas</label>
+                      <input
+                        value={notasAbrir}
+                        onChange={(e) => setNotasAbrir(e.target.value)}
+                        placeholder="Apertura"
+                        disabled={busy || loading || isAbierta || !hasUbicacion}
+                        style={inputStyle}
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={labelStyle}>Efectivo inicial</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={efectivoInicial}
+                        onChange={(e) => setEfectivoInicial(e.target.value)}
+                        disabled={busy || loading || isAbierta || !hasUbicacion}
+                        style={inputStyle}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={busy || loading || isAbierta || !hasUbicacion}
+                      style={{
+                        ...primaryButtonStyle,
+                        width: "100%",
+                        opacity:
+                          busy || loading || isAbierta || !hasUbicacion ? 0.6 : 1,
+                        cursor:
+                          busy || loading || isAbierta || !hasUbicacion
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                    >
+                      {busy ? "Procesando..." : "Abrir caja"}
+                    </button>
+
+                    {isAbierta ? (
+                      <p style={hintStyle}>
+                        Ya existe una caja abierta para esta sucursal.
+                      </p>
+                    ) : null}
+                  </form>
+
+                  <form
+                    onSubmit={cerrarCaja}
+                    style={{
+                      borderRadius: 22,
+                      padding: 18,
+                      border: "1px solid #fecaca",
+                      background:
+                        "linear-gradient(180deg, rgba(255,241,242,0.95) 0%, rgba(254,226,226,0.80) 100%)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        alignItems: "center",
+                        marginBottom: 14,
+                      }}
+                    >
+                      <div style={{ fontWeight: 800, color: "#0f172a" }}>
+                        Cerrar caja
+                      </div>
+                      {!isAbierta ? (
+                        <span style={badgeStyle("gray")}>Sin caja</span>
+                      ) : (
+                        <span style={badgeStyle("red")}>Pendiente</span>
+                      )}
+                    </div>
+
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={labelStyle}>Notas</label>
+                      <input
+                        value={notasCerrar}
+                        onChange={(e) => setNotasCerrar(e.target.value)}
+                        placeholder="Cierre"
+                        disabled={busy || loading || !isAbierta || !hasUbicacion}
+                        style={inputStyle}
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={labelStyle}>Efectivo contado al cierre</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={efectivoFinal}
+                        onChange={(e) => setEfectivoFinal(e.target.value)}
+                        disabled={busy || loading || !isAbierta || !hasUbicacion}
+                        style={inputStyle}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={busy || loading || !isAbierta || !hasUbicacion}
+                      style={{
+                        ...dangerButtonStyle,
+                        width: "100%",
+                        opacity:
+                          busy || loading || !isAbierta || !hasUbicacion ? 0.6 : 1,
+                        cursor:
+                          busy || loading || !isAbierta || !hasUbicacion
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                    >
+                      {busy ? "Procesando..." : "Cerrar caja"}
+                    </button>
+
+                    {!isAbierta ? (
+                      <p style={hintStyle}>No hay una caja abierta para cerrar.</p>
+                    ) : (
+                      <p style={hintStyle}>
+                        Esperado: {money(cajaEsperada)} · Contado:{" "}
+                        {money(efectivoFinal)} · Diferencia: {money(diferencia)}
+                      </p>
+                    )}
+                  </form>
+                </div>
+              </div>
             </div>
 
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 16,
+                background: "rgba(255,255,255,0.82)",
+                borderRadius: 28,
+                padding: 24,
+                border: "1px solid rgba(148,163,184,0.18)",
+                boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
               }}
             >
-              <form
-                onSubmit={abrirCaja}
+              <div
                 style={{
-                  borderRadius: 22,
-                  padding: 18,
-                  border: "1px solid #dbeafe",
-                  background:
-                    "linear-gradient(180deg, rgba(239,246,255,0.95) 0%, rgba(219,234,254,0.85) 100%)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 16,
+                  flexWrap: "wrap",
+                  marginBottom: 16,
                 }}
               >
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: 24,
+                      fontWeight: 800,
+                      color: "#0f172a",
+                    }}
+                  >
+                    Movimientos del día
+                  </h2>
+                  <p
+                    style={{
+                      margin: "6px 0 0",
+                      color: "#64748b",
+                      fontSize: 14,
+                    }}
+                  >
+                    Ingresos y egresos registrados en la caja actual.
+                  </p>
+                </div>
+
                 <div
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    alignItems: "center",
-                    marginBottom: 14,
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    background: "#eff6ff",
+                    color: "#1d4ed8",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    border: "1px solid #bfdbfe",
                   }}
                 >
-                  <div style={{ fontWeight: 800, color: "#0f172a" }}>
-                    Abrir caja
-                  </div>
-                  {isAbierta ? (
-                    <span style={badgeStyle("green")}>Activa</span>
-                  ) : (
-                    <span style={badgeStyle("blue")}>Lista</span>
-                  )}
+                  {loading
+                    ? "Cargando…"
+                    : `${
+                        Array.isArray(actual?.movimientos)
+                          ? actual.movimientos.length
+                          : 0
+                      } movimiento(s)`}
                 </div>
+              </div>
 
-                <div style={{ marginBottom: 12 }}>
-                  <label style={labelStyle}>Notas</label>
-                  <input
-                    value={notasAbrir}
-                    onChange={(e) => setNotasAbrir(e.target.value)}
-                    placeholder="Apertura"
-                    disabled={busy || loading || isAbierta || !hasUbicacion}
-                    style={inputStyle}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 14 }}>
-                  <label style={labelStyle}>Efectivo inicial</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={efectivoInicial}
-                    onChange={(e) => setEfectivoInicial(e.target.value)}
-                    disabled={busy || loading || isAbierta || !hasUbicacion}
-                    style={inputStyle}
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={busy || loading || isAbierta || !hasUbicacion}
-                  style={{
-                    ...primaryButtonStyle,
-                    width: "100%",
-                    opacity:
-                      busy || loading || isAbierta || !hasUbicacion ? 0.6 : 1,
-                    cursor:
-                      busy || loading || isAbierta || !hasUbicacion
-                        ? "not-allowed"
-                        : "pointer",
-                  }}
-                >
-                  {busy ? "Procesando..." : "Abrir caja"}
-                </button>
-
-                {isAbierta ? (
-                  <p style={hintStyle}>
-                    Ya existe una caja abierta para esta sucursal.
-                  </p>
-                ) : null}
-              </form>
-
-              <form
-                onSubmit={cerrarCaja}
+              <div
                 style={{
+                  overflowX: "auto",
                   borderRadius: 22,
-                  padding: 18,
-                  border: "1px solid #fecaca",
-                  background:
-                    "linear-gradient(180deg, rgba(255,241,242,0.95) 0%, rgba(254,226,226,0.80) 100%)",
+                  border: "1px solid #e2e8f0",
                 }}
               >
-                <div
+                <table
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    alignItems: "center",
-                    marginBottom: 14,
-                  }}
-                >
-                  <div style={{ fontWeight: 800, color: "#0f172a" }}>
-                    Cerrar caja
-                  </div>
-                  {!isAbierta ? (
-                    <span style={badgeStyle("gray")}>Sin caja</span>
-                  ) : (
-                    <span style={badgeStyle("red")}>Pendiente</span>
-                  )}
-                </div>
-
-                <div style={{ marginBottom: 12 }}>
-                  <label style={labelStyle}>Notas</label>
-                  <input
-                    value={notasCerrar}
-                    onChange={(e) => setNotasCerrar(e.target.value)}
-                    placeholder="Cierre"
-                    disabled={busy || loading || !isAbierta || !hasUbicacion}
-                    style={inputStyle}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 14 }}>
-                  <label style={labelStyle}>Efectivo contado al cierre</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={efectivoFinal}
-                    onChange={(e) => setEfectivoFinal(e.target.value)}
-                    disabled={busy || loading || !isAbierta || !hasUbicacion}
-                    style={inputStyle}
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={busy || loading || !isAbierta || !hasUbicacion}
-                  style={{
-                    ...dangerButtonStyle,
                     width: "100%",
-                    opacity:
-                      busy || loading || !isAbierta || !hasUbicacion ? 0.6 : 1,
-                    cursor:
-                      busy || loading || !isAbierta || !hasUbicacion
-                        ? "not-allowed"
-                        : "pointer",
+                    borderCollapse: "collapse",
+                    minWidth: 900,
+                    background: "#fff",
                   }}
                 >
-                  {busy ? "Procesando..." : "Cerrar caja"}
-                </button>
+                  <thead>
+                    <tr
+                      style={{
+                        background:
+                          "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
+                      }}
+                    >
+                      <th style={thStyle}>ID</th>
+                      <th style={thStyle}>Tipo</th>
+                      <th style={thStyle}>Concepto</th>
+                      <th style={thStyle}>Método</th>
+                      <th style={thStyle}>Monto</th>
+                      <th style={thStyle}>Referencia</th>
+                      <th style={thStyle}>Fecha</th>
+                    </tr>
+                  </thead>
 
-                {!isAbierta ? (
-                  <p style={hintStyle}>No hay una caja abierta para cerrar.</p>
-                ) : (
-                  <p style={hintStyle}>
-                    Esperado: {money(cajaEsperada)} · Contado:{" "}
-                    {money(efectivoFinal)} · Diferencia: {money(diferencia)}
-                  </p>
-                )}
-              </form>
+                  <tbody>
+                    {loading ? (
+                      <tr>
+                        <td colSpan={7} style={emptyTdStyle}>
+                          Cargando…
+                        </td>
+                      </tr>
+                    ) : !Array.isArray(actual?.movimientos) ||
+                      actual.movimientos.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={emptyTdStyle}>
+                          Sin movimientos registrados.
+                        </td>
+                      </tr>
+                    ) : (
+                      actual.movimientos.map((m) => (
+                        <tr key={m.id} style={{ borderTop: "1px solid #eef2f7" }}>
+                          <td style={tdStyle}>{m.id}</td>
+                          <td style={tdStyle}>
+                            {m.tipo === "ingreso" ? (
+                              <span style={badgeStyle("green")}>Ingreso</span>
+                            ) : (
+                              <span style={badgeStyle("red")}>Egreso</span>
+                            )}
+                          </td>
+                          <td style={tdStyle}>{m.concepto || "—"}</td>
+                          <td style={tdStyle}>{m.metodo_pago || "—"}</td>
+                          <td style={tdStyle}>{money(m.monto)}</td>
+                          <td style={tdStyle}>
+                            {m.referencia_tipo
+                              ? `${m.referencia_tipo} #${m.referencia_id ?? ""}`
+                              : "—"}
+                          </td>
+                          <td style={tdStyle}>{formatDate(m.creado_en)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
 
         <div
           style={{
@@ -842,23 +1356,88 @@ export default function Caja() {
                   fontSize: 14,
                 }}
               >
-                Últimos movimientos de apertura y cierre para la sucursal actual.
+                Últimas aperturas y cierres con filtro mensual.
               </p>
             </div>
 
             <div
               style={{
-                padding: "10px 14px",
-                borderRadius: 999,
-                background: "#eff6ff",
-                color: "#1d4ed8",
-                fontWeight: 700,
-                fontSize: 13,
-                border: "1px solid #bfdbfe",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
               }}
             >
-              {loading ? "Cargando…" : `${historial.length} registro(s)`}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px 12px",
+                  borderRadius: 14,
+                  border: "1px solid #dbe2ea",
+                  background: "#fff",
+                }}
+              >
+                <CalendarRange size={16} color="#334155" />
+                <input
+                  type="month"
+                  value={mesFiltro}
+                  onChange={(e) => setMesFiltro(e.target.value)}
+                  style={{
+                    border: "none",
+                    outline: "none",
+                    background: "transparent",
+                    fontSize: 14,
+                    color: "#0f172a",
+                  }}
+                />
+              </div>
+
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  border: "1px solid #bfdbfe",
+                }}
+              >
+                {loading ? "Cargando…" : `${historial.length} registro(s)`}
+              </div>
             </div>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, 1fr)",
+              gap: 14,
+              marginBottom: 18,
+            }}
+          >
+            <InfoPanel
+              icon={<TrendingUp size={16} />}
+              title="Ingresos del mes"
+              value={money(resumenHistorialMes.ingresos)}
+            />
+            <InfoPanel
+              icon={<TrendingDown size={16} />}
+              title="Egresos del mes"
+              value={money(resumenHistorialMes.egresos)}
+            />
+            <InfoPanel
+              icon={<Wallet size={16} />}
+              title="Aperturas del mes"
+              value={money(resumenHistorialMes.inicial)}
+            />
+            <InfoPanel
+              icon={<CircleDollarSign size={16} />}
+              title="Cierres contados"
+              value={money(resumenHistorialMes.final)}
+            />
           </div>
 
           <div
@@ -872,7 +1451,7 @@ export default function Caja() {
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                minWidth: 900,
+                minWidth: 1000,
                 background: "#fff",
               }}
             >
@@ -888,8 +1467,10 @@ export default function Caja() {
                   <th style={thStyle}>Apertura</th>
                   <th style={thStyle}>Cierre</th>
                   <th style={thStyle}>Inicial</th>
+                  <th style={thStyle}>Ingresos</th>
+                  <th style={thStyle}>Egresos</th>
+                  <th style={thStyle}>Esperado</th>
                   <th style={thStyle}>Final</th>
-                  <th style={thStyle}>Notas</th>
                   <th style={thStyle}>Estado</th>
                 </tr>
               </thead>
@@ -897,13 +1478,13 @@ export default function Caja() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={8} style={emptyTdStyle}>
+                    <td colSpan={10} style={emptyTdStyle}>
                       Cargando…
                     </td>
                   </tr>
                 ) : historial.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={emptyTdStyle}>
+                    <td colSpan={10} style={emptyTdStyle}>
                       Sin registros.
                     </td>
                   </tr>
@@ -925,13 +1506,21 @@ export default function Caja() {
                           <span style={pillStyle}>{money(c.efectivo_inicial)}</span>
                         </td>
                         <td style={tdStyle}>
+                          <span style={pillStyle}>{money(c.total_ingresos)}</span>
+                        </td>
+                        <td style={tdStyle}>
+                          <span style={pillStyle}>{money(c.total_egresos)}</span>
+                        </td>
+                        <td style={tdStyle}>
+                          <span style={pillStyle}>{money(c.saldo_esperado)}</span>
+                        </td>
+                        <td style={tdStyle}>
                           {c.efectivo_final != null ? (
                             <span style={pillStyle}>{money(c.efectivo_final)}</span>
                           ) : (
                             "—"
                           )}
                         </td>
-                        <td style={tdStyle}>{c.notas || "—"}</td>
                         <td style={tdStyle}>
                           {abierta ? (
                             <span style={badgeStyle("green")}>Abierta</span>
@@ -951,9 +1540,9 @@ export default function Caja() {
 
       <style>
         {`
-          @media (max-width: 1100px) {
-            div[style*="grid-template-columns: repeat(4, 1fr)"] {
-              grid-template-columns: 1fr 1fr !important;
+          @media (max-width: 1200px) {
+            div[style*="grid-template-columns: repeat(6, 1fr)"] {
+              grid-template-columns: 1fr 1fr 1fr !important;
             }
 
             div[style*="grid-template-columns: 1.05fr 0.95fr"] {
@@ -962,8 +1551,16 @@ export default function Caja() {
           }
 
           @media (max-width: 860px) {
-            div[style*="grid-template-columns: 1fr 1fr"] {
+            div[style*="grid-template-columns: repeat(6, 1fr)"] {
+              grid-template-columns: 1fr 1fr !important;
+            }
+
+            div[style*="grid-template-columns: repeat(2, 1fr)"] {
               grid-template-columns: 1fr !important;
+            }
+
+            div[style*="grid-template-columns: repeat(4, 1fr)"] {
+              grid-template-columns: 1fr 1fr !important;
             }
           }
 
@@ -972,12 +1569,16 @@ export default function Caja() {
               padding: 16px !important;
             }
 
+            div[style*="grid-template-columns: repeat(6, 1fr)"] {
+              grid-template-columns: 1fr !important;
+            }
+
             div[style*="grid-template-columns: repeat(4, 1fr)"] {
               grid-template-columns: 1fr !important;
             }
           }
 
-          input:focus {
+          input:focus, select:focus {
             outline: none;
             border-color: #60a5fa !important;
             box-shadow: 0 0 0 4px rgba(96,165,250,0.18);
@@ -1056,6 +1657,7 @@ function MetricCard({ icon, title, value, subtitle, accent = "blue" }) {
           fontSize: 24,
           letterSpacing: "-0.03em",
           marginBottom: 4,
+          wordBreak: "break-word",
         }}
       >
         {value}
@@ -1177,6 +1779,18 @@ const inputStyle = {
   boxSizing: "border-box",
 };
 
+const selectStyle = {
+  width: "100%",
+  height: 52,
+  borderRadius: 16,
+  border: "1px solid #dbe2ea",
+  background: "#f8fafc",
+  padding: "0 14px",
+  fontSize: 15,
+  color: "#0f172a",
+  boxSizing: "border-box",
+};
+
 const hintStyle = {
   margin: "10px 0 0",
   color: "#64748b",
@@ -1267,4 +1881,13 @@ const emptyTdStyle = {
   padding: "28px 20px",
   textAlign: "center",
   color: "#64748b",
+};
+
+const panelEmptyStyle = {
+  borderRadius: 20,
+  padding: 22,
+  border: "1px dashed #cbd5e1",
+  background: "#f8fafc",
+  color: "#64748b",
+  textAlign: "center",
 };

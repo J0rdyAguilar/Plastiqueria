@@ -30,6 +30,7 @@ class StoreUsuarioRequest extends FormRequest
                     'vendedor-tienda',
                     'caja',
                     'rutero',
+                    'admin_bodega',
                 ]),
             ],
             'activo'       => ['nullable', 'boolean'],

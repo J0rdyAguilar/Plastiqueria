@@ -7,8 +7,10 @@ use App\Models\VentaTienda;
 use App\Models\VentaTiendaDetalle;
 use App\Models\Stock;
 use App\Models\MovimientoStock;
-use App\Models\Ubicacion;
 use App\Models\ProductoPrecio;
+use App\Models\Caja;
+use App\Models\MovimientoCaja;
+use App\Services\RegistrarCuotaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -20,9 +22,11 @@ class VentaTiendaController extends Controller
         $r = strtolower(trim((string) ($user->rol ?? $user->role ?? '')));
 
         if ($r === 'superadmin' || $r === 'super_admin') return 'super_admin';
+
         if (in_array($r, ['vendedor-tienda', 'vendedor_tienda', 'vendedor tienda'], true)) {
             return 'vendedor-tienda';
         }
+
         if ($r === 'admin') return 'admin';
 
         return $r;
@@ -32,6 +36,39 @@ class VentaTiendaController extends Controller
     {
         $id = $user->ubicacion_id ?? $user->sucursal_id ?? null;
         return $id !== null ? (int) $id : null;
+    }
+
+    private function cantidadBaseDesdeProductoPrecio($productoPrecio, float $cantidad): float
+    {
+        if (!$productoPrecio) {
+            return round($cantidad, 4);
+        }
+
+        $factor = null;
+
+        foreach ([
+            'factor',
+            'factor_conversion',
+            'equivalencia',
+            'multiplicador',
+            'contenido',
+            'cantidad_base',
+            'unidades',
+        ] as $campo) {
+            if (isset($productoPrecio->{$campo}) && is_numeric($productoPrecio->{$campo})) {
+                $valor = (float) $productoPrecio->{$campo};
+                if ($valor > 0) {
+                    $factor = $valor;
+                    break;
+                }
+            }
+        }
+
+        if ($factor === null || $factor <= 0) {
+            $factor = 1;
+        }
+
+        return round($cantidad * $factor, 4);
     }
 
     private function buildVentaResponse($venta, $movimientosByVenta = null, $preciosById = null): array
@@ -87,24 +124,21 @@ class VentaTiendaController extends Controller
         })->values();
 
         return [
-            'id' => $venta->id,
+            'id' => (int) $venta->id,
+            'ubicacion_id' => (int) $venta->ubicacion_id,
+            'ubicacion_nombre' => $venta->ubicacion?->nombre,
+            'usuario_id' => (int) $venta->usuario_id,
+            'usuario_nombre' => $venta->usuario?->nombre ?? $venta->usuario?->usuario,
+            'cliente_id' => $venta->cliente_id ? (int) $venta->cliente_id : null,
+            'cliente_nombre' => $venta->cliente?->nombre,
             'estado' => $venta->estado,
             'metodo_pago' => $venta->metodo_pago,
-            'subtotal' => (float) $venta->subtotal,
-            'descuento' => (float) $venta->descuento,
-            'total' => (float) $venta->total,
-            'ganancia_total' => (float) $detalles->sum('ganancia_total'),
+            'referencia_pago' => $venta->referencia_pago,
+            'subtotal' => (float) ($venta->subtotal ?? 0),
+            'descuento' => (float) ($venta->descuento ?? 0),
+            'total' => (float) ($venta->total ?? 0),
+            'saldo_pendiente' => (float) ($venta->saldo_pendiente ?? 0),
             'creado_en' => optional($venta->creado_en)->format('Y-m-d H:i:s'),
-
-            'usuario' => $venta->usuario,
-            'usuario_nombre' => $venta->usuario?->nombre ?? $venta->usuario?->usuario,
-
-            'ubicacion' => $venta->ubicacion,
-            'ubicacion_nombre' => $venta->ubicacion?->nombre,
-
-            'cliente' => $venta->cliente,
-            'nombre_comprador' => null,
-
             'detalles' => $detalles,
         ];
     }
@@ -115,100 +149,112 @@ class VentaTiendaController extends Controller
         $role = $this->roleOf($user);
         $userUbicacionId = $this->userUbicacionId($user);
 
-        $query = VentaTienda::query()
-            ->with([
-                'detalles.producto:id,nombre',
-                'usuario:id,nombre,usuario',
-                'ubicacion:id,nombre',
-                'cliente:id,nombre',
-            ])
-            ->orderByDesc('creado_en')
-            ->orderByDesc('id');
-
-        if ($role === 'super_admin') {
-            if ($request->filled('ubicacion_id')) {
-                $query->where('ubicacion_id', (int) $request->ubicacion_id);
-            }
-        } elseif (in_array($role, ['admin', 'vendedor-tienda'], true)) {
-            if (!$userUbicacionId) {
-                return response()->json([
-                    'message' => 'El usuario no tiene una sucursal asignada.'
-                ], 422);
-            }
-
-            $query->where('ubicacion_id', $userUbicacionId);
-        } else {
+        if (!in_array($role, ['admin', 'super_admin', 'vendedor-tienda'], true)) {
             return response()->json([
                 'message' => 'No autorizado.'
             ], 403);
         }
 
-        if ($role === 'vendedor-tienda' && (int) $request->query('solo_mias', 0) === 1) {
+        $q = trim((string) $request->query('q', ''));
+        $estado = trim((string) $request->query('estado', ''));
+        $metodoPago = trim((string) $request->query('metodo_pago', ''));
+        $fechaDesde = trim((string) $request->query('fecha_desde', ''));
+        $fechaHasta = trim((string) $request->query('fecha_hasta', ''));
+        $soloMias = (int) $request->query('solo_mias', 0);
+        $perPage = max(1, min(100, (int) $request->query('per_page', 20)));
+
+        $query = VentaTienda::query()
+            ->with([
+                'ubicacion:id,nombre',
+                'usuario:id,usuario,nombre',
+                'cliente:id,nombre',
+                'detalles.producto:id,nombre',
+            ])
+            ->orderByDesc('id');
+
+        if ($role === 'super_admin') {
+            $ubicacionId = $request->query('ubicacion_id');
+            if (!empty($ubicacionId)) {
+                $query->where('ubicacion_id', (int) $ubicacionId);
+            }
+        } else {
+            if (!$userUbicacionId) {
+                return response()->json([
+                    'message' => 'El usuario no tiene sucursal asignada.'
+                ], 403);
+            }
+
+            $query->where('ubicacion_id', $userUbicacionId);
+        }
+
+        if ($soloMias === 1) {
             $query->where('usuario_id', (int) $user->id);
         }
 
-        if ($request->filled('metodo_pago')) {
-            $query->where('metodo_pago', $request->metodo_pago);
+        if ($estado !== '') {
+            $query->where('estado', $estado);
         }
 
-        if ($request->filled('fecha_desde')) {
-            $desde = Carbon::parse($request->fecha_desde)->startOfDay();
-            $query->where('creado_en', '>=', $desde);
+        if ($metodoPago !== '') {
+            $query->where('metodo_pago', $metodoPago);
         }
 
-        if ($request->filled('fecha_hasta')) {
-            $hasta = Carbon::parse($request->fecha_hasta)->endOfDay();
-            $query->where('creado_en', '<=', $hasta);
+        if ($fechaDesde !== '') {
+            $query->whereDate('creado_en', '>=', $fechaDesde);
         }
 
-        $perPage = max(1, (int) $request->query('per_page', 20));
-        $page = $query->paginate($perPage);
+        if ($fechaHasta !== '') {
+            $query->whereDate('creado_en', '<=', $fechaHasta);
+        }
 
-        $ventas = collect($page->items());
-        $ventaIds = $ventas->pluck('id')->map(fn($v) => (int) $v)->values();
+        if ($q !== '') {
+            $query->where(function ($sub) use ($q) {
+                $sub->where('id', 'like', "%{$q}%")
+                    ->orWhere('metodo_pago', 'like', "%{$q}%")
+                    ->orWhereHas('cliente', function ($cq) use ($q) {
+                        $cq->where('nombre', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('usuario', function ($uq) use ($q) {
+                        $uq->where('usuario', 'like', "%{$q}%")
+                            ->orWhere('nombre', 'like', "%{$q}%");
+                    })
+                    ->orWhereHas('detalles.producto', function ($pq) use ($q) {
+                        $pq->where('nombre', 'like', "%{$q}%");
+                    });
+            });
+        }
 
-        $movimientos = MovimientoStock::query()
-            ->where('referencia_tipo', 'venta_tienda')
-            ->whereIn('referencia_id', $ventaIds)
-            ->get()
-            ->groupBy('referencia_id');
+        $items = $query->paginate($perPage);
 
-        $productoPrecioIds = $movimientos
+        $ids = collect($items->items())->pluck('id')->all();
+
+        $movimientos = empty($ids)
+            ? collect()
+            : MovimientoStock::query()
+                ->where('referencia_tipo', 'venta_tienda')
+                ->whereIn('referencia_id', $ids)
+                ->get()
+                ->groupBy('referencia_id');
+
+        $precioIds = collect($movimientos)
             ->flatten(1)
             ->pluck('producto_precio_id')
             ->filter()
-            ->map(fn($v) => (int) $v)
             ->unique()
             ->values();
 
         $preciosById = ProductoPrecio::query()
-            ->whereIn('id', $productoPrecioIds)
+            ->whereIn('id', $precioIds)
             ->get()
             ->keyBy('id');
 
-        if ($role === 'super_admin') {
-            $sucursales = Ubicacion::query()
-                ->select('id', 'nombre')
-                ->whereIn('nombre', ['Tienda 1', 'Tienda 2'])
-                ->orderBy('nombre')
-                ->get();
-        } else {
-            $sucursales = Ubicacion::query()
-                ->select('id', 'nombre')
-                ->where('id', $userUbicacionId)
-                ->get();
-        }
-
-        return response()->json([
-            'current_page' => $page->currentPage(),
-            'last_page' => $page->lastPage(),
-            'per_page' => $page->perPage(),
-            'total' => $page->total(),
-            'sucursales' => $sucursales,
-            'data' => $ventas->map(function ($venta) use ($movimientos, $preciosById) {
+        $items->setCollection(
+            $items->getCollection()->map(function ($venta) use ($movimientos, $preciosById) {
                 return $this->buildVentaResponse($venta, $movimientos, $preciosById);
-            })->values(),
-        ]);
+            })
+        );
+
+        return response()->json($items);
     }
 
     public function store(Request $request)
@@ -225,8 +271,15 @@ class VentaTiendaController extends Controller
 
         $data = $request->validate([
             'ubicacion_id' => ['nullable', 'integer', 'exists:ubicaciones,id'],
-            'metodo_pago' => ['required', 'string', 'in:efectivo,tarjeta'],
+            'cliente_id' => ['nullable', 'integer', 'exists:clientes,id'],
+            'metodo_pago' => ['required', 'string', 'in:efectivo,tarjeta,cuotas'],
+            'referencia_pago' => ['nullable', 'string', 'max:255'],
             'nombre_comprador' => ['nullable', 'string', 'max:150'],
+
+            'numero_cuotas' => ['nullable', 'integer', 'min:1', 'max:24'],
+            'frecuencia_pago' => ['nullable', 'string', 'in:semanal,quincenal,mensual'],
+            'fecha_primer_pago' => ['nullable', 'date'],
+
             'items' => ['required', 'array', 'min:1'],
             'items.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
             'items.*.producto_precio_id' => ['required', 'integer', 'exists:producto_precios,id'],
@@ -234,6 +287,20 @@ class VentaTiendaController extends Controller
             'items.*.cantidad' => ['required', 'numeric', 'min:0.01'],
             'items.*.precio_unitario' => ['required', 'numeric', 'min:0.01'],
         ]);
+
+        if (($data['metodo_pago'] ?? '') === 'cuotas') {
+            if (empty($data['cliente_id'])) {
+                return response()->json([
+                    'message' => 'Para ventas con cuotas debes seleccionar un cliente.'
+                ], 422);
+            }
+
+            if (empty($data['numero_cuotas']) || (int) $data['numero_cuotas'] < 1) {
+                return response()->json([
+                    'message' => 'Debes indicar el número de cuotas.'
+                ], 422);
+            }
+        }
 
         if ($role === 'super_admin') {
             $ventaUbicacionId = !empty($data['ubicacion_id'])
@@ -251,11 +318,13 @@ class VentaTiendaController extends Controller
 
         return DB::transaction(function () use ($data, $user, $ventaUbicacionId) {
             $subtotal = 0;
+            $itemsPreparados = [];
 
             foreach ($data['items'] as $item) {
                 $productoId = (int) $item['producto_id'];
                 $productoPrecioId = (int) $item['producto_precio_id'];
                 $cantidad = (float) $item['cantidad'];
+                $precioUnitario = (float) $item['precio_unitario'];
 
                 $stock = Stock::query()
                     ->where('ubicacion_id', $ventaUbicacionId)
@@ -270,6 +339,9 @@ class VentaTiendaController extends Controller
                     ], 422);
                 }
 
+                $productoPrecio = ProductoPrecio::query()->find($productoPrecioId);
+                $cantidadBase = $this->cantidadBaseDesdeProductoPrecio($productoPrecio, $cantidad);
+
                 $disponible = (float) ($stock->cantidad ?? 0);
 
                 if ($disponible < $cantidad) {
@@ -278,75 +350,130 @@ class VentaTiendaController extends Controller
                     ], 422);
                 }
 
-                $subtotal += ((float) $item['precio_unitario']) * $cantidad;
+                $subtotalItem = round($cantidad * $precioUnitario, 2);
+                $subtotal += $subtotalItem;
+
+                $itemsPreparados[] = [
+                    'producto_id' => $productoId,
+                    'producto_precio_id' => $productoPrecioId,
+                    'cantidad' => $cantidad,
+                    'cantidad_base' => $cantidadBase,
+                    'precio_unitario' => $precioUnitario,
+                    'subtotal' => $subtotalItem,
+                    'presentacion' => $item['presentacion'] ?? null,
+                ];
             }
 
+            $esCuotas = ($data['metodo_pago'] ?? 'efectivo') === 'cuotas';
+            $total = round((float) $subtotal, 2);
+
             $venta = VentaTienda::create([
-                'ubicacion_id' => $ventaUbicacionId,
-                'usuario_id'   => (int) $user->id,
-                'cliente_id'   => null,
-                'estado'       => 'completada',
-                'metodo_pago'  => $data['metodo_pago'],
-                'subtotal'     => $subtotal,
-                'descuento'    => 0,
-                'total'        => $subtotal,
-                'creado_en'    => now(),
+                'ubicacion_id'    => $ventaUbicacionId,
+                'usuario_id'      => (int) $user->id,
+                'cliente_id'      => !empty($data['cliente_id']) ? (int) $data['cliente_id'] : null,
+                'estado'          => 'completada',
+                'metodo_pago'     => $data['metodo_pago'],
+                'referencia_pago' => $data['referencia_pago'] ?? null,
+                'subtotal'        => $total,
+                'descuento'       => 0,
+                'total'           => $total,
+                'saldo_pendiente' => $esCuotas ? $total : 0,
+                'creado_en'       => now(),
             ]);
 
-            foreach ($data['items'] as $item) {
-                $productoId = (int) $item['producto_id'];
-                $productoPrecioId = (int) $item['producto_precio_id'];
-                $cantidad = (float) $item['cantidad'];
-                $precioUnitario = (float) $item['precio_unitario'];
-                $lineSubtotal = $cantidad * $precioUnitario;
-
-                $productoPrecio = ProductoPrecio::query()->find($productoPrecioId);
-
+            foreach ($itemsPreparados as $item) {
                 VentaTiendaDetalle::create([
-                    'venta_id'        => $venta->id,
-                    'producto_id'     => (string) $productoId,
-                    'cantidad'        => $cantidad,
-                    'precio_unitario' => $precioUnitario,
-                    'subtotal'        => $lineSubtotal,
+                    'venta_id'        => (int) $venta->id,
+                    'producto_id'     => $item['producto_id'],
+                    'cantidad'        => $item['cantidad'],
+                    'precio_unitario' => $item['precio_unitario'],
+                    'subtotal'        => $item['subtotal'],
                 ]);
 
                 $stock = Stock::query()
                     ->where('ubicacion_id', $ventaUbicacionId)
-                    ->where('producto_id', $productoId)
-                    ->where('producto_precio_id', $productoPrecioId)
+                    ->where('producto_id', $item['producto_id'])
+                    ->where('producto_precio_id', $item['producto_precio_id'])
                     ->lockForUpdate()
                     ->first();
 
-                $stock->cantidad = max(0, (float) $stock->cantidad - $cantidad);
+                $stock->cantidad = (float) $stock->cantidad - (float) $item['cantidad'];
                 $stock->save();
 
                 MovimientoStock::create([
-                    'tipo'                 => 'salida',
-                    'ubicacion_origen_id'  => $ventaUbicacionId,
+                    'tipo' => 'salida',
+                    'producto_id' => $item['producto_id'],
+                    'producto_precio_id' => $item['producto_precio_id'],
+                    'ubicacion_origen_id' => $ventaUbicacionId,
                     'ubicacion_destino_id' => null,
-                    'producto_id'          => $productoId,
-                    'producto_precio_id'   => $productoPrecioId,
-                    'presentacion'         => $productoPrecio?->presentacion,
-                    'factor_aplicado'      => (float) ($productoPrecio?->factor_base ?? 1),
-                    'cantidad'             => $cantidad,
-                    'cantidad_base'        => 0,
-                    'motivo'               => 'venta_tienda',
-                    'referencia_tipo'      => 'venta_tienda',
-                    'referencia_id'        => (int) $venta->id,
-                    'creado_por'           => (int) $user->id,
-                    'creado_en'            => now(),
+                    'cantidad' => $item['cantidad'],
+                    'cantidad_base' => $item['cantidad_base'],
+                    'presentacion' => $item['presentacion'],
+                    'motivo' => 'Venta tienda',
+                    'referencia_tipo' => 'venta_tienda',
+                    'referencia_id' => (int) $venta->id,
+                    'creado_por' => (int) $user->id,
+                    'creado_en' => now(),
+                ]);
+            }
+
+            if (!$esCuotas) {
+                $caja = Caja::query()
+                    ->where('ubicacion_id', $ventaUbicacionId)
+                    ->whereNull('cerrado_en')
+                    ->latest('id')
+                    ->first();
+
+                if (!$caja) {
+                    return response()->json([
+                        'message' => 'No hay una caja abierta en esta sucursal para registrar la venta.'
+                    ], 422);
+                }
+
+                MovimientoCaja::create([
+                    'caja_id' => (int) $caja->id,
+                    'ubicacion_id' => (int) $ventaUbicacionId,
+                    'usuario_id' => (int) $user->id,
+                    'tipo' => 'ingreso',
+                    'concepto' => 'venta_tienda',
+                    'monto' => $total,
+                    'metodo_pago' => $data['metodo_pago'],
+                    'referencia_id' => (int) $venta->id,
+                    'referencia_tipo' => 'venta_tienda',
+                    'notas' => 'Venta registrada desde módulo de tienda'
+                        . (!empty($data['nombre_comprador']) ? ' | Comprador: ' . $data['nombre_comprador'] : '')
+                        . (!empty($data['referencia_pago']) ? ' | Ref: ' . $data['referencia_pago'] : ''),
+                ]);
+            }
+
+            if ($esCuotas) {
+                app(RegistrarCuotaService::class)->registrarVentaTienda([
+                    'venta_id' => (int) $venta->id,
+                    'cliente_id' => (int) $data['cliente_id'],
+                    'ubicacion_id' => (int) $ventaUbicacionId,
+                    'rutero_id' => null,
+                    'usuario_id' => (int) $user->id,
+                    'total' => $total,
+                    'numero_cuotas' => (int) $data['numero_cuotas'],
+                    'frecuencia_pago' => $data['frecuencia_pago'] ?? 'mensual',
+                    'fecha_primer_pago' => !empty($data['fecha_primer_pago'])
+                        ? Carbon::parse($data['fecha_primer_pago'])
+                        : now()->addMonth(),
+                    'observaciones' => $data['referencia_pago'] ?? null,
                 ]);
             }
 
             $venta->load([
-                'detalles.producto:id,nombre',
-                'usuario:id,nombre,usuario',
                 'ubicacion:id,nombre',
+                'usuario:id,usuario,nombre',
                 'cliente:id,nombre',
+                'detalles.producto:id,nombre',
             ]);
 
             return response()->json([
-                'message' => 'Venta realizada correctamente.',
+                'message' => $esCuotas
+                    ? 'Venta a crédito registrada correctamente.'
+                    : 'Venta registrada correctamente.',
                 'data' => $this->buildVentaResponse($venta),
             ], 201);
         });

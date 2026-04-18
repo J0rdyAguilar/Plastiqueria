@@ -43,4 +43,9 @@ class Caja extends Model
     {
         return $this->hasMany(MovimientoCaja::class, 'caja_id', 'id');
     }
+
+    public function abonosCuotas()
+    {
+        return $this->hasMany(AbonoCuota::class, 'caja_id', 'id');
+    }
 }

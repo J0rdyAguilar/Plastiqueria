@@ -18,19 +18,40 @@ class RoleMiddleware
             ], 401);
         }
 
-        $rolUsuario = strtolower((string) $user->rol);
+        $rolUsuario = $this->normalizarRol($user->rol ?? $user->role ?? '');
 
-        $rolesPermitidos = array_map(
-            fn ($r) => strtolower(trim((string) $r)),
-            $roles
-        );
+        $rolesPermitidos = array_map(function ($r) {
+            return $this->normalizarRol($r);
+        }, $roles);
 
         if (!in_array($rolUsuario, $rolesPermitidos, true)) {
             return response()->json([
-                'message' => 'No autorizado'
+                'message' => 'No autorizado',
+                'debug' => [
+                    'usuario_id' => $user->id ?? null,
+                    'usuario' => $user->usuario ?? null,
+                    'nombre' => $user->nombre ?? null,
+                    'rol_original' => $user->rol ?? $user->role ?? null,
+                    'rol_normalizado' => $rolUsuario,
+                    'roles_recibidos' => $roles,
+                    'roles_normalizados' => $rolesPermitidos,
+                    'path' => $request->path(),
+                ],
             ], 403);
         }
 
         return $next($request);
+    }
+
+    private function normalizarRol($rol): string
+    {
+        $rol = strtolower(trim((string) $rol));
+        $rol = str_replace([' ', '-'], '_', $rol);
+
+        if ($rol === 'superadmin') {
+            return 'super_admin';
+        }
+
+        return $rol;
     }
 }

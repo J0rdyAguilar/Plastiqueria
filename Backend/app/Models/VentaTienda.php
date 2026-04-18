@@ -20,19 +20,22 @@ class VentaTienda extends Model
         'cliente_id',
         'estado',
         'metodo_pago',
+        'referencia_pago',
         'subtotal',
         'descuento',
         'total',
+        'saldo_pendiente',
     ];
 
     protected $casts = [
-        'ubicacion_id' => 'integer',
-        'usuario_id'   => 'integer',
-        'cliente_id'   => 'integer',
-        'subtotal'     => 'decimal:2',
-        'descuento'    => 'decimal:2',
-        'total'        => 'decimal:2',
-        'creado_en'    => 'datetime',
+        'ubicacion_id'    => 'integer',
+        'usuario_id'      => 'integer',
+        'cliente_id'      => 'integer',
+        'subtotal'        => 'decimal:2',
+        'descuento'       => 'decimal:2',
+        'total'           => 'decimal:2',
+        'saldo_pendiente' => 'decimal:2',
+        'creado_en'       => 'datetime',
     ];
 
     public function detalles()
@@ -53,5 +56,11 @@ class VentaTienda extends Model
     public function cliente()
     {
         return $this->belongsTo(Cliente::class, 'cliente_id', 'id');
+    }
+
+    public function cuotas()
+    {
+        return $this->hasMany(Cuota::class, 'origen_id', 'id')
+            ->where('origen_tipo', 'venta_tienda');
     }
 }

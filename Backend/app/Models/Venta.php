@@ -30,6 +30,8 @@ class Venta extends Model
         'efectivo',
         'cambio',
         'metodo_pago',
+        'referencia_pago',
+        'saldo_pendiente',
         'estado',
         'nota',
         'observaciones',
@@ -41,6 +43,7 @@ class Venta extends Model
         'total' => 'float',
         'efectivo' => 'float',
         'cambio' => 'float',
+        'saldo_pendiente' => 'float',
         'fecha_en_ruta' => 'datetime',
         'entregado_en' => 'datetime',
         'creado_en' => 'datetime',
@@ -80,5 +83,10 @@ class Venta extends Model
     public function detalles()
     {
         return $this->hasMany(VentaDetalle::class, 'venta_id');
+    }
+
+    public function cuotas()
+    {
+        return $this->hasMany(Cuota::class, 'origen_id')->where('origen_tipo', 'venta_rutero');
     }
 }

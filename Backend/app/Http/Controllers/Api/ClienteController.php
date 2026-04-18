@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Cliente;
+use App\Models\Ruta;
 use App\Models\Vendedor;
+use App\Models\Zona;
 use Illuminate\Http\Request;
 
 class ClienteController extends Controller
@@ -12,6 +14,7 @@ class ClienteController extends Controller
     private function roleOf($user): string
     {
         $r = strtolower((string) ($user->rol ?? $user->role ?? ''));
+        $r = str_replace([' ', '-'], '_', $r);
 
         if ($r === 'superadmin') return 'super_admin';
         if ($r === 'cajero') return 'caja';
@@ -33,6 +36,42 @@ class ClienteController extends Controller
             ->first();
 
         return $vend ? (int) $vend->id : null;
+    }
+
+    private function resolveRutaPorDefecto(): ?int
+    {
+        $keywords = ['tienda', 'general', 'mostrador', 'sin ruta', 'default'];
+
+        foreach ($keywords as $keyword) {
+            $ruta = Ruta::query()
+                ->whereRaw('LOWER(nombre) like ?', ['%' . strtolower($keyword) . '%'])
+                ->first();
+
+            if ($ruta) {
+                return (int) $ruta->id;
+            }
+        }
+
+        $primera = Ruta::query()->orderBy('id')->first();
+        return $primera ? (int) $primera->id : null;
+    }
+
+    private function resolveZonaPorDefecto(): ?int
+    {
+        $keywords = ['tienda', 'general', 'mostrador', 'sin zona', 'default'];
+
+        foreach ($keywords as $keyword) {
+            $zona = Zona::query()
+                ->whereRaw('LOWER(nombre) like ?', ['%' . strtolower($keyword) . '%'])
+                ->first();
+
+            if ($zona) {
+                return (int) $zona->id;
+            }
+        }
+
+        $primera = Zona::query()->orderBy('id')->first();
+        return $primera ? (int) $primera->id : null;
     }
 
     public function index(Request $request)
@@ -59,24 +98,13 @@ class ClienteController extends Controller
                         ->where('vendedor_clientes.activo', 1);
                 });
             }
-        } elseif ($role === 'vendedor') {
-            // IMPORTANTE:
-            // si el usuario vendedor aún no tiene registro en vendedores,
-            // no tumbes la pantalla con 403; devuelve vacío.
-            if (!$vendedorAuthId) {
-                return response()->json([
-                    'current_page' => 1,
-                    'last_page' => 1,
-                    'per_page' => (int) $request->query('per_page', 20),
-                    'total' => 0,
-                    'data' => [],
-                ]);
+        } elseif (in_array($role, ['vendedor', 'vendedor_tienda'], true)) {
+            if ($role === 'vendedor' && $vendedorAuthId) {
+                $query->whereHas('vendedores', function ($sub) use ($vendedorAuthId) {
+                    $sub->where('vendedores.id', (int) $vendedorAuthId)
+                        ->where('vendedor_clientes.activo', 1);
+                });
             }
-
-            $query->whereHas('vendedores', function ($sub) use ($vendedorAuthId) {
-                $sub->where('vendedores.id', (int) $vendedorAuthId)
-                    ->where('vendedor_clientes.activo', 1);
-            });
         } else {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
@@ -119,6 +147,8 @@ class ClienteController extends Controller
             if (!$permitido) {
                 return response()->json(['message' => 'No autorizado.'], 403);
             }
+        } elseif (!in_array($role, ['admin', 'super_admin', 'vendedor_tienda'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
         }
 
         $cliente->load([
@@ -137,7 +167,7 @@ class ClienteController extends Controller
         $role = $this->roleOf($user);
         $vendedorAuthId = $this->resolveVendedorId($user);
 
-        if (!in_array($role, ['super_admin', 'admin', 'vendedor'], true)) {
+        if (!in_array($role, ['super_admin', 'admin', 'vendedor', 'vendedor_tienda'], true)) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
@@ -145,18 +175,40 @@ class ClienteController extends Controller
             'nombre' => ['required', 'string', 'max:150'],
             'propietario' => ['nullable', 'string', 'max:150'],
             'telefono' => ['nullable', 'string', 'max:50'],
-            'ruta_id' => ['required', 'integer', 'exists:rutas,id'],
-            'zona_id' => ['required', 'integer', 'exists:zonas,id'],
+            'ruta_id' => ['nullable', 'integer', 'exists:rutas,id'],
+            'zona_id' => ['nullable', 'integer', 'exists:zonas,id'],
             'direccion' => ['nullable', 'string', 'max:255'],
             'referencia' => ['nullable', 'string', 'max:255'],
             'activo' => ['nullable', 'boolean'],
             'vendedor_id' => ['nullable', 'integer'],
         ]);
 
-        // Si es vendedor y aún no existe su registro en vendedores, tampoco explotes.
         if ($role === 'vendedor' && !$vendedorAuthId) {
             return response()->json([
                 'message' => 'Este usuario aún no está vinculado correctamente como vendedor.'
+            ], 422);
+        }
+
+        $rutaId = !empty($data['ruta_id']) ? (int) $data['ruta_id'] : null;
+        $zonaId = !empty($data['zona_id']) ? (int) $data['zona_id'] : null;
+
+        if (!$rutaId) {
+            $rutaId = $this->resolveRutaPorDefecto();
+        }
+
+        if (!$zonaId) {
+            $zonaId = $this->resolveZonaPorDefecto();
+        }
+
+        if (!$rutaId) {
+            return response()->json([
+                'message' => 'No existe ninguna ruta disponible para asignar al cliente.'
+            ], 422);
+        }
+
+        if (!$zonaId) {
+            return response()->json([
+                'message' => 'No existe ninguna zona disponible para asignar al cliente.'
             ], 422);
         }
 
@@ -164,8 +216,8 @@ class ClienteController extends Controller
             'nombre' => trim((string) $data['nombre']),
             'propietario' => trim((string) ($data['propietario'] ?? '')),
             'telefono' => trim((string) ($data['telefono'] ?? '')),
-            'ruta_id' => (int) $data['ruta_id'],
-            'zona_id' => (int) $data['zona_id'],
+            'ruta_id' => $rutaId,
+            'zona_id' => $zonaId,
             'direccion' => trim((string) ($data['direccion'] ?? 'Sin dirección')),
             'referencia' => trim((string) ($data['referencia'] ?? '')),
             'activo' => array_key_exists('activo', $data) ? (bool) $data['activo'] : true,
@@ -220,19 +272,30 @@ class ClienteController extends Controller
             'nombre' => ['required', 'string', 'max:150'],
             'propietario' => ['nullable', 'string', 'max:150'],
             'telefono' => ['nullable', 'string', 'max:50'],
-            'ruta_id' => ['required', 'integer', 'exists:rutas,id'],
-            'zona_id' => ['required', 'integer', 'exists:zonas,id'],
+            'ruta_id' => ['nullable', 'integer', 'exists:rutas,id'],
+            'zona_id' => ['nullable', 'integer', 'exists:zonas,id'],
             'direccion' => ['nullable', 'string', 'max:255'],
             'referencia' => ['nullable', 'string', 'max:255'],
             'activo' => ['nullable', 'boolean'],
         ]);
 
+        $rutaId = !empty($data['ruta_id']) ? (int) $data['ruta_id'] : $cliente->ruta_id;
+        $zonaId = !empty($data['zona_id']) ? (int) $data['zona_id'] : $cliente->zona_id;
+
+        if (!$rutaId) {
+            $rutaId = $this->resolveRutaPorDefecto();
+        }
+
+        if (!$zonaId) {
+            $zonaId = $this->resolveZonaPorDefecto();
+        }
+
         $cliente->update([
             'nombre' => trim((string) $data['nombre']),
             'propietario' => trim((string) ($data['propietario'] ?? '')),
             'telefono' => trim((string) ($data['telefono'] ?? '')),
-            'ruta_id' => (int) $data['ruta_id'],
-            'zona_id' => (int) $data['zona_id'],
+            'ruta_id' => $rutaId,
+            'zona_id' => $zonaId,
             'direccion' => trim((string) ($data['direccion'] ?? 'Sin dirección')),
             'referencia' => trim((string) ($data['referencia'] ?? '')),
             'activo' => array_key_exists('activo', $data) ? (bool) $data['activo'] : $cliente->activo,

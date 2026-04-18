@@ -12,7 +12,8 @@ use App\Services\StockService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-
+use App\Models\Caja;
+use App\Models\MovimientoCaja;
 class PedidoController extends Controller
 {
     public function __construct(private StockService $stockService) {}
@@ -71,6 +72,15 @@ class PedidoController extends Controller
             ->whereRaw('LOWER(presentacion) = ?', [mb_strtolower($presentacion)])
             ->where('activo', true)
             ->first();
+    }
+
+    private function generarCodigo(): string
+    {
+        do {
+            $codigo = 'PED-' . now()->format('YmdHis') . '-' . strtoupper(substr(uniqid(), -4));
+        } while (Pedido::where('codigo', $codigo)->exists());
+
+        return $codigo;
     }
 
     private function detalleResponse(PedidoDetalle $d): array
@@ -134,7 +144,7 @@ class PedidoController extends Controller
 
         return [
             'id' => $p->id,
-            'codigo' => $p->codigo,
+            'codigo' => $p->codigo ?: ('PED-' . $p->id),
             'estado' => $p->estado,
 
             'ubicacion_id' => $p->ubicacion_id,
@@ -747,39 +757,74 @@ class PedidoController extends Controller
         });
     }
 
-    public function entregar(Pedido $pedido, Request $request)
-    {
-        $user = $request->user();
-        $role = $this->roleOf($user);
-        $userUbicacionId = $this->userUbicacionId($user);
-        $vendedorAuthId = $this->resolveVendedorId($user);
+public function entregar(Pedido $pedido, Request $request)
+{
+    $user = $request->user();
+    $role = $this->roleOf($user);
+    $userUbicacionId = $this->userUbicacionId($user);
+    $vendedorAuthId = $this->resolveVendedorId($user);
 
-        if (!in_array($role, ['vendedor', 'admin', 'super_admin', 'rutero'], true)) {
-            return response()->json(['message' => 'No autorizado.'], 403);
-        }
+    if (!in_array($role, ['vendedor', 'admin', 'super_admin', 'rutero'], true)) {
+        return response()->json(['message' => 'No autorizado.'], 403);
+    }
 
-        if ($role === 'admin' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+    if ($role === 'admin' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+        return response()->json([
+            'message' => 'No puedes entregar pedidos de otra sucursal.'
+        ], 403);
+    }
+
+    if ($role === 'vendedor' && (!$vendedorAuthId || (int) $pedido->vendedor_id !== $vendedorAuthId)) {
+        return response()->json([
+            'message' => 'No puedes entregar pedidos de otro vendedor.'
+        ], 403);
+    }
+
+    if ($role === 'rutero' && (int) $pedido->rutero_id !== (int) $user->id) {
+        return response()->json([
+            'message' => 'No puedes entregar un pedido que no te fue asignado.'
+        ], 403);
+    }
+
+    if (!in_array($pedido->estado, ['preparando', 'aprobado', 'en_ruta'], true)) {
+        return response()->json([
+            'message' => 'Solo se puede entregar un pedido preparado.'
+        ], 422);
+    }
+
+    $data = $request->validate([
+        'metodo_pago' => ['required', 'in:efectivo,tarjeta,cuotas'],
+        'nombre_pagador' => ['nullable', 'string', 'max:255'],
+        'referencia_pago' => ['nullable', 'string', 'max:255'],
+        'observacion_entrega' => ['nullable', 'string', 'max:1000'],
+        'cliente_id' => ['nullable', 'integer'],
+    ]);
+
+    return DB::transaction(function () use ($pedido, $user, $data) {
+        $metodoPago = $data['metodo_pago'];
+        $ubicacionId = (int) $pedido->ubicacion_id;
+
+        if ($metodoPago === 'cuotas' && empty($data['cliente_id']) && empty($pedido->cliente_id)) {
             return response()->json([
-                'message' => 'No puedes entregar pedidos de otra sucursal.'
-            ], 403);
-        }
-
-        if ($role === 'vendedor' && (!$vendedorAuthId || (int) $pedido->vendedor_id !== $vendedorAuthId)) {
-            return response()->json([
-                'message' => 'No puedes entregar pedidos de otro vendedor.'
-            ], 403);
-        }
-
-        if ($role === 'rutero' && (int) $pedido->rutero_id !== (int) $user->id) {
-            return response()->json([
-                'message' => 'No puedes entregar un pedido que no te fue asignado.'
-            ], 403);
-        }
-
-        if (!in_array($pedido->estado, ['preparando', 'aprobado', 'en_ruta'], true)) {
-            return response()->json([
-                'message' => 'Solo se puede entregar un pedido preparado.'
+                'message' => 'Para entregar a crédito debes seleccionar un cliente.'
             ], 422);
+        }
+
+        if (property_exists($pedido, 'metodo_pago') || isset($pedido->metodo_pago)) {
+            $pedido->metodo_pago = $metodoPago;
+        }
+
+        if ($metodoPago === 'cuotas' && !empty($data['cliente_id'])) {
+            $pedido->cliente_id = (int) $data['cliente_id'];
+        }
+
+        if (!empty($data['observacion_entrega'])) {
+            $obsActual = trim((string) ($pedido->observaciones ?? ''));
+            $obsNueva = trim((string) $data['observacion_entrega']);
+
+            $pedido->observaciones = $obsActual !== ''
+                ? $obsActual . "\n" . $obsNueva
+                : $obsNueva;
         }
 
         $pedido->estado = 'entregado';
@@ -787,14 +832,45 @@ class PedidoController extends Controller
         $pedido->entregado_en = now();
         $pedido->save();
 
+        if (in_array($metodoPago, ['efectivo', 'tarjeta'], true)) {
+            $caja = Caja::query()
+                ->where('ubicacion_id', $ubicacionId)
+                ->whereNull('cerrado_en')
+                ->latest('id')
+                ->first();
+
+            if (!$caja) {
+                return response()->json([
+                    'message' => 'No hay una caja abierta en esta sucursal para registrar el cobro.'
+                ], 422);
+            }
+
+            MovimientoCaja::create([
+                'caja_id' => (int) $caja->id,
+                'ubicacion_id' => $ubicacionId,
+                'usuario_id' => (int) $user->id,
+                'tipo' => 'ingreso',
+                'concepto' => 'venta_rutero',
+                'monto' => round((float) $pedido->total, 2),
+                'metodo_pago' => $metodoPago,
+                'referencia_id' => (int) $pedido->id,
+                'referencia_tipo' => 'pedido',
+                'notas' => 'Cobro de pedido entregado por rutero'
+                    . (!empty($data['nombre_pagador']) ? ' | Pagador: ' . $data['nombre_pagador'] : '')
+                    . (!empty($data['referencia_pago']) ? ' | Ref: ' . $data['referencia_pago'] : ''),
+            ]);
+        }
+
         $this->loadPedidoRelations($pedido);
 
         return response()->json([
-            'message' => 'Pedido entregado.',
+            'message' => $metodoPago === 'cuotas'
+                ? 'Pedido entregado a crédito correctamente.'
+                : 'Pedido entregado y cobrado correctamente.',
             'data' => $this->pedidoResponse($pedido),
         ]);
-    }
-
+    });
+}
     public function asignarRutero(Request $request, Pedido $pedido)
     {
         $user = $request->user();

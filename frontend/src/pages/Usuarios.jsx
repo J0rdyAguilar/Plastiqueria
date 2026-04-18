@@ -47,12 +47,16 @@ function prettyRole(rol) {
       return "Super Admin";
     case "admin":
       return "Admin";
+    case "admin_bodega":
+      return "Administrador de Bodega";
     case "vendedor":
       return "Vendedor";
     case "vendedor-tienda":
       return "Vendedor Tienda";
     case "caja":
       return "Caja";
+    case "rutero":
+      return "Rutero";
     default:
       return rol || "—";
   }
@@ -425,10 +429,11 @@ export default function Usuarios() {
                     >
                       <option value="super_admin">Super Admin</option>
                       <option value="admin">Admin</option>
+                      <option value="admin_bodega">Administrador de Bodega</option>
                       <option value="vendedor">Vendedor</option>
                       <option value="vendedor-tienda">Vendedor Tienda</option>
                       <option value="caja">Caja</option>
-                      <option value="rutero">rutero</option>
+                      <option value="rutero">Rutero</option>
                     </select>
                   </div>
 
