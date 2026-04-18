@@ -107,6 +107,24 @@ function formatDate(value) {
   return d.toLocaleString();
 }
 
+function safeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function getMetodoPagoLabel(value) {
+  const raw = String(value || "").toLowerCase().trim();
+  if (!raw) return "No especificado";
+  if (raw === "tarjeta") return "Tarjeta";
+  if (raw === "cuotas" || raw === "credito" || raw === "crédito") return "Crédito";
+  if (raw === "efectivo") return "Efectivo";
+  return raw.replaceAll("_", " ");
+}
+
 function getMonthRange(year, month) {
   const y = Number(year);
   const m = Number(month);
@@ -181,6 +199,217 @@ function gananciaPedido(item) {
     const costo = num(d?.precio_costo);
     return acc + (venta - costo) * cantidad;
   }, 0);
+}
+
+function imprimirTicketPedido({ pedido = null, items = [], total = 0 }) {
+  const fecha =
+    pedido?.creado_en ||
+    pedido?.fecha ||
+    pedido?.created_at ||
+    new Date().toISOString();
+
+  const codigo =
+    pedido?.codigo ||
+    pedido?.correlativo ||
+    pedido?.id ||
+    `PD-${new Date().getTime()}`;
+
+  const cliente =
+    pedido?.cliente_nombre ||
+    pedido?.cliente?.nombre ||
+    pedido?.nombre_cliente ||
+    "Consumidor final";
+
+  const vendedor =
+    pedido?.vendedor_nombre ||
+    pedido?.vendedor?.nombre ||
+    "—";
+
+  const sucursal =
+    pedido?.ubicacion_nombre ||
+    pedido?.ubicacion?.nombre ||
+    "—";
+
+  const rutero =
+    pedido?.rutero?.nombre ||
+    pedido?.rutero_nombre ||
+    "Sin asignar";
+
+  const estado = estadoLabel(pedido?.estado || "pendiente");
+  const metodoPago = getMetodoPagoLabel(
+    pedido?.metodo_pago || pedido?.forma_pago || pedido?.tipo_pago || ""
+  );
+  const observaciones = pedido?.observaciones || "";
+
+  const html = `
+    <!doctype html>
+    <html lang="es">
+    <head>
+      <meta charset="utf-8" />
+      <title>Ticket pedido #${safeHtml(codigo)}</title>
+      <style>
+        * { box-sizing: border-box; }
+        html, body {
+          margin: 0;
+          padding: 0;
+          background: #ffffff;
+          color: #111827;
+          font-family: Arial, Helvetica, sans-serif;
+        }
+        body { padding: 12px; }
+        .ticket { width: 80mm; margin: 0 auto; }
+        .center { text-align: center; }
+        .title { font-size: 20px; font-weight: 800; margin-bottom: 2px; }
+        .subtitle { font-size: 12px; color: #4b5563; margin-bottom: 10px; }
+        .box {
+          border-top: 1px dashed #9ca3af;
+          border-bottom: 1px dashed #9ca3af;
+          padding: 8px 0;
+          margin: 8px 0;
+        }
+        .row {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          margin: 4px 0;
+          font-size: 12px;
+        }
+        .label { color: #4b5563; }
+        .line-item {
+          padding: 7px 0;
+          border-bottom: 1px dashed #d1d5db;
+        }
+        .prod {
+          font-size: 13px;
+          font-weight: 700;
+          margin-bottom: 4px;
+        }
+        .muted {
+          color: #6b7280;
+          font-size: 11px;
+        }
+        .totals {
+          margin-top: 10px;
+          border-top: 2px solid #111827;
+          padding-top: 8px;
+        }
+        .total-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 18px;
+          font-weight: 800;
+        }
+        .obs {
+          margin-top: 10px;
+          padding-top: 8px;
+          border-top: 1px dashed #d1d5db;
+          font-size: 12px;
+          color: #374151;
+          line-height: 1.45;
+        }
+        .footer {
+          margin-top: 14px;
+          text-align: center;
+          font-size: 11px;
+          color: #6b7280;
+        }
+        @media print {
+          body { padding: 0; }
+          .ticket { width: 80mm; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="ticket">
+        <div class="center">
+          <div class="title">PLASTIMAX</div>
+          <div class="subtitle">Ticket de pedido</div>
+        </div>
+
+        <div class="box">
+          <div class="row"><span class="label">Pedido:</span><strong>#${safeHtml(codigo)}</strong></div>
+          <div class="row"><span class="label">Fecha:</span><strong>${safeHtml(formatDate(fecha))}</strong></div>
+          <div class="row"><span class="label">Cliente:</span><strong>${safeHtml(cliente)}</strong></div>
+          <div class="row"><span class="label">Vendedor:</span><strong>${safeHtml(vendedor)}</strong></div>
+          <div class="row"><span class="label">Sucursal:</span><strong>${safeHtml(sucursal)}</strong></div>
+          <div class="row"><span class="label">Rutero:</span><strong>${safeHtml(rutero)}</strong></div>
+          <div class="row"><span class="label">Estado:</span><strong>${safeHtml(estado)}</strong></div>
+          <div class="row"><span class="label">Pago:</span><strong>${safeHtml(metodoPago)}</strong></div>
+        </div>
+
+        <div>
+          ${items
+            .map(
+              (d) => `
+            <div class="line-item">
+              <div class="prod">${safeHtml(
+                `${d.producto_nombre || d.nombre || "Producto"}${
+                  d.presentacion ? ` - ${d.presentacion}` : ""
+                }`
+              )}</div>
+              <div class="row">
+                <span class="muted">${safeHtml(
+                  Number(d.cantidad || 0)
+                )} x ${safeHtml(money(d.precio_unitario))}</span>
+                <strong>${safeHtml(
+                  money(
+                    Number(d.subtotal || 0) ||
+                      Number(d.cantidad || 0) * Number(d.precio_unitario || 0)
+                  )
+                )}</strong>
+              </div>
+              <div class="muted">SKU: ${safeHtml(d.producto_sku || "—")}</div>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+
+        <div class="totals">
+          <div class="total-row">
+            <span>Total</span>
+            <span>${safeHtml(money(total))}</span>
+          </div>
+        </div>
+
+        ${
+          observaciones
+            ? `
+          <div class="obs">
+            <strong>Observaciones:</strong><br/>
+            ${safeHtml(observaciones)}
+          </div>
+        `
+            : ""
+        }
+
+        <div class="footer">
+          Impreso el ${safeHtml(new Date().toLocaleString())}<br/>
+          Gracias por su compra
+        </div>
+      </div>
+
+      <script>
+        window.onload = function() {
+          window.print();
+          window.onafterprint = function() {
+            window.close();
+          };
+        };
+      </script>
+    </body>
+    </html>
+  `;
+
+  const win = window.open("", "_blank", "width=420,height=760");
+  if (!win) {
+    alert("El navegador bloqueó la ventana de impresión.");
+    return;
+  }
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 const MONTHS = [
@@ -380,6 +609,22 @@ export default function PedidosAdmin() {
       subtotal: Number(l.subtotal),
       es_monto_variable: l.es_monto_variable ? 1 : 0,
     }));
+  }
+
+  function handleImprimirTicket() {
+    if (!pedidoActivo) {
+      notify.error("Selecciona un pedido.");
+      return;
+    }
+
+    imprimirTicketPedido({
+      pedido: {
+        ...pedidoActivo,
+        observaciones,
+      },
+      items: lineasEdit,
+      total,
+    });
   }
 
   async function guardarCambios() {
@@ -891,6 +1136,10 @@ export default function PedidosAdmin() {
                       )}
                     </div>
 
+                    <button onClick={handleImprimirTicket} disabled={saving} style={ticketBtn}>
+                      Imprimir ticket
+                    </button>
+
                     <button onClick={guardarCambios} disabled={saving} style={primaryBtn}>
                       {saving ? "Guardando..." : "Guardar cambios"}
                     </button>
@@ -1118,9 +1367,14 @@ export default function PedidosAdmin() {
                 </div>
               </div>
 
-              <button type="button" onClick={cerrarDetalleRegistro} style={closeBtnStyle}>
-                Cerrar
-              </button>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button type="button" onClick={handleImprimirTicket} style={ticketBtn}>
+                  Imprimir ticket
+                </button>
+                <button type="button" onClick={cerrarDetalleRegistro} style={closeBtnStyle}>
+                  Cerrar
+                </button>
+              </div>
             </div>
 
             <div style={modalBodyStyle}>
@@ -1590,6 +1844,16 @@ const secondaryBtn = {
   border: "1px solid #d1d5db",
   background: "#fff",
   color: "#111827",
+  borderRadius: 12,
+  padding: "13px 14px",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const ticketBtn = {
+  border: "1px solid #1d4ed8",
+  background: "#eff6ff",
+  color: "#1d4ed8",
   borderRadius: 12,
   padding: "13px 14px",
   fontWeight: 800,
