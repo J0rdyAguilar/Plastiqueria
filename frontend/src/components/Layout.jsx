@@ -24,15 +24,22 @@ import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 import "./layout.css";
 
 function normalizeRole(r) {
-  const x = (r || "").toString().trim().toLowerCase();
+  const x = (r || "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+
   if (x === "cajero") return "caja";
   if (x === "superadmin") return "super_admin";
+  if (x === "administrador_bodega") return "admin_bodega";
   return x;
 }
 
 function prettyRole(role) {
   if (role === "super_admin") return "Super Admin";
   if (role === "admin") return "Administrador";
+  if (role === "admin_bodega") return "Administrador de bodega";
   if (role === "vendedor") return "Vendedor";
   if (role === "vendedor_tienda") return "Vendedor tienda";
   if (role === "rutero") return "Rutero";
@@ -51,23 +58,36 @@ export default function Layout({ children }) {
 
   const isSuperAdmin = logged && rol === "super_admin";
   const isAdmin = logged && rol === "admin";
+  const isAdminBodega = logged && rol === "admin_bodega";
   const isAdminLike = logged && (rol === "admin" || rol === "super_admin");
   const isVendedor = logged && rol === "vendedor";
   const isVendedorTienda = logged && rol === "vendedor_tienda";
   const isRutero = logged && rol === "rutero";
   const isCaja = logged && rol === "caja";
 
-  const canAccessTienda = logged && (isAdmin || isSuperAdmin || isVendedorTienda);
+  const canAccessTienda =
+    logged && (isSuperAdmin || isAdmin || isVendedorTienda);
 
   const homeLink = useMemo(() => {
     if (!logged) return "/login";
     if (isRutero) return "/rutero";
     if (isVendedorTienda) return "/ventas-tienda";
-    if (isAdminLike) return "/pedidos-admin";
+    if (isAdminBodega) return "/pedidos-admin";
+    if (isSuperAdmin) return "/pedidos-admin";
+    if (isAdmin) return "/ventas-tienda";
     if (isCaja) return "/caja";
     if (isVendedor) return "/pedidos#crear-pedido";
     return "/login";
-  }, [logged, isRutero, isVendedorTienda, isAdminLike, isCaja, isVendedor]);
+  }, [
+    logged,
+    isRutero,
+    isVendedorTienda,
+    isAdminBodega,
+    isSuperAdmin,
+    isAdmin,
+    isCaja,
+    isVendedor,
+  ]);
 
   const vendedorEnPedidos = isVendedor && loc.pathname === "/pedidos";
   const vendedorVista = loc.hash === "#mis-pedidos" ? "mios" : "crear";
@@ -91,7 +111,7 @@ export default function Layout({ children }) {
       to: "/pedidos-admin",
       label: "Pedidos",
       icon: <ShoppingCart size={18} />,
-      show: isAdminLike,
+      show: isSuperAdmin || isAdminBodega,
       active: loc.pathname.startsWith("/pedidos-admin"),
     },
     {
@@ -105,42 +125,42 @@ export default function Layout({ children }) {
       to: "/vendedores",
       label: "Vendedores",
       icon: <UserCog size={18} />,
-      show: isAdminLike,
+      show: isSuperAdmin,
       active: loc.pathname.startsWith("/vendedores"),
     },
     {
       to: "/zonas",
       label: "Zonas",
       icon: <MapPinned size={18} />,
-      show: isAdminLike,
+      show: isSuperAdmin,
       active: loc.pathname.startsWith("/zonas"),
     },
     {
       to: "/rutas",
       label: "Rutas",
       icon: <Route size={18} />,
-      show: isAdminLike,
+      show: isSuperAdmin,
       active: loc.pathname.startsWith("/rutas"),
     },
     {
       to: "/productos",
       label: "Productos",
       icon: <Package size={18} />,
-      show: isAdminLike,
+      show: isSuperAdmin,
       active: loc.pathname.startsWith("/productos"),
     },
     {
       to: "/stock",
       label: "Inventario",
       icon: <Boxes size={18} />,
-      show: isAdminLike,
+      show: isSuperAdmin || isAdmin || isAdminBodega,
       active: loc.pathname.startsWith("/stock"),
     },
     {
       to: "/movimientos-stock",
       label: "Movimientos",
       icon: <ArrowLeftRight size={18} />,
-      show: isAdminLike,
+      show: isSuperAdmin || isAdmin || isAdminBodega,
       active: loc.pathname.startsWith("/movimientos-stock"),
     },
     {
@@ -161,7 +181,7 @@ export default function Layout({ children }) {
       to: "/caja",
       label: "Caja",
       icon: <Wallet size={18} />,
-      show: logged && (isAdminLike || isCaja),
+      show: logged && (isSuperAdmin || isAdmin || isCaja || isAdminBodega),
       active: loc.pathname.startsWith("/caja"),
     },
     {
@@ -193,7 +213,11 @@ export default function Layout({ children }) {
               <div className="lux-brand-copy">
                 <strong>Plastimax</strong>
                 <span>
-                  {isVendedorTienda ? "Panel de tienda" : "Panel administrativo"}
+                  {isVendedorTienda
+                    ? "Panel de tienda"
+                    : isAdminBodega
+                    ? "Panel de bodega"
+                    : "Panel administrativo"}
                 </span>
               </div>
             </Link>
@@ -403,7 +427,7 @@ export default function Layout({ children }) {
       </header>
 
       <div className="lux-layout">
-        {(isAdminLike || isVendedorTienda) && (
+        {(isSuperAdmin || isAdmin || isAdminBodega || isVendedorTienda) && (
           <aside className="lux-sidebar desktop-only">
             <div className="lux-sidebar-inner">
               <div className="lux-sidebar-badge">Panel</div>

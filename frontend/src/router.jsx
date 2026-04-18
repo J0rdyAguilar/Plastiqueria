@@ -34,6 +34,8 @@ function normalizeRole(r) {
 
   if (x === "cajero") return "caja";
   if (x === "superadmin") return "super_admin";
+  if (x === "adminbod") return "admin_bodega";
+  if (x === "administrador_bodega") return "admin_bodega";
 
   return x;
 }
@@ -49,7 +51,14 @@ function roleHome() {
 
   const rol = getRole();
 
-  if (rol === "admin" || rol === "super_admin") return "/pedidos-admin";
+  if (
+    rol === "admin" ||
+    rol === "super_admin" ||
+    rol === "admin_bodega"
+  ) {
+    return "/pedidos-admin";
+  }
+
   if (rol === "caja") return "/caja";
   if (rol === "vendedor") return "/pedidos";
   if (rol === "vendedor_tienda") return "/ventas-tienda";
@@ -122,7 +131,7 @@ export const router = createBrowserRouter([
   {
     path: "/vendedores",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["super_admin"]}>
         <Vendedores />
       </WrapWithLayout>
     ),
@@ -131,7 +140,7 @@ export const router = createBrowserRouter([
   {
     path: "/pedidos-admin",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin", "admin_bodega"]}>
         <PedidosAdmin />
       </WrapWithLayout>
     ),
@@ -140,7 +149,7 @@ export const router = createBrowserRouter([
   {
     path: "/zonas",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["super_admin"]}>
         <Zonas />
       </WrapWithLayout>
     ),
@@ -149,7 +158,7 @@ export const router = createBrowserRouter([
   {
     path: "/rutas",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["super_admin"]}>
         <Rutas />
       </WrapWithLayout>
     ),
@@ -158,7 +167,7 @@ export const router = createBrowserRouter([
   {
     path: "/productos",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["super_admin"]}>
         <Productos />
       </WrapWithLayout>
     ),
@@ -167,7 +176,7 @@ export const router = createBrowserRouter([
   {
     path: "/stock",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin", "admin_bodega"]}>
         <Stock />
       </WrapWithLayout>
     ),
@@ -176,7 +185,7 @@ export const router = createBrowserRouter([
   {
     path: "/movimientos-stock",
     element: (
-      <WrapWithLayout roles={["admin", "super_admin"]}>
+      <WrapWithLayout roles={["admin", "super_admin", "admin_bodega"]}>
         <MovimientosStock />
       </WrapWithLayout>
     ),
@@ -252,6 +261,7 @@ export const router = createBrowserRouter([
         roles={[
           "admin",
           "super_admin",
+          "admin_bodega",
           "caja",
           "vendedor",
           "vendedor_tienda",

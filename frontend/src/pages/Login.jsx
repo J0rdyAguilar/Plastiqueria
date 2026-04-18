@@ -22,6 +22,8 @@ function normalizeRole(r) {
 
   if (x === "cajero") return "caja";
   if (x === "superadmin") return "super_admin";
+  if (x === "adminbod") return "admin_bodega";
+  if (x === "administrador_bodega") return "admin_bodega";
 
   return x;
 }
@@ -40,7 +42,14 @@ function roleHomeFromPayload(payload) {
   const user = extractUser(payload);
   const rol = normalizeRole(user?.rol || user?.role);
 
-  if (rol === "admin" || rol === "super_admin") return "/pedidos-admin";
+  if (
+    rol === "admin" ||
+    rol === "super_admin" ||
+    rol === "admin_bodega"
+  ) {
+    return "/pedidos-admin";
+  }
+
   if (rol === "caja") return "/caja";
   if (rol === "vendedor") return "/pedidos";
   if (rol === "vendedor_tienda") return "/ventas-tienda";

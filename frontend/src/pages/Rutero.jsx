@@ -34,6 +34,47 @@ function getMetodoPagoLabel(value) {
   return "Efectivo";
 }
 
+function normalizeText(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function extractApiMessage(errorOrResponse) {
+  return (
+    errorOrResponse?.response?.data?.message ||
+    errorOrResponse?.response?.data?.error ||
+    errorOrResponse?.data?.message ||
+    errorOrResponse?.data?.error ||
+    errorOrResponse?.message ||
+    ""
+  );
+}
+
+function responseIndicatesFailure(res) {
+  const msg = normalizeText(extractApiMessage(res));
+
+  if (res?.ok === false) return true;
+  if (res?.success === false) return true;
+  if (res?.status === "error") return true;
+  if (res?.data?.success === false) return true;
+  if (res?.data?.ok === false) return true;
+  if (res?.data?.status === "error") return true;
+
+  if (
+    msg.includes("no hay caja abierta") ||
+    msg.includes("caja no abierta") ||
+    msg.includes("caja cerrada") ||
+    msg.includes("debe abrir una caja") ||
+    msg.includes("debes abrir una caja") ||
+    msg.includes("no existe una caja abierta") ||
+    msg.includes("no tiene caja abierta") ||
+    msg.includes("sin caja abierta")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export default function Rutero() {
   const session = getSession();
   const me = session?.user || {};
@@ -53,13 +94,42 @@ export default function Rutero() {
   const [referenciaPago, setReferenciaPago] = useState("");
   const [observacionEntrega, setObservacionEntrega] = useState("");
 
+  const [toast, setToast] = useState({
+    open: false,
+    type: "error",
+    title: "",
+    message: "",
+  });
+
+  function showToast({
+    type = "error",
+    title = "",
+    message = "",
+  }) {
+    setToast({
+      open: true,
+      type,
+      title,
+      message,
+    });
+
+    window.clearTimeout(window.__ruteroToastTimer);
+    window.__ruteroToastTimer = window.setTimeout(() => {
+      setToast((prev) => ({ ...prev, open: false }));
+    }, 4200);
+  }
+
+  function closeToast() {
+    setToast((prev) => ({ ...prev, open: false }));
+  }
+
   async function cargarPedidos() {
     try {
       setError("");
       setLoading(true);
 
       const res = await ruteroApi.misPedidos({ soloActivos: true });
-      const lista = Array.isArray(res?.data) ? res.data : [];
+      const lista = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
 
       setPedidos(lista);
 
@@ -72,7 +142,7 @@ export default function Rutero() {
         setSelectedId(null);
       }
     } catch (e) {
-      setError(e?.response?.data?.message || e?.message || "Error al cargar pedidos");
+      setError(extractApiMessage(e) || "Error al cargar pedidos");
     } finally {
       setLoading(false);
     }
@@ -133,17 +203,29 @@ export default function Rutero() {
     if (!pedidoSeleccionado || saving) return;
 
     if (!metodoPago) {
-      alert("Selecciona un método de pago.");
+      showToast({
+        type: "warning",
+        title: "Método de pago requerido",
+        message: "Selecciona un método de pago para continuar.",
+      });
       return;
     }
 
     if (!nombrePagador.trim()) {
-      alert("Ingresa el nombre de quien paga.");
+      showToast({
+        type: "warning",
+        title: "Nombre requerido",
+        message: "Ingresa el nombre de quien paga.",
+      });
       return;
     }
 
     if (metodoPago === "cuotas" && !pedidoSeleccionado?.cliente_id) {
-      alert("Este pedido necesita cliente para entregarse a crédito.");
+      showToast({
+        type: "warning",
+        title: "Cliente requerido",
+        message: "Este pedido necesita cliente para entregarse a crédito.",
+      });
       return;
     }
 
@@ -157,13 +239,17 @@ export default function Rutero() {
     try {
       setSaving(true);
 
-      await ruteroApi.entregar(pedidoPendiente.id, {
+      const res = await ruteroApi.entregar(pedidoPendiente.id, {
         metodo_pago: metodoPago,
         nombre_pagador: nombrePagador.trim(),
         referencia_pago: referenciaPago.trim() || null,
         observacion_entrega: observacionEntrega.trim() || null,
         cliente_id: pedidoPendiente?.cliente_id || null,
       });
+
+      if (responseIndicatesFailure(res)) {
+        throw new Error(extractApiMessage(res) || "No se pudo marcar como entregado");
+      }
 
       const activos = pedidos.filter((p) => p.id !== pedidoPendiente.id);
       setPedidos(activos);
@@ -175,8 +261,25 @@ export default function Rutero() {
       setNombrePagador("");
       setReferenciaPago("");
       setObservacionEntrega("");
+
+      showToast({
+        type: "success",
+        title: "Entrega realizada",
+        message: "El pedido fue cobrado y marcado como entregado correctamente.",
+      });
     } catch (e) {
-      alert(e?.response?.data?.message || e?.message || "No se pudo marcar como entregado");
+      const msg = extractApiMessage(e) || "No se pudo marcar como entregado";
+      const msgNorm = normalizeText(msg);
+
+      showToast({
+        type: "error",
+        title: msgNorm.includes("caja")
+          ? "Caja no disponible"
+          : "No se pudo completar la entrega",
+        message: msgNorm.includes("caja")
+          ? "No hay una caja abierta en la sucursal de este pedido. Abre la caja para poder entregar."
+          : msg,
+      });
     } finally {
       setSaving(false);
     }
@@ -967,6 +1070,139 @@ export default function Rutero() {
           padding: 22px 24px 24px;
         }
 
+        .rt-toast-wrap {
+          position: fixed;
+          top: 22px;
+          right: 22px;
+          z-index: 10050;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          pointer-events: none;
+        }
+
+        .rt-toast {
+          width: min(420px, calc(100vw - 24px));
+          border-radius: 22px;
+          padding: 16px 18px;
+          box-shadow: 0 24px 50px rgba(15, 23, 42, 0.22);
+          border: 1px solid rgba(255,255,255,0.3);
+          backdrop-filter: blur(12px);
+          pointer-events: auto;
+          animation: rtToastIn 0.22s ease;
+        }
+
+        .rt-toast--error {
+          background: linear-gradient(135deg, rgba(127, 29, 29, 0.96) 0%, rgba(185, 28, 28, 0.95) 100%);
+          color: #fff;
+        }
+
+        .rt-toast--success {
+          background: linear-gradient(135deg, rgba(21, 128, 61, 0.96) 0%, rgba(22, 163, 74, 0.95) 100%);
+          color: #fff;
+        }
+
+        .rt-toast--warning {
+          background: linear-gradient(135deg, rgba(180, 83, 9, 0.96) 0%, rgba(217, 119, 6, 0.95) 100%);
+          color: #fff;
+        }
+
+        .rt-toast__top {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .rt-toast__left {
+          display: flex;
+          gap: 12px;
+          align-items: flex-start;
+          min-width: 0;
+        }
+
+        .rt-toast__icon {
+          width: 42px;
+          height: 42px;
+          border-radius: 14px;
+          display: grid;
+          place-items: center;
+          font-size: 18px;
+          font-weight: 900;
+          background: rgba(255,255,255,0.16);
+          flex-shrink: 0;
+        }
+
+        .rt-toast__content {
+          min-width: 0;
+        }
+
+        .rt-toast__title {
+          margin: 0;
+          font-size: 15px;
+          font-weight: 900;
+          line-height: 1.2;
+        }
+
+        .rt-toast__message {
+          margin: 6px 0 0;
+          font-size: 13px;
+          line-height: 1.5;
+          color: rgba(255,255,255,0.92);
+        }
+
+        .rt-toast__close {
+          border: 0;
+          background: transparent;
+          color: #fff;
+          cursor: pointer;
+          font-size: 20px;
+          line-height: 1;
+          opacity: 0.85;
+        }
+
+        .rt-toast__close:hover {
+          opacity: 1;
+        }
+
+        .rt-toast__bar {
+          margin-top: 12px;
+          height: 4px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.22);
+          overflow: hidden;
+        }
+
+        .rt-toast__bar::after {
+          content: "";
+          display: block;
+          height: 100%;
+          width: 100%;
+          background: rgba(255,255,255,0.92);
+          transform-origin: left center;
+          animation: rtToastBar 4.2s linear forwards;
+        }
+
+        @keyframes rtToastIn {
+          from {
+            opacity: 0;
+            transform: translateY(-10px) scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @keyframes rtToastBar {
+          from {
+            transform: scaleX(1);
+          }
+          to {
+            transform: scaleX(0);
+          }
+        }
+
         @media (max-width: 1180px) {
           .rutero-grid {
             grid-template-columns: 1fr;
@@ -989,8 +1225,47 @@ export default function Rutero() {
           .rt-info-grid {
             grid-template-columns: 1fr;
           }
+
+          .rt-toast-wrap {
+            top: 14px;
+            right: 12px;
+            left: 12px;
+          }
+
+          .rt-toast {
+            width: 100%;
+          }
         }
       `}</style>
+
+      {toast.open ? (
+        <div className="rt-toast-wrap">
+          <div className={`rt-toast rt-toast--${toast.type}`}>
+            <div className="rt-toast__top">
+              <div className="rt-toast__left">
+                <div className="rt-toast__icon">
+                  {toast.type === "success" ? "✓" : toast.type === "warning" ? "!" : "✕"}
+                </div>
+
+                <div className="rt-toast__content">
+                  <h4 className="rt-toast__title">{toast.title}</h4>
+                  <p className="rt-toast__message">{toast.message}</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="rt-toast__close"
+                onClick={closeToast}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="rt-toast__bar"></div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="rutero-page">
         <div className="rutero-hero">

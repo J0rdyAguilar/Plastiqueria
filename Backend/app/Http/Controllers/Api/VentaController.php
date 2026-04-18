@@ -397,11 +397,29 @@ class VentaController extends Controller
         return DB::transaction(function () use ($venta, $user, $data) {
             $metodoPago = $data['metodo_pago'];
             $ubicacionId = (int) $venta->ubicacion_id;
+            $caja = null;
 
             if ($metodoPago === 'cuotas' && empty($data['cliente_id']) && empty($venta->cliente_id)) {
                 return response()->json([
+                    'success' => false,
                     'message' => 'Para entregar a crédito debes seleccionar un cliente.'
                 ], 422);
+            }
+
+            // VALIDAR CAJA ANTES DE CAMBIAR EL ESTADO
+            if (in_array($metodoPago, ['efectivo', 'tarjeta'], true)) {
+                $caja = Caja::query()
+                    ->where('ubicacion_id', $ubicacionId)
+                    ->whereNull('cerrado_en')
+                    ->latest('id')
+                    ->first();
+
+                if (!$caja) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No hay una caja abierta en esta sucursal para registrar el cobro.'
+                    ], 422);
+                }
             }
 
             $venta->metodo_pago = $metodoPago;
@@ -421,23 +439,12 @@ class VentaController extends Controller
                     : $obsNueva;
             }
 
+            // SOLO DESPUÉS DE VALIDAR LA CAJA
             $venta->estado = 'entregado';
             $venta->entregado_en = now();
             $venta->save();
 
-            if (in_array($metodoPago, ['efectivo', 'tarjeta'], true)) {
-                $caja = Caja::query()
-                    ->where('ubicacion_id', $ubicacionId)
-                    ->whereNull('cerrado_en')
-                    ->latest('id')
-                    ->first();
-
-                if (!$caja) {
-                    return response()->json([
-                        'message' => 'No hay una caja abierta en esta sucursal para registrar el cobro.'
-                    ], 422);
-                }
-
+            if (in_array($metodoPago, ['efectivo', 'tarjeta'], true) && $caja) {
                 MovimientoCaja::create([
                     'caja_id' => (int) $caja->id,
                     'ubicacion_id' => $ubicacionId,
@@ -457,6 +464,7 @@ class VentaController extends Controller
             $this->loadVentaRelations($venta);
 
             return response()->json([
+                'success' => true,
                 'message' => $metodoPago === 'cuotas'
                     ? 'Pedido entregado a crédito correctamente.'
                     : 'Pedido entregado y cobrado correctamente.',
