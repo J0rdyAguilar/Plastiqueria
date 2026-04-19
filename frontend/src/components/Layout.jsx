@@ -28,11 +28,13 @@ function normalizeRole(r) {
     .toString()
     .trim()
     .toLowerCase()
-    .replace(/\s+/g, "_");
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
 
   if (x === "cajero") return "caja";
   if (x === "superadmin") return "super_admin";
   if (x === "administrador_bodega") return "admin_bodega";
+  if (x === "adminbod") return "admin_bodega";
   return x;
 }
 
@@ -59,7 +61,6 @@ export default function Layout({ children }) {
   const isSuperAdmin = logged && rol === "super_admin";
   const isAdmin = logged && rol === "admin";
   const isAdminBodega = logged && rol === "admin_bodega";
-  const isAdminLike = logged && (rol === "admin" || rol === "super_admin");
   const isVendedor = logged && rol === "vendedor";
   const isVendedorTienda = logged && rol === "vendedor_tienda";
   const isRutero = logged && rol === "rutero";
@@ -73,8 +74,7 @@ export default function Layout({ children }) {
     if (isRutero) return "/rutero";
     if (isVendedorTienda) return "/ventas-tienda";
     if (isAdminBodega) return "/pedidos-admin";
-    if (isSuperAdmin) return "/pedidos-admin";
-    if (isAdmin) return "/ventas-tienda";
+    if (isSuperAdmin || isAdmin) return "/dashboard";
     if (isCaja) return "/caja";
     if (isVendedor) return "/pedidos#crear-pedido";
     return "/login";
@@ -108,10 +108,17 @@ export default function Layout({ children }) {
 
   const adminLinks = [
     {
+      to: "/dashboard",
+      label: "Dashboard",
+      icon: <LayoutDashboard size={18} />,
+      show: isSuperAdmin || isAdmin,
+      active: loc.pathname.startsWith("/dashboard"),
+    },
+    {
       to: "/pedidos-admin",
       label: "Pedidos",
       icon: <ShoppingCart size={18} />,
-      show: isSuperAdmin || isAdminBodega,
+      show: isSuperAdmin || isAdmin || isAdminBodega,
       active: loc.pathname.startsWith("/pedidos-admin"),
     },
     {
@@ -181,7 +188,7 @@ export default function Layout({ children }) {
       to: "/caja",
       label: "Caja",
       icon: <Wallet size={18} />,
-      show: logged && (isSuperAdmin || isAdmin || isCaja || isAdminBodega),
+      show: logged && (isSuperAdmin || isAdmin || isCaja),
       active: loc.pathname.startsWith("/caja"),
     },
     {
@@ -217,6 +224,8 @@ export default function Layout({ children }) {
                     ? "Panel de tienda"
                     : isAdminBodega
                     ? "Panel de bodega"
+                    : isSuperAdmin || isAdmin
+                    ? "Dashboard administrativo"
                     : "Panel administrativo"}
                 </span>
               </div>

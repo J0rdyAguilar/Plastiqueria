@@ -3,12 +3,9 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class ProductoImagen extends Model
 {
-    use HasFactory;
-
     protected $table = 'producto_imagenes';
 
     protected $fillable = [
@@ -20,17 +17,17 @@ class ProductoImagen extends Model
     ];
 
     protected $casts = [
-        'producto_id'   => 'integer',
-        'es_principal'  => 'boolean',
-        'orden'         => 'integer',
-        'creado_en'     => 'datetime',
+        'producto_id' => 'integer',
+        'es_principal' => 'boolean',
+        'orden' => 'integer',
+        'creado_en' => 'datetime',
     ];
 
-    // Tu tabla NO usa created_at / updated_at
-    public $timestamps = false;
+    const CREATED_AT = 'creado_en';
+    const UPDATED_AT = null;
 
     public function producto()
     {
-        return $this->belongsTo(Producto::class, 'producto_id', 'id');
+        return $this->belongsTo(Producto::class, 'producto_id');
     }
 }

@@ -26,10 +26,6 @@ class ProductoImagenController extends Controller
         return $q->paginate(30);
     }
 
-    /**
-     * Subir imagen
-     * form-data: producto_id, imagen(file), es_principal(optional), orden(optional)
-     */
     public function store(StoreProductoImagenRequest $request)
     {
         $data = $request->validated();
@@ -42,27 +38,32 @@ class ProductoImagenController extends Controller
         $path = "productos/{$productoId}/{$filename}";
 
         return DB::transaction(function () use ($productoId, $file, $path, $data) {
-
             Storage::disk('public')->put($path, file_get_contents($file->getRealPath()));
 
             $url = "storage/{$path}";
-
-            $esPrincipal = (bool)($data['es_principal'] ?? false);
-            $orden = isset($data['orden']) ? (int)$data['orden'] : 0;
+            $esPrincipal = (bool) ($data['es_principal'] ?? false);
+            $orden = isset($data['orden']) ? (int) $data['orden'] : 0;
 
             if ($esPrincipal) {
-                ProductoImagen::where('producto_id', $productoId)->update(['es_principal' => 0]);
+                ProductoImagen::where('producto_id', $productoId)->update([
+                    'es_principal' => 0,
+                ]);
             } else {
-                $hasPrincipal = ProductoImagen::where('producto_id', $productoId)->where('es_principal', 1)->exists();
-                if (!$hasPrincipal) $esPrincipal = true;
+                $hasPrincipal = ProductoImagen::where('producto_id', $productoId)
+                    ->where('es_principal', 1)
+                    ->exists();
+
+                if (!$hasPrincipal) {
+                    $esPrincipal = true;
+                }
             }
 
             $row = ProductoImagen::create([
-                'producto_id'  => $productoId,
-                'url'          => $url,
+                'producto_id' => $productoId,
+                'url' => $url,
                 'es_principal' => $esPrincipal,
-                'orden'        => $orden,
-                'creado_en'    => now(),
+                'orden' => $orden,
+                'creado_en' => now(),
             ]);
 
             return response()->json($row, 201);
@@ -79,11 +80,12 @@ class ProductoImagenController extends Controller
         $data = $request->validated();
 
         return DB::transaction(function () use ($data, $productoImagen) {
-
-            if (array_key_exists('es_principal', $data) && (bool)$data['es_principal'] === true) {
+            if (array_key_exists('es_principal', $data) && (bool) $data['es_principal'] === true) {
                 ProductoImagen::where('producto_id', $productoImagen->producto_id)
                     ->where('id', '!=', $productoImagen->id)
-                    ->update(['es_principal' => 0]);
+                    ->update([
+                        'es_principal' => 0,
+                    ]);
             }
 
             $productoImagen->update($data);
@@ -95,15 +97,15 @@ class ProductoImagenController extends Controller
     public function destroy(ProductoImagen $productoImagen)
     {
         return DB::transaction(function () use ($productoImagen) {
+            $url = (string) $productoImagen->url;
 
-            $url = (string)$productoImagen->url;
             if (str_starts_with($url, 'storage/')) {
                 $relative = substr($url, strlen('storage/'));
                 Storage::disk('public')->delete($relative);
             }
 
             $productoId = $productoImagen->producto_id;
-            $wasPrincipal = (bool)$productoImagen->es_principal;
+            $wasPrincipal = (bool) $productoImagen->es_principal;
 
             $productoImagen->delete();
 
@@ -113,10 +115,16 @@ class ProductoImagenController extends Controller
                     ->orderBy('id')
                     ->first();
 
-                if ($next) $next->update(['es_principal' => 1]);
+                if ($next) {
+                    $next->update([
+                        'es_principal' => 1,
+                    ]);
+                }
             }
 
-            return response()->json(['message' => 'Imagen eliminada']);
+            return response()->json([
+                'message' => 'Imagen eliminada',
+            ]);
         });
     }
 }

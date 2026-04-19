@@ -64,6 +64,8 @@ function extractRows(response) {
   if (Array.isArray(response)) return response;
   if (Array.isArray(response?.data)) return response.data;
   if (Array.isArray(response?.items)) return response.items;
+  if (Array.isArray(response?.data?.data)) return response.data.data;
+  if (Array.isArray(response?.data?.items)) return response.data.items;
   return [];
 }
 
@@ -106,6 +108,7 @@ export default function Caja() {
 
   const [actualRaw, setActualRaw] = useState(null);
   const [historial, setHistorial] = useState([]);
+  const [ubicacionesCatalogo, setUbicacionesCatalogo] = useState([]);
 
   const [notasAbrir, setNotasAbrir] = useState("Apertura");
   const [efectivoInicial, setEfectivoInicial] = useState(100);
@@ -132,8 +135,75 @@ export default function Caja() {
 
   const vistaTodasSucursales = isSuperAdmin && !hasUbicacion;
 
+  async function fetchUbicacionesCatalogo() {
+    if (!isSuperAdmin) return [];
+
+    try {
+      if (typeof api?.ubicacionesList === "function") {
+        const resp = await api.ubicacionesList({
+          per_page: 1000,
+          activo: 1,
+        });
+        return extractRows(resp);
+      }
+
+      if (typeof api?.ubicaciones === "function") {
+        const resp = await api.ubicaciones({
+          per_page: 1000,
+          activo: 1,
+        });
+        return extractRows(resp);
+      }
+
+      if (typeof api?.get === "function") {
+        const resp = await api.get("/ubicaciones", {
+          params: { per_page: 1000, activo: 1 },
+        });
+        return extractRows(resp);
+      }
+
+      return [];
+    } catch (err) {
+      console.error("No se pudieron cargar las ubicaciones:", err);
+      return [];
+    }
+  }
+
+  async function loadUbicaciones() {
+    if (!isSuperAdmin) return;
+
+    const rows = await fetchUbicacionesCatalogo();
+
+    const parsed = Array.isArray(rows)
+      ? rows
+          .map((u) => ({
+            id: Number(u?.id || 0),
+            nombre:
+              u?.nombre ||
+              u?.descripcion ||
+              u?.sucursal ||
+              `Sucursal #${u?.id}`,
+          }))
+          .filter((u) => u.id)
+      : [];
+
+    setUbicacionesCatalogo(parsed);
+  }
+
   const ubicacionesDisponibles = useMemo(() => {
     const map = new Map();
+
+    if (isSuperAdmin) {
+      ubicacionesCatalogo.forEach((u) => {
+        const id = Number(u?.id || 0);
+        if (!id) return;
+
+        map.set(String(id), {
+          id,
+          nombre: u?.nombre || `Sucursal #${id}`,
+        });
+      });
+    }
 
     if (ubicacionIdSesion) {
       map.set(String(ubicacionIdSesion), {
@@ -163,7 +233,14 @@ export default function Caja() {
     return Array.from(map.values()).sort((a, b) =>
       String(a.nombre).localeCompare(String(b.nombre))
     );
-  }, [actualLista, historial, ubicacionIdSesion, ubicacionNombreSesion]);
+  }, [
+    isSuperAdmin,
+    ubicacionesCatalogo,
+    actualLista,
+    historial,
+    ubicacionIdSesion,
+    ubicacionNombreSesion,
+  ]);
 
   const nombreSucursal =
     actual?.ubicacion?.nombre ||
@@ -191,11 +268,14 @@ export default function Caja() {
         mes: mesFiltro,
       };
 
-      const r1 = await api.cajaActual(paramsActual);
+      const [r1, r2] = await Promise.all([
+        api.cajaActual(paramsActual),
+        api.cajaHistorial(paramsHistorial),
+      ]);
+
       const dataActual = r1?.data ?? null;
       setActualRaw(dataActual);
 
-      const r2 = await api.cajaHistorial(paramsHistorial);
       const raw = extractRows(r2);
       setHistorial(raw);
 
@@ -221,6 +301,13 @@ export default function Caja() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      loadUbicaciones();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     load(false);
@@ -591,7 +678,9 @@ export default function Caja() {
                 <Store size={20} />
               )
             }
-            title={vistaTodasSucursales ? "Sucursales abiertas" : "Sucursal actual"}
+            title={
+              vistaTodasSucursales ? "Sucursales abiertas" : "Sucursal actual"
+            }
             value={
               vistaTodasSucursales
                 ? String(resumenGlobal.sucursales)
@@ -783,31 +872,41 @@ export default function Caja() {
                         </div>
 
                         <div
-                          style={{ color: "#475569", fontSize: 14, lineHeight: 1.7 }}
+                          style={{
+                            color: "#475569",
+                            fontSize: 14,
+                            lineHeight: 1.7,
+                          }}
                         >
                           <div>
                             <strong>ID caja:</strong> {caja?.id ?? "—"}
                           </div>
                           <div>
-                            <strong>Apertura:</strong> {formatDate(caja?.abierto_en)}
+                            <strong>Apertura:</strong>{" "}
+                            {formatDate(caja?.abierto_en)}
                           </div>
                           <div>
                             <strong>Base:</strong> {money(caja?.efectivo_inicial)}
                           </div>
                           <div>
-                            <strong>Ingresos:</strong> {money(caja?.total_ingresos)}
+                            <strong>Ingresos:</strong>{" "}
+                            {money(caja?.total_ingresos)}
                           </div>
                           <div>
-                            <strong>Egresos:</strong> {money(caja?.total_egresos)}
+                            <strong>Egresos:</strong>{" "}
+                            {money(caja?.total_egresos)}
                           </div>
                           <div>
-                            <strong>Esperado:</strong> {money(caja?.saldo_esperado)}
+                            <strong>Esperado:</strong>{" "}
+                            {money(caja?.saldo_esperado)}
                           </div>
                         </div>
 
                         <button
                           type="button"
-                          onClick={() => setUbicacionId(String(caja?.ubicacion_id || ""))}
+                          onClick={() =>
+                            setUbicacionId(String(caja?.ubicacion_id || ""))
+                          }
                           style={{
                             ...primaryButtonStyle,
                             width: "100%",
@@ -882,7 +981,9 @@ export default function Caja() {
                       ...secondaryButtonStyle,
                       opacity: loading || busy || !hasUbicacion ? 0.6 : 1,
                       cursor:
-                        loading || busy || !hasUbicacion ? "not-allowed" : "pointer",
+                        loading || busy || !hasUbicacion
+                          ? "not-allowed"
+                          : "pointer",
                     }}
                   >
                     <RefreshCw size={16} />
@@ -965,7 +1066,8 @@ export default function Caja() {
                       <strong>Sucursal:</strong> {nombreSucursal}
                     </div>
                     <div>
-                      <strong>Notas:</strong> {resumen?.notas || "Sin observaciones"}
+                      <strong>Notas:</strong>{" "}
+                      {resumen?.notas || "Sin observaciones"}
                     </div>
                     <div>
                       <strong>Ingresos del día:</strong> {money(totalIngresos)}
@@ -1493,6 +1595,10 @@ export default function Caja() {
                     const abierta = !c.cerrado_en;
                     const nombreSucursalFila =
                       c?.ubicacion?.nombre ||
+                      ubicacionesDisponibles.find(
+                        (u) =>
+                          Number(u.id) === Number(c?.ubicacion_id || c?.ubicacion?.id)
+                      )?.nombre ||
                       nombreSucursal ||
                       (c?.ubicacion_id ? `Sucursal #${c.ubicacion_id}` : "—");
 

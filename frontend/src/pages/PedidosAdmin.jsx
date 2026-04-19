@@ -720,11 +720,15 @@ export default function PedidosAdmin() {
     try {
       setSaving(true);
 
-      const res = await pedidosAdminApi.asignarRutero(pedidoActivo.id, {
+      const payload = {
         rutero_id: Number(ruteroId),
-      });
+        observaciones,
+        detalles: buildDetallesPayload(),
+      };
 
-      const pedidoActualizado = res?.pedido || null;
+      const res = await pedidosAdminApi.asignarRutero(pedidoActivo.id, payload);
+
+      const pedidoActualizado = res?.data || res?.pedido || null;
 
       if (pedidoActualizado) {
         setPedidoActivo(pedidoActualizado);
@@ -740,11 +744,34 @@ export default function PedidosAdmin() {
         setLineasEdit((pedidoActualizado?.detalles || []).map(mapDetalleToLinea));
       }
 
-      notify.success(res?.message || "Rutero asignado correctamente.");
+      notify.success(
+        res?.message || "Rutero asignado, pedido aprobado y ticket generado correctamente."
+      );
+
+      const pedidoImpresion = pedidoActualizado || {
+        ...pedidoActivo,
+        rutero_id: Number(ruteroId),
+        rutero: ruteros.find((r) => Number(r.id) === Number(ruteroId)) || null,
+        rutero_nombre:
+          ruteros.find((r) => Number(r.id) === Number(ruteroId))?.nombre || "",
+        observaciones,
+        detalles: lineasEdit,
+        estado: "aprobado",
+      };
+
+      imprimirTicketPedido({
+        pedido: pedidoImpresion,
+        items: pedidoImpresion?.detalles || lineasEdit,
+        total: totalPedido(pedidoImpresion) || total,
+      });
+
       await loadPedidos(pedidoActivo.id);
     } catch (err) {
       console.error(err);
-      notify.error(err?.response?.data?.message || "No se pudo asignar el rutero.");
+      notify.error(
+        err?.response?.data?.message ||
+          "No se pudo asignar, aprobar, validar stock o imprimir el ticket."
+      );
     } finally {
       setSaving(false);
     }
@@ -1130,22 +1157,14 @@ export default function PedidosAdmin() {
                             style={{ ...primaryBtn, marginTop: 10, width: "100%" }}
                             disabled={saving || loadingRuteros}
                           >
-                            {saving ? "Asignando..." : "Asignar rutero"}
+                            {saving ? "Procesando..." : "Asignar, aprobar e imprimir"}
                           </button>
                         </>
                       )}
                     </div>
 
-                    <button onClick={handleImprimirTicket} disabled={saving} style={ticketBtn}>
-                      Imprimir ticket
-                    </button>
-
                     <button onClick={guardarCambios} disabled={saving} style={primaryBtn}>
                       {saving ? "Guardando..." : "Guardar cambios"}
-                    </button>
-
-                    <button onClick={aprobarPedido} disabled={saving} style={secondaryBtn}>
-                      {saving ? "Procesando..." : "Aprobar pedido"}
                     </button>
 
                     <button onClick={prepararPedido} disabled={saving} style={secondaryBtn}>
@@ -1154,6 +1173,14 @@ export default function PedidosAdmin() {
 
                     <button onClick={entregarPedido} disabled={saving} style={secondaryBtn}>
                       {saving ? "Procesando..." : "Marcar entregado"}
+                    </button>
+
+                    <button onClick={handleImprimirTicket} disabled={saving} style={ticketBtn}>
+                      Imprimir ticket manual
+                    </button>
+
+                    <button onClick={aprobarPedido} disabled={saving} style={secondaryBtn}>
+                      {saving ? "Procesando..." : "Aprobar solo"}
                     </button>
                   </div>
                 </>

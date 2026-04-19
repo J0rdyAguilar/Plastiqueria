@@ -6,11 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Models\Caja;
 use App\Models\Cliente;
 use App\Models\MovimientoCaja;
+use App\Models\MovimientoStock;
+use App\Models\ProductoPrecio;
+use App\Models\Stock;
 use App\Models\Venta;
 use App\Models\VentaDetalle;
 use App\Models\Vendedor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
 class VentaController extends Controller
@@ -67,6 +71,71 @@ class VentaController extends Controller
         ]);
 
         return $venta;
+    }
+
+    private function cantidadBaseDesdeProductoPrecio($productoPrecio, float $cantidad): float
+    {
+        if (!$productoPrecio) {
+            return round($cantidad, 4);
+        }
+
+        $factor = null;
+
+        foreach ([
+            'factor',
+            'factor_conversion',
+            'equivalencia',
+            'multiplicador',
+            'contenido',
+            'cantidad_base',
+            'unidades',
+        ] as $campo) {
+            if (isset($productoPrecio->{$campo}) && is_numeric($productoPrecio->{$campo})) {
+                $valor = (float) $productoPrecio->{$campo};
+                if ($valor > 0) {
+                    $factor = $valor;
+                    break;
+                }
+            }
+        }
+
+        if ($factor === null || $factor <= 0) {
+            $factor = 1;
+        }
+
+        return round($cantidad * $factor, 4);
+    }
+
+    private function resolverProductoPrecioDesdeDetalle($detalle)
+    {
+        $query = ProductoPrecio::query()
+            ->where('producto_id', (int) $detalle->producto_id);
+
+        if (!empty($detalle->presentacion)) {
+            $presentacion = trim((string) $detalle->presentacion);
+
+            $query->where(function ($q) use ($presentacion) {
+                $q->where('presentacion', $presentacion);
+
+                if (Schema::hasColumn('producto_precios', 'nombre')) {
+                    $q->orWhere('nombre', $presentacion);
+                }
+
+                if (Schema::hasColumn('producto_precios', 'descripcion')) {
+                    $q->orWhere('descripcion', $presentacion);
+                }
+            });
+        }
+
+        $productoPrecio = $query->first();
+
+        if (!$productoPrecio) {
+            $productoPrecio = ProductoPrecio::query()
+                ->where('producto_id', (int) $detalle->producto_id)
+                ->first();
+        }
+
+        return $productoPrecio;
     }
 
     private function ventaResponse(Venta $venta): array
@@ -399,6 +468,10 @@ class VentaController extends Controller
             $ubicacionId = (int) $venta->ubicacion_id;
             $caja = null;
 
+            $venta->loadMissing([
+                'detalles.producto:id,nombre',
+            ]);
+
             if ($metodoPago === 'cuotas' && empty($data['cliente_id']) && empty($venta->cliente_id)) {
                 return response()->json([
                     'success' => false,
@@ -406,7 +479,6 @@ class VentaController extends Controller
                 ], 422);
             }
 
-            // VALIDAR CAJA ANTES DE CAMBIAR EL ESTADO
             if (in_array($metodoPago, ['efectivo', 'tarjeta'], true)) {
                 $caja = Caja::query()
                     ->where('ubicacion_id', $ubicacionId)
@@ -420,6 +492,69 @@ class VentaController extends Controller
                         'message' => 'No hay una caja abierta en esta sucursal para registrar el cobro.'
                     ], 422);
                 }
+            }
+
+            $descuentosPreparados = [];
+
+            foreach ($venta->detalles as $detalle) {
+                $productoPrecio = $this->resolverProductoPrecioDesdeDetalle($detalle);
+
+                if (!$productoPrecio) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No se encontró la presentación del producto '
+                            . ($detalle->producto?->nombre ?? ('#' . $detalle->producto_id))
+                            . ' para descontar stock.'
+                    ], 422);
+                }
+
+                $stock = Stock::query()
+                    ->where('ubicacion_id', $ubicacionId)
+                    ->where('producto_id', (int) $detalle->producto_id)
+                    ->where('producto_precio_id', (int) $productoPrecio->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$stock) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No existe stock en esta sucursal para '
+                            . ($detalle->producto?->nombre ?? ('producto #' . $detalle->producto_id))
+                            . (!empty($detalle->presentacion) ? ' - ' . $detalle->presentacion : '') . '.'
+                    ], 422);
+                }
+
+                $cantidadDescontar = (float) ($detalle->cantidad ?? 0);
+                $disponible = (float) ($stock->cantidad ?? 0);
+
+                if ($cantidadDescontar <= 0) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'La cantidad del detalle del producto '
+                            . ($detalle->producto?->nombre ?? ('#' . $detalle->producto_id))
+                            . ' no es válida.'
+                    ], 422);
+                }
+
+                if ($disponible < $cantidadDescontar) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Stock insuficiente para '
+                            . ($detalle->producto?->nombre ?? ('producto #' . $detalle->producto_id))
+                            . (!empty($detalle->presentacion) ? ' - ' . $detalle->presentacion : '')
+                            . '. Disponible: ' . $disponible
+                    ], 422);
+                }
+
+                $descuentosPreparados[] = [
+                    'detalle' => $detalle,
+                    'producto_precio' => $productoPrecio,
+                    'stock' => $stock,
+                    'cantidad' => $cantidadDescontar,
+                    'cantidad_base' => !empty($detalle->cantidad_base)
+                        ? (float) $detalle->cantidad_base
+                        : $this->cantidadBaseDesdeProductoPrecio($productoPrecio, $cantidadDescontar),
+                ];
             }
 
             $venta->metodo_pago = $metodoPago;
@@ -439,7 +574,31 @@ class VentaController extends Controller
                     : $obsNueva;
             }
 
-            // SOLO DESPUÉS DE VALIDAR LA CAJA
+            foreach ($descuentosPreparados as $row) {
+                $stock = $row['stock'];
+                $detalle = $row['detalle'];
+                $productoPrecio = $row['producto_precio'];
+
+                $stock->cantidad = (float) $stock->cantidad - (float) $row['cantidad'];
+                $stock->save();
+
+                MovimientoStock::create([
+                    'tipo' => 'salida',
+                    'producto_id' => (int) $detalle->producto_id,
+                    'producto_precio_id' => (int) $productoPrecio->id,
+                    'ubicacion_origen_id' => $ubicacionId,
+                    'ubicacion_destino_id' => null,
+                    'cantidad' => (float) $row['cantidad'],
+                    'cantidad_base' => (float) $row['cantidad_base'],
+                    'presentacion' => $detalle->presentacion ?? $productoPrecio->presentacion ?? null,
+                    'motivo' => 'Pedido entregado por rutero',
+                    'referencia_tipo' => 'venta',
+                    'referencia_id' => (int) $venta->id,
+                    'creado_por' => (int) $user->id,
+                    'creado_en' => now(),
+                ]);
+            }
+
             $venta->estado = 'entregado';
             $venta->entregado_en = now();
             $venta->save();

@@ -55,12 +55,12 @@ export const pedidosAdminApi = {
     return data;
   },
 
-  entregar: async (id) => {
-    const { data } = await httpV1.post(`/pedidos/${id}/entregar`);
+  entregar: async (id, payload = {}) => {
+    const { data } = await httpV1.post(`/pedidos/${id}/entregar`, payload);
     return data;
   },
 
-  asignarRutero: async (id, payload) => {
+  asignarRutero: async (id, payload = {}) => {
     const { data } = await httpV1.post(`/pedidos/${id}/asignar-rutero`, payload);
     return data;
   },

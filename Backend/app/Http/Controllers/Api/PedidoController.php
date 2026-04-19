@@ -702,7 +702,6 @@ class PedidoController extends Controller
         $user = $request->user();
         $role = $this->roleOf($user);
         $userUbicacionId = $this->userUbicacionId($user);
-        $userId = (int) ($user->id ?? 0);
 
         if (!in_array($role, ['admin_bodega', 'super_admin'], true)) {
             return response()->json(['message' => 'No autorizado.'], 403);
@@ -720,210 +719,270 @@ class PedidoController extends Controller
             ], 422);
         }
 
-        return DB::transaction(function () use ($pedido, $userId) {
-            foreach ($pedido->detalles()->get() as $det) {
-                $precio = ProductoPrecio::query()
-                    ->where('producto_id', $det->producto_id)
-                    ->whereRaw('LOWER(presentacion) = ?', [mb_strtolower((string) $det->presentacion)])
-                    ->where('activo', true)
-                    ->first();
-
-                if (!$precio) {
-                    return response()->json([
-                        'message' => "No existe la presentación {$det->presentacion} para el producto {$det->producto_id}."
-                    ], 422);
-                }
-
-                $factor = (float) ($precio->factor_base ?? 1);
-                $cantidad = max(1, (int) round(((int) $det->cantidad_base) / max($factor, 1)));
-
-                $this->stockService->apply([
-                    'tipo' => 'salida',
-                    'ubicacion_origen_id' => (int) $pedido->ubicacion_id,
-                    'producto_id' => (int) $det->producto_id,
-                    'presentacion' => $precio->presentacion,
-                    'cantidad' => $cantidad,
-                    'motivo' => "Salida por pedido #{$pedido->id}",
-                    'referencia_tipo' => 'pedido',
-                    'referencia_id' => (int) $pedido->id,
-                ], $userId);
-            }
-
-            $pedido->estado = 'preparando';
-            $pedido->actualizado_en = now();
-            $pedido->save();
-
-            $this->loadPedidoRelations($pedido);
-
-            return response()->json([
-                'message' => 'Pedido marcado como preparando.',
-                'data' => $this->pedidoResponse($pedido),
-            ]);
-        });
-    }
-
-    public function entregar(Pedido $pedido, Request $request)
-    {
-        $user = $request->user();
-        $role = $this->roleOf($user);
-        $userUbicacionId = $this->userUbicacionId($user);
-        $vendedorAuthId = $this->resolveVendedorId($user);
-
-        if (!in_array($role, ['vendedor', 'super_admin', 'rutero'], true)) {
-            return response()->json(['message' => 'No autorizado.'], 403);
-        }
-
-        if ($role === 'vendedor' && (!$vendedorAuthId || (int) $pedido->vendedor_id !== $vendedorAuthId)) {
-            return response()->json([
-                'message' => 'No puedes entregar pedidos de otro vendedor.'
-            ], 403);
-        }
-
-        if ($role === 'rutero' && (int) $pedido->rutero_id !== (int) $user->id) {
-            return response()->json([
-                'message' => 'No puedes entregar un pedido que no te fue asignado.'
-            ], 403);
-        }
-
-        if (!in_array($pedido->estado, ['preparando', 'aprobado', 'en_ruta'], true)) {
-            return response()->json([
-                'message' => 'Solo se puede entregar un pedido preparado.'
-            ], 422);
-        }
-
-        $data = $request->validate([
-            'metodo_pago' => ['required', 'in:efectivo,tarjeta,cuotas'],
-            'nombre_pagador' => ['nullable', 'string', 'max:255'],
-            'referencia_pago' => ['nullable', 'string', 'max:255'],
-            'observacion_entrega' => ['nullable', 'string', 'max:1000'],
-            'cliente_id' => ['nullable', 'integer'],
-        ]);
-
-        return DB::transaction(function () use ($pedido, $user, $data) {
-            $metodoPago = $data['metodo_pago'];
-            $ubicacionId = (int) $pedido->ubicacion_id;
-            $caja = null;
-
-            if ($metodoPago === 'cuotas' && empty($data['cliente_id']) && empty($pedido->cliente_id)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Para entregar a crédito debes seleccionar un cliente.'
-                ], 422);
-            }
-
-            if (in_array($metodoPago, ['efectivo', 'tarjeta'], true)) {
-                $caja = Caja::query()
-                    ->where('ubicacion_id', $ubicacionId)
-                    ->whereNull('cerrado_en')
-                    ->latest('id')
-                    ->first();
-
-                if (!$caja) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'No hay una caja abierta en esta sucursal para registrar el cobro.'
-                    ], 422);
-                }
-            }
-
-            if (property_exists($pedido, 'metodo_pago') || isset($pedido->metodo_pago)) {
-                $pedido->metodo_pago = $metodoPago;
-            }
-
-            if ($metodoPago === 'cuotas' && !empty($data['cliente_id'])) {
-                $pedido->cliente_id = (int) $data['cliente_id'];
-            }
-
-            if (!empty($data['observacion_entrega'])) {
-                $obsActual = trim((string) ($pedido->observaciones ?? ''));
-                $obsNueva = trim((string) $data['observacion_entrega']);
-
-                $pedido->observaciones = $obsActual !== ''
-                    ? $obsActual . "\n" . $obsNueva
-                    : $obsNueva;
-            }
-
-            $pedido->estado = 'entregado';
-            $pedido->actualizado_en = now();
-            $pedido->entregado_en = now();
-            $pedido->save();
-
-            if (in_array($metodoPago, ['efectivo', 'tarjeta'], true) && $caja) {
-                MovimientoCaja::create([
-                    'caja_id' => (int) $caja->id,
-                    'ubicacion_id' => $ubicacionId,
-                    'usuario_id' => (int) $user->id,
-                    'tipo' => 'ingreso',
-                    'concepto' => 'venta_rutero',
-                    'monto' => round((float) $pedido->total, 2),
-                    'metodo_pago' => $metodoPago,
-                    'referencia_id' => (int) $pedido->id,
-                    'referencia_tipo' => 'pedido',
-                    'notas' => 'Cobro de pedido entregado por rutero'
-                        . (!empty($data['nombre_pagador']) ? ' | Pagador: ' . $data['nombre_pagador'] : '')
-                        . (!empty($data['referencia_pago']) ? ' | Ref: ' . $data['referencia_pago'] : ''),
-                ]);
-            }
-
-            $this->loadPedidoRelations($pedido);
-
-            return response()->json([
-                'success' => true,
-                'message' => $metodoPago === 'cuotas'
-                    ? 'Pedido entregado a crédito correctamente.'
-                    : 'Pedido entregado y cobrado correctamente.',
-                'data' => $this->pedidoResponse($pedido),
-            ]);
-        });
-    }
-
-    public function asignarRutero(Request $request, Pedido $pedido)
-    {
-        $user = $request->user();
-        $role = $this->roleOf($user);
-        $userUbicacionId = $this->userUbicacionId($user);
-
-        if (!in_array($role, ['admin_bodega', 'super_admin'], true)) {
-            return response()->json(['message' => 'No autorizado.'], 403);
-        }
-
-        if ($role === 'admin_bodega' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
-            return response()->json([
-                'message' => 'No puedes asignar rutero a pedidos de otra sucursal.'
-            ], 403);
-        }
-
-        $data = $request->validate([
-            'rutero_id' => ['required', 'integer', 'exists:usuarios,id'],
-        ]);
-
-        $rutero = Usuario::findOrFail($data['rutero_id']);
-
-        if (($rutero->rol ?? null) !== 'rutero') {
-            return response()->json([
-                'message' => 'El usuario seleccionado no es un rutero.'
-            ], 422);
-        }
-
-        if (!empty($rutero->ubicacion_id) && (int) $rutero->ubicacion_id !== (int) $pedido->ubicacion_id) {
-            return response()->json([
-                'message' => 'No puedes asignar un rutero de otra sucursal.'
-            ], 422);
-        }
-
-        $pedido->rutero_id = $rutero->id;
-        $pedido->estado = 'en_ruta';
-        $pedido->fecha_en_ruta = now();
+        $pedido->estado = 'preparando';
         $pedido->actualizado_en = now();
         $pedido->save();
 
         $this->loadPedidoRelations($pedido);
 
         return response()->json([
-            'message' => 'Rutero asignado correctamente.',
-            'pedido' => $this->pedidoResponse($pedido),
+            'message' => 'Pedido marcado como preparando.',
+            'data' => $this->pedidoResponse($pedido),
         ]);
     }
+
+public function entregar(Pedido $pedido, Request $request)
+{
+    $user = $request->user();
+    $role = $this->roleOf($user);
+    $vendedorAuthId = $this->resolveVendedorId($user);
+
+    if (!in_array($role, ['vendedor', 'super_admin', 'rutero'], true)) {
+        return response()->json(['message' => 'No autorizado.'], 403);
+    }
+
+    if ($role === 'vendedor' && (!$vendedorAuthId || (int) $pedido->vendedor_id !== $vendedorAuthId)) {
+        return response()->json([
+            'message' => 'No puedes entregar pedidos de otro vendedor.'
+        ], 403);
+    }
+
+    if ($role === 'rutero' && (int) $pedido->rutero_id !== (int) $user->id) {
+        return response()->json([
+            'message' => 'No puedes entregar un pedido que no te fue asignado.'
+        ], 403);
+    }
+
+    if (!in_array($pedido->estado, ['preparando', 'aprobado', 'en_ruta'], true)) {
+        return response()->json([
+            'message' => 'Solo se puede entregar un pedido preparado.'
+        ], 422);
+    }
+
+    $data = $request->validate([
+        'metodo_pago' => ['nullable', 'string', Rule::in(['efectivo', 'tarjeta', 'cuotas'])],
+        'nombre_pagador' => ['nullable', 'string', 'max:150'],
+        'referencia_pago' => ['nullable', 'string', 'max:150'],
+        'observacion_entrega' => ['nullable', 'string'],
+        'cliente_id' => ['nullable', 'integer', 'exists:clientes,id'],
+    ]);
+
+    return DB::transaction(function () use ($pedido, $data, $user) {
+        $metodoPago = strtolower((string) ($data['metodo_pago'] ?? 'efectivo'));
+        $userId = (int) ($user->id ?? 0);
+        $ubicacionId = (int) $pedido->ubicacion_id;
+
+        $caja = Caja::query()
+            ->where('ubicacion_id', $ubicacionId)
+            ->where('estado', 'abierta')
+            ->latest('id')
+            ->first();
+
+        if (property_exists($pedido, 'metodo_pago') || isset($pedido->metodo_pago)) {
+            $pedido->metodo_pago = $metodoPago;
+        }
+
+        if ($metodoPago === 'cuotas' && !empty($data['cliente_id'])) {
+            $pedido->cliente_id = (int) $data['cliente_id'];
+        }
+
+        if (!empty($data['observacion_entrega'])) {
+            $obsActual = trim((string) ($pedido->observaciones ?? ''));
+            $obsNueva = trim((string) $data['observacion_entrega']);
+
+            $pedido->observaciones = $obsActual !== ''
+                ? $obsActual . "\n" . $obsNueva
+                : $obsNueva;
+        }
+
+        $pedido->estado = 'entregado';
+        $pedido->actualizado_en = now();
+        $pedido->entregado_en = now();
+        $pedido->save();
+
+        if (in_array($metodoPago, ['efectivo', 'tarjeta'], true) && $caja) {
+            MovimientoCaja::create([
+                'caja_id' => (int) $caja->id,
+                'ubicacion_id' => $ubicacionId,
+                'usuario_id' => $userId,
+                'tipo' => 'ingreso',
+                'concepto' => 'venta_rutero',
+                'monto' => round((float) $pedido->total, 2),
+                'metodo_pago' => $metodoPago,
+                'referencia_id' => (int) $pedido->id,
+                'referencia_tipo' => 'pedido',
+                'notas' => 'Cobro de pedido entregado por rutero'
+                    . (!empty($data['nombre_pagador']) ? ' | Pagador: ' . $data['nombre_pagador'] : '')
+                    . (!empty($data['referencia_pago']) ? ' | Ref: ' . $data['referencia_pago'] : ''),
+            ]);
+        }
+
+        $this->loadPedidoRelations($pedido);
+
+        return response()->json([
+            'success' => true,
+            'message' => $metodoPago === 'cuotas'
+                ? 'Pedido entregado a crédito correctamente.'
+                : 'Pedido entregado y cobrado correctamente.',
+            'data' => $this->pedidoResponse($pedido),
+        ]);
+    });
+}
+
+public function asignarRutero(Request $request, Pedido $pedido)
+{
+    $user = $request->user();
+    $role = $this->roleOf($user);
+    $userUbicacionId = $this->userUbicacionId($user);
+
+    if (!in_array($role, ['admin_bodega', 'super_admin'], true)) {
+        return response()->json(['message' => 'No autorizado.'], 403);
+    }
+
+    if ($role === 'admin_bodega' && (int) $pedido->ubicacion_id !== (int) $userUbicacionId) {
+        return response()->json([
+            'message' => 'No puedes asignar rutero a pedidos de otra sucursal.'
+        ], 403);
+    }
+
+    if (!in_array($pedido->estado, ['pendiente_revision', 'borrador', 'aprobado'], true)) {
+        return response()->json([
+            'message' => 'Este pedido no se puede asignar y aprobar en su estado actual.'
+        ], 422);
+    }
+
+    $data = $request->validate([
+        'rutero_id' => ['required', 'integer', 'exists:usuarios,id'],
+        'observaciones' => ['nullable', 'string'],
+        'detalles' => ['required', 'array', 'min:1'],
+        'detalles.*.id' => ['required', 'integer', 'exists:pedido_detalles,id'],
+        'detalles.*.presentacion' => ['required', 'string', 'max:50'],
+        'detalles.*.cantidad' => ['required', 'numeric', 'min:0.01'],
+        'detalles.*.cantidad_base' => ['required', 'integer', 'min:1'],
+        'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0'],
+        'detalles.*.subtotal' => ['nullable', 'numeric', 'min:0'],
+        'detalles.*.es_monto_variable' => ['nullable', Rule::in([0, 1, '0', '1', true, false])],
+    ]);
+
+    $rutero = Usuario::findOrFail((int) $data['rutero_id']);
+
+    $ruteroRole = strtolower((string) ($rutero->rol ?? $rutero->role ?? ''));
+    $ruteroRole = str_replace([' ', '-'], '_', $ruteroRole);
+
+    if ($ruteroRole !== 'rutero') {
+        return response()->json([
+            'message' => 'El usuario seleccionado no es un rutero.'
+        ], 422);
+    }
+
+    if (!empty($rutero->ubicacion_id) && (int) $rutero->ubicacion_id !== (int) $pedido->ubicacion_id) {
+        return response()->json([
+            'message' => 'No puedes asignar un rutero de otra sucursal.'
+        ], 422);
+    }
+
+    try {
+        return DB::transaction(function () use ($pedido, $data, $rutero, $user) {
+            $userId = (int) ($user->id ?? 0);
+            $ubicacionId = (int) $pedido->ubicacion_id;
+
+            if (array_key_exists('observaciones', $data)) {
+                $pedido->observaciones = $data['observaciones'];
+            }
+
+            foreach ($data['detalles'] as $d) {
+                $det = PedidoDetalle::query()
+                    ->where('pedido_id', $pedido->id)
+                    ->where('id', (int) $d['id'])
+                    ->firstOrFail();
+
+                $cantidad = (float) $d['cantidad'];
+                $precio = (float) $d['precio_unitario'];
+                $subtotal = array_key_exists('subtotal', $d)
+                    ? (float) $d['subtotal']
+                    : ($cantidad * $precio);
+
+                $det->presentacion = $d['presentacion'];
+                $det->cantidad = $cantidad;
+                $det->cantidad_base = (int) $d['cantidad_base'];
+                $det->precio_unitario = $precio;
+                $det->subtotal = $subtotal;
+
+                if (array_key_exists('es_monto_variable', $d)) {
+                    $det->es_monto_variable = !empty($d['es_monto_variable']) ? 1 : 0;
+                }
+
+                $det->save();
+            }
+
+            $pedido->refresh();
+            $pedido->loadMissing([
+                'detalles.producto:id,nombre,sku',
+            ]);
+
+            $descontarStock = in_array($pedido->estado, ['pendiente_revision', 'borrador'], true);
+
+            if ($descontarStock) {
+                foreach ($pedido->detalles as $det) {
+                    $precio = ProductoPrecio::query()
+                        ->where('producto_id', (int) $det->producto_id)
+                        ->whereRaw('LOWER(presentacion) = ?', [mb_strtolower(trim((string) $det->presentacion))])
+                        ->where('activo', true)
+                        ->first();
+
+                    if (!$precio) {
+                        return response()->json([
+                            'message' => 'No existe la presentación '
+                                . ($det->presentacion ?? 'sin nombre')
+                                . ' para el producto '
+                                . ($det->producto?->nombre ?? ('#' . $det->producto_id)) . '.'
+                        ], 422);
+                    }
+
+                    $cantidad = (float) ($det->cantidad ?? 0);
+
+                    if ($cantidad <= 0) {
+                        return response()->json([
+                            'message' => 'La cantidad del producto '
+                                . ($det->producto?->nombre ?? ('#' . $det->producto_id))
+                                . ' no es válida.'
+                        ], 422);
+                    }
+
+                    $this->stockService->apply([
+                        'tipo' => 'salida',
+                        'ubicacion_origen_id' => $ubicacionId,
+                        'producto_id' => (int) $det->producto_id,
+                        'presentacion' => $precio->presentacion,
+                        'cantidad' => (int) round($cantidad),
+                        'motivo' => "Salida por aprobación de pedido #{$pedido->id}",
+                        'referencia_tipo' => 'pedido',
+                        'referencia_id' => (int) $pedido->id,
+                    ], $userId);
+                }
+            }
+
+            $pedido->total = (float) $pedido->detalles()->sum('subtotal');
+            $pedido->rutero_id = (int) $rutero->id;
+            $pedido->estado = 'aprobado';
+            $pedido->actualizado_en = now();
+            $pedido->save();
+
+            $this->loadPedidoRelations($pedido);
+
+            return response()->json([
+                'message' => $descontarStock
+                    ? 'Rutero asignado, pedido aprobado y stock descontado correctamente.'
+                    : 'Rutero asignado y pedido actualizado correctamente.',
+                'data' => $this->pedidoResponse($pedido),
+            ]);
+        });
+    } catch (\Throwable $e) {
+        return response()->json([
+            'message' => $e->getMessage() ?: 'No se pudo asignar, aprobar y descontar stock.'
+        ], 422);
+    }
+}
 
     public function misEntregas(Request $request)
     {

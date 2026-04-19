@@ -18,10 +18,26 @@ class ProductoResource extends JsonResource
             'activo' => (bool) $this->activo,
 
             'imagen_principal' => $this->whenLoaded('imagenPrincipal', function () {
-                return $this->imagenPrincipal ? [
+                if (!$this->imagenPrincipal) {
+                    return null;
+                }
+
+                $url = (string) ($this->imagenPrincipal->url ?? '');
+
+                if (
+                    $url &&
+                    !str_starts_with($url, 'http://') &&
+                    !str_starts_with($url, 'https://')
+                ) {
+                    $url = asset($url);
+                }
+
+                return [
                     'id' => $this->imagenPrincipal->id,
-                    'url' => $this->imagenPrincipal->url,
-                ] : null;
+                    'url' => $url,
+                    'es_principal' => (bool) ($this->imagenPrincipal->es_principal ?? true),
+                    'orden' => (int) ($this->imagenPrincipal->orden ?? 0),
+                ];
             }),
 
             'precios' => $this->whenLoaded('precios', function () {
@@ -41,4 +57,4 @@ class ProductoResource extends JsonResource
             }, []),
         ];
     }
-}   
+}

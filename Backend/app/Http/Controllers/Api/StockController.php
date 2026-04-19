@@ -8,20 +8,40 @@ use Illuminate\Http\Request;
 
 class StockController extends Controller
 {
-    public function index(Request $request)
+    private function roleOf($user): string
     {
-        $user = $request->user();
-
-        $q = trim((string) $request->query('q', ''));
-        $ubicacionId = $request->query('ubicacion_id');
-        $perPage = (int) $request->query('per_page', 20);
-
         $role = strtolower((string) ($user->role ?? $user->rol ?? ''));
         $role = str_replace(['-', ' '], '_', $role);
 
         if ($role === 'superadmin') {
-            $role = 'super_admin';
+            return 'super_admin';
         }
+
+        if ($role === 'administrador_de_bodega' || $role === 'adminbod') {
+            return 'admin_bodega';
+        }
+
+        if ($role === 'vendedor_tienda') {
+            return 'vendedor-tienda';
+        }
+
+        return $role;
+    }
+
+    private function userUbicacionId($user): ?int
+    {
+        $id = $user->ubicacion_id ?? $user->sucursal_id ?? null;
+        return $id !== null ? (int) $id : null;
+    }
+
+    public function index(Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+
+        $q = trim((string) $request->query('q', ''));
+        $ubicacionId = $request->query('ubicacion_id');
+        $perPage = max(1, min(200, (int) $request->query('per_page', 20)));
 
         $query = Stock::query()->with([
             'producto:id,sku,nombre',
@@ -31,10 +51,10 @@ class StockController extends Controller
 
         if ($role === 'super_admin') {
             if (!empty($ubicacionId)) {
-                $query->where('ubicacion_id', $ubicacionId);
+                $query->where('ubicacion_id', (int) $ubicacionId);
             }
         } else {
-            $userUbicacionId = $user->ubicacion_id ?? null;
+            $userUbicacionId = $this->userUbicacionId($user);
 
             if (!$userUbicacionId) {
                 return response()->json([
@@ -62,26 +82,34 @@ class StockController extends Controller
             ->orderBy('producto_precio_id')
             ->paginate($perPage)
             ->through(function ($s) {
+                $cantidad = (float) ($s->cantidad ?? 0);
+                $cantidadBase = (float) ($s->cantidad_base ?? 0);
+
                 return [
-                    'id' => $s->id,
-                    'ubicacion_id' => $s->ubicacion_id,
+                    'id' => (int) $s->id,
+                    'ubicacion_id' => (int) $s->ubicacion_id,
+                    'ubicacion_nombre' => $s->ubicacion?->nombre,
+
                     'producto_id' => (string) $s->producto_id,
-                    'producto_precio_id' => $s->producto_precio_id,
+                    'producto_precio_id' => (int) $s->producto_precio_id,
                     'producto_nombre' => $s->producto?->nombre,
                     'producto_sku' => $s->producto?->sku,
+
                     'presentacion' => $s->productoPrecio?->presentacion,
-                    'factor_base' => $s->productoPrecio?->factor_base,
+                    'factor_base' => (float) ($s->productoPrecio?->factor_base ?? 1),
 
-                    // Para no romper el frontend viejo:
-                    'precio' => $s->productoPrecio?->precio_venta,
+                    'precio' => (float) ($s->productoPrecio?->precio_venta ?? 0),
+                    'precio_costo' => (float) ($s->productoPrecio?->precio_costo ?? 0),
+                    'precio_venta' => (float) ($s->productoPrecio?->precio_venta ?? 0),
 
-                    // Nuevos campos correctos:
-                    'precio_costo' => $s->productoPrecio?->precio_costo,
-                    'precio_venta' => $s->productoPrecio?->precio_venta,
+                    'cantidad' => $cantidad,
+                    'cantidad_base' => $cantidadBase,
 
-                    'cantidad' => (int) $s->cantidad,
-                    'cantidad_base' => (int) $s->cantidad_base,
-                    'actualizado_en' => $s->actualizado_en?->format('Y-m-d H:i:s'),
+                    'estado' => $cantidad <= 0
+                        ? 'agotado'
+                        : ($cantidad <= 5 ? 'bajo' : 'disponible'),
+
+                    'actualizado_en' => optional($s->actualizado_en)?->format('Y-m-d H:i:s'),
                 ];
             });
     }

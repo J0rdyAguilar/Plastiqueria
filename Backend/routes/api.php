@@ -15,6 +15,7 @@ require __DIR__.'/api/VentaTienda.php';
 require __DIR__.'/api/clientes.php';
 require __DIR__.'/api/ventas.php';
 require __DIR__.'/api/perfil.php';
+require __DIR__.'/api/dashboard.php';
 
 Route::prefix('v1')->group(function () {
     Route::prefix('pedidos')

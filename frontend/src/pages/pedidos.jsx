@@ -170,6 +170,44 @@ async function fetchProductosConPrecios({ q = "", per_page = 500 }) {
   return [];
 }
 
+function resolveImageUrl(path) {
+  const raw = String(path || "").trim();
+  if (!raw) return "";
+
+  if (
+    raw.startsWith("http://") ||
+    raw.startsWith("https://") ||
+    raw.startsWith("data:") ||
+    raw.startsWith("blob:")
+  ) {
+    return raw;
+  }
+
+  return `/${raw.replace(/^\/+/, "")}`;
+}
+
+function getProductoImagen(producto) {
+  if (!producto) return "";
+
+  const fromPrincipal =
+    producto?.imagen_principal?.url ||
+    producto?.imagenPrincipal?.url ||
+    producto?.imagen_principal_url ||
+    producto?.imagen_url ||
+    producto?.url_imagen ||
+    "";
+
+  if (fromPrincipal) return resolveImageUrl(fromPrincipal);
+
+  if (Array.isArray(producto?.imagenes) && producto.imagenes.length > 0) {
+    const principal = producto.imagenes.find((img) => Number(img?.es_principal) === 1);
+    if (principal?.url) return resolveImageUrl(principal.url);
+    if (producto.imagenes[0]?.url) return resolveImageUrl(producto.imagenes[0].url);
+  }
+
+  return "";
+}
+
 function InlineLoader() {
   return (
     <div className="mini-loader-wrap" aria-label="Cargando">
@@ -192,6 +230,49 @@ function ModalLoader({ text = "Cargando..." }) {
       <div className="modal-loader-ring"></div>
       <div className="modal-loader-text">{text}</div>
     </div>
+  );
+}
+
+function ProductoThumb({ src, alt, size = 84 }) {
+  const [failed, setFailed] = useState(false);
+  const usable = src && !failed;
+
+  if (!usable) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          minWidth: size,
+          borderRadius: 14,
+          border: "1px solid #e5e7eb",
+          background: "linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 28,
+        }}
+      >
+        📦
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt || "Producto"}
+      onError={() => setFailed(true)}
+      style={{
+        width: size,
+        height: size,
+        minWidth: size,
+        objectFit: "cover",
+        borderRadius: 14,
+        border: "1px solid #e5e7eb",
+        background: "#fff",
+      }}
+    />
   );
 }
 
@@ -333,6 +414,9 @@ export default function Pedidos() {
           id: Number(p.id),
           nombre: p.nombre,
           sku: p.sku,
+          imagen: getProductoImagen(p),
+          imagen_principal: p.imagen_principal || null,
+          imagenes: Array.isArray(p.imagenes) ? p.imagenes : [],
           cantidad_base: 999999,
           presentaciones,
           permite_monto_variable: true,
@@ -365,6 +449,10 @@ export default function Pedidos() {
 
           next[producto.id] = {
             ...actual,
+            productoId: producto.id,
+            nombre: producto.nombre,
+            sku: producto.sku,
+            imagen: producto.imagen,
             presentacion: presentacionExiste ? actual.presentacion : p0.tipo,
             factor: num(p0.factor || 1),
             precioBase: num(p0.precio || 0),
@@ -530,6 +618,8 @@ export default function Pedidos() {
     return {
       productoId: producto.id,
       nombre: producto.nombre,
+      sku: producto.sku,
+      imagen: producto.imagen,
       presentacion: p0.tipo,
       factor: num(p0.factor || 1),
       cantidad: 0,
@@ -548,6 +638,10 @@ export default function Pedidos() {
       ...prev,
       [producto.id]: {
         ...linea,
+        productoId: producto.id,
+        nombre: producto.nombre,
+        sku: producto.sku,
+        imagen: producto.imagen,
         cantidad: cant,
       },
     }));
@@ -561,6 +655,10 @@ export default function Pedidos() {
       ...prev,
       [producto.id]: {
         ...linea,
+        productoId: producto.id,
+        nombre: producto.nombre,
+        sku: producto.sku,
+        imagen: producto.imagen,
         presentacion: encontrada?.tipo || "unidad",
         factor: num(encontrada?.factor || 1),
         precioBase: num(encontrada?.precioVenta ?? encontrada?.precio ?? 0),
@@ -578,6 +676,10 @@ export default function Pedidos() {
       ...prev,
       [producto.id]: {
         ...linea,
+        productoId: producto.id,
+        nombre: producto.nombre,
+        sku: producto.sku,
+        imagen: producto.imagen,
         usaMontoVariable: checked,
         montoVariable: checked
           ? num(linea.montoVariable || linea.precioBase)
@@ -593,6 +695,10 @@ export default function Pedidos() {
       ...prev,
       [producto.id]: {
         ...linea,
+        productoId: producto.id,
+        nombre: producto.nombre,
+        sku: producto.sku,
+        imagen: producto.imagen,
         montoVariable: num(monto),
       },
     }));
@@ -624,6 +730,8 @@ export default function Pedidos() {
         return {
           producto_id: producto.id,
           producto_nombre: producto.nombre,
+          producto_sku: producto.sku,
+          producto_imagen: producto.imagen,
           presentacion: linea?.presentacion || "unidad",
           cantidad,
           cantidad_base: getCantidadBase(producto),
@@ -1214,11 +1322,22 @@ export default function Pedidos() {
                                   borderRadius: 10,
                                   padding: "10px 12px",
                                   cursor: "pointer",
+                                  display: "grid",
+                                  gridTemplateColumns: "56px 1fr",
+                                  gap: 10,
+                                  alignItems: "center",
                                 }}
                               >
-                                <div style={{ fontWeight: 700 }}>{item.nombre}</div>
-                                <div className="muted" style={{ fontSize: 12 }}>
-                                  Código: {item.sku || "—"}
+                                <ProductoThumb
+                                  src={item.imagen}
+                                  alt={item.nombre}
+                                  size={56}
+                                />
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontWeight: 700 }}>{item.nombre}</div>
+                                  <div className="muted" style={{ fontSize: 12 }}>
+                                    Código: {item.sku || "—"}
+                                  </div>
                                 </div>
                               </button>
                             ))}
@@ -1354,13 +1473,19 @@ export default function Pedidos() {
                       >
                         <div
                           style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 12,
-                            flexWrap: "wrap",
+                            display: "grid",
+                            gridTemplateColumns: "92px 1fr auto",
+                            gap: 14,
+                            alignItems: "start",
                           }}
                         >
-                          <div>
+                          <ProductoThumb
+                            src={producto.imagen}
+                            alt={producto.nombre}
+                            size={92}
+                          />
+
+                          <div style={{ minWidth: 0 }}>
                             <div style={{ fontWeight: 800 }}>{producto.nombre}</div>
                             <div className="muted" style={{ fontSize: 13 }}>
                               Código: {producto.sku || "—"}
@@ -1373,7 +1498,7 @@ export default function Pedidos() {
                             </div>
                           </div>
 
-                          <div style={{ fontWeight: 800, color: "#0f172a" }}>
+                          <div style={{ fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap" }}>
                             Subtotal: {money(subtotal)}
                           </div>
                         </div>
@@ -1517,14 +1642,26 @@ export default function Pedidos() {
                           border: "1px solid #eee",
                           borderRadius: 10,
                           padding: 10,
+                          display: "grid",
+                          gridTemplateColumns: "54px 1fr",
+                          gap: 10,
+                          alignItems: "center",
                         }}
                       >
-                        <div style={{ fontWeight: 700 }}>{item.producto_nombre}</div>
-                        <div className="muted" style={{ fontSize: 13 }}>
-                          {item.cantidad} × {item.presentacion} × {money(item.precio_unitario)}
-                        </div>
-                        <div style={{ marginTop: 4, fontWeight: 700 }}>
-                          {money(item.subtotal)}
+                        <ProductoThumb
+                          src={item.producto_imagen}
+                          alt={item.producto_nombre}
+                          size={54}
+                        />
+
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700 }}>{item.producto_nombre}</div>
+                          <div className="muted" style={{ fontSize: 13 }}>
+                            {item.cantidad} × {item.presentacion} × {money(item.precio_unitario)}
+                          </div>
+                          <div style={{ marginTop: 4, fontWeight: 700 }}>
+                            {money(item.subtotal)}
+                          </div>
                         </div>
                       </div>
                     ))

@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import Layout from "./components/Layout";
 
 import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
 import Usuarios from "./pages/Usuarios";
 import Vendedores from "./pages/Vendedores";
 import Zonas from "./pages/Zonas";
@@ -51,11 +52,11 @@ function roleHome() {
 
   const rol = getRole();
 
-  if (
-    rol === "admin" ||
-    rol === "super_admin" ||
-    rol === "admin_bodega"
-  ) {
+  if (rol === "super_admin" || rol === "admin") {
+    return "/dashboard";
+  }
+
+  if (rol === "admin_bodega") {
     return "/pedidos-admin";
   }
 
@@ -117,6 +118,15 @@ export const router = createBrowserRouter([
   {
     path: "/login",
     element: <LoginRoute />,
+  },
+
+  {
+    path: "/dashboard",
+    element: (
+      <WrapWithLayout roles={["admin", "super_admin"]}>
+        <Dashboard />
+      </WrapWithLayout>
+    ),
   },
 
   {

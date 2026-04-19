@@ -24,6 +24,7 @@ import { useNavigate } from "react-router-dom";
 import { ventasTienda } from "../api/ventasTienda";
 import { stockApi } from "../lib/stock";
 import { clientesApi } from "../lib/clientes";
+import { getSession } from "../lib/auth";
 
 function money(value) {
   return `Q${Number(value || 0).toFixed(2)}`;
@@ -35,6 +36,14 @@ function normalizeText(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
+}
+
+function normalizeRole(value) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
 }
 
 function scoreProducto(prod, term) {
@@ -320,6 +329,11 @@ function imprimirTicketVenta({
 export default function VentaTienda() {
   const nav = useNavigate();
 
+  const session = getSession?.() || {};
+  const sessionUser = session?.user || session || {};
+  const role = normalizeRole(sessionUser?.rol || sessionUser?.role || "");
+  const isSuperAdmin = role === "super_admin";
+
   const [inventario, setInventario] = useState([]);
   const [items, setItems] = useState([]);
   const [expandedItems, setExpandedItems] = useState({});
@@ -332,6 +346,12 @@ export default function VentaTienda() {
   const [clienteId, setClienteId] = useState("");
   const [clientes, setClientes] = useState([]);
   const [referenciaPago, setReferenciaPago] = useState("");
+
+  const [ubicacionId, setUbicacionId] = useState(
+    isSuperAdmin
+      ? ""
+      : String(sessionUser?.ubicacion_id || sessionUser?.sucursal_id || "")
+  );
 
   const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false);
   const [guardandoCliente, setGuardandoCliente] = useState(false);
@@ -354,9 +374,12 @@ export default function VentaTienda() {
   const searchInputRef = useRef(null);
 
   useEffect(() => {
-    cargarInventario();
     cargarClientes();
   }, []);
+
+  useEffect(() => {
+    cargarInventario();
+  }, [ubicacionId]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -392,11 +415,17 @@ export default function VentaTienda() {
     try {
       setLoadingInventario(true);
 
-      const resp = await stockApi.list({
+      const params = {
         q: "",
         page: 1,
         per_page: 200,
-      });
+      };
+
+      if (ubicacionId) {
+        params.ubicacion_id = ubicacionId;
+      }
+
+      const resp = await stockApi.list(params);
 
       const rows = Array.isArray(resp)
         ? resp
@@ -440,6 +469,12 @@ export default function VentaTienda() {
           precio: precioVenta,
           presentacion: row?.presentacion || "",
           categoria: row?.categoria || "",
+          ubicacion_id: row?.ubicacion_id ?? null,
+          ubicacion_nombre:
+            row?.ubicacion_nombre ||
+            row?.sucursal_nombre ||
+            row?.ubicacion?.nombre ||
+            "",
         };
       });
 
@@ -685,6 +720,8 @@ export default function VentaTienda() {
           presentacion: prod.presentacion,
           cantidad: cantidadNum,
           precio_unitario: precioNum,
+          ubicacion_id: prod.ubicacion_id ?? null,
+          ubicacion_nombre: prod.ubicacion_nombre ?? "",
         },
       ]);
     }
@@ -721,6 +758,11 @@ export default function VentaTienda() {
       return;
     }
 
+    if (isSuperAdmin && !ubicacionId) {
+      alert("Selecciona la sucursal donde se realizará la venta.");
+      return;
+    }
+
     try {
       setLoadingVenta(true);
 
@@ -732,6 +774,7 @@ export default function VentaTienda() {
             : nombreComprador.trim(),
         cliente_id: metodoPago === "cuotas" ? Number(clienteId) : null,
         referencia_pago: referenciaPago.trim() || null,
+        ubicacion_id: ubicacionId ? Number(ubicacionId) : null,
         items: items.map((item) => ({
           producto_id: Number(item.producto_id),
           producto_precio_id: Number(item.producto_precio_id),
@@ -872,6 +915,52 @@ export default function VentaTienda() {
                 gap: 12,
               }}
             >
+              {isSuperAdmin ? (
+                <div
+                  style={{
+                    borderRadius: 24,
+                    padding: "18px 20px",
+                    background: "rgba(255,255,255,0.10)",
+                    border: "1px solid rgba(255,255,255,0.14)",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: "rgba(255,255,255,0.72)",
+                      fontSize: 13,
+                      marginBottom: 8,
+                    }}
+                  >
+                    Sucursal a visualizar
+                  </div>
+
+                  <select
+                    value={ubicacionId}
+                    onChange={(e) => setUbicacionId(e.target.value)}
+                    style={{
+                      width: "100%",
+                      height: 48,
+                      borderRadius: 14,
+                      border: "1px solid rgba(255,255,255,0.18)",
+                      background: "rgba(255,255,255,0.14)",
+                      color: "#fff",
+                      padding: "0 14px",
+                      fontWeight: 800,
+                    }}
+                  >
+                    <option value="" style={{ color: "#111827" }}>
+                      Todas las tiendas
+                    </option>
+                    <option value="1" style={{ color: "#111827" }}>
+                      Tienda 1
+                    </option>
+                    <option value="2" style={{ color: "#111827" }}>
+                      Tienda 2
+                    </option>
+                  </select>
+                </div>
+              ) : null}
+
               <div
                 style={{
                   borderRadius: 24,
@@ -1092,6 +1181,9 @@ export default function VentaTienda() {
                                 <div style={suggestionMetaStyle}>
                                   <span>ID: {highlightText(prod.producto_id, q)}</span>
                                   <span>Código: {highlightText(prod.codigo, q)}</span>
+                                  {prod.ubicacion_nombre ? (
+                                    <span>Sucursal: {prod.ubicacion_nombre}</span>
+                                  ) : null}
                                   <span>Venta: {money(prod.precio)}</span>
                                 </div>
                               </button>
@@ -1122,7 +1214,11 @@ export default function VentaTienda() {
                             productoSeleccionado.presentacion
                               ? ` - ${productoSeleccionado.presentacion}`
                               : ""
-                          } | Producto ID: ${productoSeleccionado.producto_id} | Presentación ID: ${productoSeleccionado.producto_precio_id}`
+                          } | Producto ID: ${productoSeleccionado.producto_id} | Presentación ID: ${productoSeleccionado.producto_precio_id}${
+                            productoSeleccionado.ubicacion_nombre
+                              ? ` | Sucursal: ${productoSeleccionado.ubicacion_nombre}`
+                              : ""
+                          }`
                         : "Selecciona un producto desde el buscador"}
                     </div>
                   </div>
@@ -1439,6 +1535,11 @@ export default function VentaTienda() {
               <div style={totalCardLineStyle}>
                 Comprador: {nombreComprador.trim() || "Sin ingresar"}
               </div>
+              {isSuperAdmin ? (
+                <div style={totalCardLineStyle}>
+                  Sucursal: {ubicacionId ? `Tienda ${ubicacionId}` : "Todas las tiendas"}
+                </div>
+              ) : null}
               {metodoPago === "cuotas" ? (
                 <div style={totalCardLineStyle}>
                   Cliente: {clienteSeleccionado?.nombre || "No seleccionado"}
@@ -1513,6 +1614,7 @@ export default function VentaTienda() {
                         <div style={itemMetaStyle}>
                           Código: {item.codigo}
                           {item.presentacion ? ` · ${item.presentacion}` : ""}
+                          {item.ubicacion_nombre ? ` · ${item.ubicacion_nombre}` : ""}
                         </div>
                       </div>
 
