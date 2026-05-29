@@ -3,6 +3,13 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\PedidoController;
 
+// SOLO super_admin - montos variables
+Route::middleware(['role:super_admin'])->group(function () {
+    Route::get('/montos-variables/pendientes', [PedidoController::class, 'montosVariablesPendientes']);
+    Route::post('/{pedido}/aprobar-monto-variable', [PedidoController::class, 'aprobarMontoVariable']);
+    Route::post('/{pedido}/rechazar-monto-variable', [PedidoController::class, 'rechazarMontoVariable']);
+});
+
 // vendedor, bodega y super_admin
 Route::middleware(['role:admin_bodega,super_admin,vendedor'])->group(function () {
     Route::get('/mis-pedidos', [PedidoController::class, 'misPedidos']);

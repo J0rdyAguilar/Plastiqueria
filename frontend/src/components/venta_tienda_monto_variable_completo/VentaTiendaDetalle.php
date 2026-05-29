@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class VentaTiendaDetalle extends Model
 {
-    protected $table = 'venta_tienda_detalles';
+    protected $table = 'ventas_tienda_detalles';
 
     const CREATED_AT = 'creado_en';
     const UPDATED_AT = null;
@@ -19,20 +19,22 @@ class VentaTiendaDetalle extends Model
         'producto_precio_id',
         'presentacion',
         'cantidad',
+        'cantidad_base',
         'precio_unitario',
         'subtotal',
         'es_monto_variable',
     ];
 
     protected $casts = [
-        'venta_id'           => 'integer',
-        'producto_id'        => 'integer',
-        'producto_precio_id' => 'integer',
-        'cantidad'           => 'decimal:4',
-        'precio_unitario'    => 'decimal:2',
-        'subtotal'           => 'decimal:2',
-        'es_monto_variable'  => 'boolean',
-        'creado_en'          => 'datetime',
+        'venta_id'          => 'integer',
+        'producto_id'       => 'integer',
+        'producto_precio_id'=> 'integer',
+        'cantidad'          => 'decimal:4',
+        'cantidad_base'     => 'decimal:4',
+        'precio_unitario'   => 'decimal:2',
+        'subtotal'          => 'decimal:2',
+        'es_monto_variable' => 'boolean',
+        'creado_en'         => 'datetime',
     ];
 
     public function venta()

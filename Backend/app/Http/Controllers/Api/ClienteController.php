@@ -78,7 +78,6 @@ class ClienteController extends Controller
     {
         $user = $request->user();
         $role = $this->roleOf($user);
-        $vendedorAuthId = $this->resolveVendedorId($user);
 
         $q = trim((string) $request->query('q', ''));
         $activo = $request->query('activo');
@@ -99,12 +98,14 @@ class ClienteController extends Controller
                 });
             }
         } elseif (in_array($role, ['vendedor', 'vendedor_tienda'], true)) {
-            if ($role === 'vendedor' && $vendedorAuthId) {
-                $query->whereHas('vendedores', function ($sub) use ($vendedorAuthId) {
-                    $sub->where('vendedores.id', (int) $vendedorAuthId)
-                        ->where('vendedor_clientes.activo', 1);
-                });
-            }
+            /*
+             * Antes aquí se filtraba por vendedor_clientes.
+             * Eso hacía que el buscador de pedidos saliera vacío cuando los clientes
+             * todavía no estaban asignados al vendedor.
+             *
+             * Ahora el vendedor puede consultar clientes activos para crear pedidos.
+             * La seguridad sigue protegida por auth:sanctum + role en las rutas.
+             */
         } else {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
@@ -132,22 +133,8 @@ class ClienteController extends Controller
     {
         $user = $request->user();
         $role = $this->roleOf($user);
-        $vendedorAuthId = $this->resolveVendedorId($user);
 
-        if ($role === 'vendedor') {
-            if (!$vendedorAuthId) {
-                return response()->json(['message' => 'No autorizado.'], 403);
-            }
-
-            $permitido = $cliente->vendedores()
-                ->where('vendedores.id', $vendedorAuthId)
-                ->where('vendedor_clientes.activo', 1)
-                ->exists();
-
-            if (!$permitido) {
-                return response()->json(['message' => 'No autorizado.'], 403);
-            }
-        } elseif (!in_array($role, ['admin', 'super_admin', 'vendedor_tienda'], true)) {
+        if (!in_array($role, ['admin', 'super_admin', 'vendedor', 'vendedor_tienda'], true)) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 

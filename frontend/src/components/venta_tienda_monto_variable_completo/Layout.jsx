@@ -25,33 +25,11 @@ import { clearSession, getSession, isLoggedIn } from "../lib/auth";
 import { notify } from "../lib/notify";
 import "./layout.css";
 
-const RAW_API_BASE = (
+const API_BASE = (
   import.meta.env.VITE_API_URL ||
   import.meta.env.VITE_API_BASE_URL ||
-  "http://127.0.0.1:8000/api/v1"
+  "http://127.0.0.1:8000/api"
 ).replace(/\/+$/, "");
-
-function uniqueValues(values) {
-  return values.filter((value, index, arr) => value && arr.indexOf(value) === index);
-}
-
-function getBackendRoot() {
-  return String(RAW_API_BASE)
-    .replace(/\/+$/, "")
-    .replace(/\/api\/v1$/i, "")
-    .replace(/\/api$/i, "");
-}
-
-function getApiBaseCandidates() {
-  const raw = String(RAW_API_BASE).replace(/\/+$/, "");
-  const root = getBackendRoot();
-
-  return uniqueValues([
-    raw,
-    `${root}/api/v1`,
-    `${root}/api`,
-  ]);
-}
 
 function normalizeRole(r) {
   const x = (r || "")
@@ -84,96 +62,6 @@ function extractArray(payload) {
   if (Array.isArray(payload?.data)) return payload.data;
   if (Array.isArray(payload?.data?.data)) return payload.data.data;
   return [];
-}
-
-function money(value) {
-  return `Q${Number(value || 0).toFixed(2)}`;
-}
-
-function formatNotificationDate(value) {
-  if (!value) return "Pendiente";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
-}
-
-function getDetalleNombre(detalle) {
-  return (
-    detalle?.producto_nombre ||
-    detalle?.producto?.nombre ||
-    detalle?.nombre ||
-    `Producto #${detalle?.producto_id || "—"}`
-  );
-}
-
-function normalizeDetalles(detalles) {
-  return Array.isArray(detalles) ? detalles : [];
-}
-
-function buildNotificacionPedido(pedido) {
-  const detalles = normalizeDetalles(pedido?.detalles);
-  return {
-    id: `pedido-${pedido.id}`,
-    entidad: "pedido",
-    entidadId: pedido.id,
-    titulo: `Pedido #${pedido.id}`,
-    subtitulo: "Pedido con monto variable",
-    mensaje: `Pedido #${pedido.id} requiere aprobación de monto variable.`,
-    tiempo: formatNotificationDate(pedido.creado_en || pedido.created_at),
-    cliente:
-      pedido.cliente_nombre ||
-      pedido.cliente?.nombre ||
-      pedido.nombre_cliente ||
-      "Cliente no especificado",
-    vendedor:
-      pedido.vendedor_nombre ||
-      pedido.vendedor?.nombre ||
-      pedido.vendedor?.usuario ||
-      "Vendedor no especificado",
-    sucursal:
-      pedido.ubicacion_nombre ||
-      pedido.ubicacion?.nombre ||
-      pedido.sucursal_nombre ||
-      "Sucursal no especificada",
-    total: Number(pedido.total || 0),
-    estado: pedido.estado || "pendiente_revision",
-    detalles,
-    leido: false,
-    tipo: "pendiente",
-  };
-}
-
-function buildNotificacionVentaTienda(venta) {
-  const detalles = normalizeDetalles(venta?.detalles);
-  return {
-    id: `venta-tienda-${venta.id}`,
-    entidad: "venta_tienda",
-    entidadId: venta.id,
-    titulo: `Venta tienda #${venta.id}`,
-    subtitulo: "Venta tienda con monto variable",
-    mensaje: `Venta tienda #${venta.id} requiere aprobación de monto variable.`,
-    tiempo: formatNotificationDate(venta.creado_en || venta.created_at),
-    cliente:
-      venta.nombre_comprador ||
-      venta.cliente_nombre ||
-      venta.cliente?.nombre ||
-      "Consumidor final",
-    vendedor:
-      venta.usuario_nombre ||
-      venta.usuario?.nombre ||
-      venta.usuario?.usuario ||
-      "Vendedor no especificado",
-    sucursal:
-      venta.ubicacion_nombre ||
-      venta.ubicacion?.nombre ||
-      venta.sucursal_nombre ||
-      "Sucursal no especificada",
-    total: Number(venta.total || 0),
-    estado: venta.estado || "pendiente_revision",
-    detalles,
-    leido: false,
-    tipo: "pendiente",
-  };
 }
 
 function getPossibleTokenFromObject(obj) {
@@ -242,8 +130,6 @@ function getAuthToken() {
 
 async function requestApi(path, options = {}) {
   const token = getAuthToken();
-  const bases = getApiBaseCandidates();
-  let lastError = null;
 
   const headers = {
     Accept: "application/json",
@@ -255,117 +141,34 @@ async function requestApi(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  for (const base of bases) {
-    try {
-      const cleanPath = String(path || "").startsWith("/")
-        ? String(path || "")
-        : `/${path}`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+    credentials: "include",
+  });
 
-      const res = await fetch(`${base}${cleanPath}`, {
-        ...options,
-        headers,
-        credentials: "include",
-      });
+  const text = await res.text();
+  let data = null;
 
-      const text = await res.text();
-      let data = null;
-
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch {
-        data = text;
-      }
-
-      if (!res.ok) {
-        const message =
-          data?.message ||
-          data?.error ||
-          `Error HTTP ${res.status} al llamar ${base}${cleanPath}`;
-
-        const err = new Error(message);
-        err.status = res.status;
-        err.data = data;
-        err.url = `${base}${cleanPath}`;
-        throw err;
-      }
-
-      return data;
-    } catch (err) {
-      lastError = err;
-
-      // Si una base falla por 404, probamos con la siguiente.
-      if (err?.status === 404) {
-        continue;
-      }
-
-      // Si falla por permisos o validación, no ocultamos el error.
-      if (err?.status === 401 || err?.status === 403 || err?.status === 422) {
-        throw err;
-      }
-    }
-  }
-
-  throw lastError || new Error(`No se pudo llamar ${path}`);
-}
-
-async function requestApiOptional(path, options = {}) {
   try {
-    return await requestApi(path, options);
-  } catch (err) {
-    console.error(`Error opcional llamando ${path}:`, err);
-    return null;
-  }
-}
-
-function filtrarPedidosMontoVariablePendiente(pedidos) {
-  return extractArray(pedidos).filter((pedido) => {
-    const estadoMonto = String(pedido?.monto_variable_estado || "").toLowerCase();
-    const estado = String(pedido?.estado || "").toLowerCase();
-    const detalles = Array.isArray(pedido?.detalles) ? pedido.detalles : [];
-
-    const tieneDetalleMontoVariable = detalles.some((detalle) => {
-      return (
-        detalle?.es_monto_variable === true ||
-        detalle?.es_monto_variable === 1 ||
-        detalle?.es_monto_variable === "1"
-      );
-    });
-
-    return (
-      estadoMonto === "pendiente" ||
-      pedido?.tiene_monto_variable === true ||
-      pedido?.tiene_monto_variable === 1 ||
-      pedido?.tiene_monto_variable === "1" ||
-      (estado === "pendiente_revision" && tieneDetalleMontoVariable)
-    );
-  });
-}
-
-async function cargarPedidosMontoVariablePendientes() {
-  const directo = await requestApiOptional("/pedidos/montos-variables/pendientes", {
-    method: "GET",
-  });
-
-  const pedidosDirectos = extractArray(directo);
-  if (pedidosDirectos.length > 0) {
-    return pedidosDirectos;
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
   }
 
-  // Respaldo por si la ruta específica no devuelve datos, pero el index sí.
-  const respaldo = await requestApiOptional(
-    "/pedidos?estado=pendiente_revision&per_page=100",
-    { method: "GET" }
-  );
+  if (!res.ok) {
+    const message =
+      data?.message ||
+      data?.error ||
+      `Error HTTP ${res.status} al llamar ${path}`;
 
-  return filtrarPedidosMontoVariablePendiente(respaldo);
-}
+    const err = new Error(message);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
 
-async function cargarVentasTiendaMontoVariablePendientes() {
-  const directo = await requestApiOptional("/ventas-tienda/montos-variables/pendientes", {
-    method: "GET",
-  });
-
-  return extractArray(directo);
+  return data;
 }
 
 export default function Layout({ children }) {
@@ -375,7 +178,6 @@ export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notiOpen, setNotiOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [expandedNoti, setExpandedNoti] = useState({});
 
   const logged = isLoggedIn();
   const me = getSession()?.user;
@@ -399,13 +201,43 @@ export default function Layout({ children }) {
     }
 
     try {
-      const [pedidos, ventas] = await Promise.all([
-        cargarPedidosMontoVariablePendientes(),
-        cargarVentasTiendaMontoVariablePendientes(),
+      const [pedidosRes, ventasRes] = await Promise.allSettled([
+        requestApi("/pedidos/montos-variables/pendientes", { method: "GET" }),
+        requestApi("/ventas-tienda/montos-variables/pendientes", { method: "GET" }),
       ]);
 
-      const notificacionesPedidos = extractArray(pedidos).map(buildNotificacionPedido);
-      const notificacionesVentas = extractArray(ventas).map(buildNotificacionVentaTienda);
+      const pedidos =
+        pedidosRes.status === "fulfilled" ? extractArray(pedidosRes.value) : [];
+      const ventas =
+        ventasRes.status === "fulfilled" ? extractArray(ventasRes.value) : [];
+
+      if (pedidosRes.status === "rejected") {
+        console.error("Error cargando montos variables de pedidos:", pedidosRes.reason);
+      }
+
+      if (ventasRes.status === "rejected") {
+        console.error("Error cargando montos variables de ventas tienda:", ventasRes.reason);
+      }
+
+      const notificacionesPedidos = pedidos.map((pedido) => ({
+        id: `pedido-${pedido.id}`,
+        entidad: "pedido",
+        entidadId: pedido.id,
+        mensaje: `Pedido #${pedido.id} requiere aprobación de monto variable.`,
+        tiempo: pedido.creado_en || pedido.created_at || "Pendiente",
+        leido: false,
+        tipo: "pendiente",
+      }));
+
+      const notificacionesVentas = ventas.map((venta) => ({
+        id: `venta-tienda-${venta.id}`,
+        entidad: "venta_tienda",
+        entidadId: venta.id,
+        mensaje: `Venta tienda #${venta.id} requiere aprobación de monto variable.`,
+        tiempo: venta.creado_en || venta.created_at || "Pendiente",
+        leido: false,
+        tipo: "pendiente",
+      }));
 
       setNotifications([...notificacionesPedidos, ...notificacionesVentas]);
     } catch (error) {
@@ -552,13 +384,6 @@ export default function Layout({ children }) {
       active: loc.pathname.startsWith("/usuarios"),
     },
     {
-      to: "/clientes",
-      label: "Clientes",
-      icon: <Users size={18} />,
-      show: isSuperAdmin,
-      active: loc.pathname.startsWith("/clientes"),
-    },
-    {
       to: "/vendedores",
       label: "Vendedores",
       icon: <UserCog size={18} />,
@@ -700,7 +525,7 @@ export default function Layout({ children }) {
           position: absolute;
           top: 56px;
           right: 0;
-          width: min(480px, calc(100vw - 24px));
+          width: 340px;
           background: #151a2e !important;
           border: 1px solid rgba(255, 255, 255, 0.16) !important;
           border-radius: 16px;
@@ -736,7 +561,7 @@ export default function Layout({ children }) {
           background: rgba(59, 130, 246, 0.15);
         }
         .lux-noti-body {
-          max-height: 520px;
+          max-height: 320px;
           overflow-y: auto;
         }
         .lux-noti-item {
@@ -764,123 +589,6 @@ export default function Layout({ children }) {
         .lux-noti-time {
           font-size: 11px;
           color: #64748b;
-        }
-        .lux-noti-topline {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 10px;
-        }
-        .lux-noti-kind {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 4px 8px;
-          border-radius: 999px;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 0.02em;
-          text-transform: uppercase;
-          background: rgba(59, 130, 246, 0.16);
-          color: #93c5fd;
-          border: 1px solid rgba(147, 197, 253, 0.26);
-          white-space: nowrap;
-        }
-        .lux-noti-total {
-          font-size: 18px;
-          color: #fff;
-          font-weight: 900;
-          letter-spacing: -0.02em;
-        }
-        .lux-noti-meta-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
-          margin-top: 8px;
-        }
-        .lux-noti-meta-card {
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          background: rgba(255, 255, 255, 0.04);
-          border-radius: 12px;
-          padding: 8px 10px;
-          min-width: 0;
-        }
-        .lux-noti-meta-label {
-          display: block;
-          font-size: 10px;
-          color: #64748b;
-          font-weight: 800;
-          text-transform: uppercase;
-          margin-bottom: 3px;
-        }
-        .lux-noti-meta-value {
-          display: block;
-          font-size: 12px;
-          color: #e2e8f0;
-          font-weight: 700;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .lux-noti-detail-btn {
-          border: 1px solid rgba(147, 197, 253, 0.22);
-          background: rgba(59, 130, 246, 0.10);
-          color: #93c5fd;
-          border-radius: 10px;
-          padding: 7px 10px;
-          font-size: 11px;
-          font-weight: 800;
-          cursor: pointer;
-          margin-top: 6px;
-        }
-        .lux-noti-detail-btn:hover {
-          background: rgba(59, 130, 246, 0.18);
-        }
-        .lux-noti-detail-panel {
-          margin-top: 8px;
-          padding: 10px;
-          border-radius: 12px;
-          background: rgba(2, 6, 23, 0.32);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-        .lux-noti-detail-title {
-          font-size: 11px;
-          color: #cbd5e1;
-          font-weight: 900;
-          margin-bottom: 8px;
-          text-transform: uppercase;
-        }
-        .lux-noti-product-row {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 10px;
-          padding: 8px 0;
-          border-top: 1px solid rgba(255,255,255,0.06);
-        }
-        .lux-noti-product-row:first-of-type {
-          border-top: none;
-          padding-top: 0;
-        }
-        .lux-noti-product-name {
-          color: #f8fafc;
-          font-size: 12px;
-          font-weight: 800;
-          line-height: 1.35;
-        }
-        .lux-noti-product-sub {
-          color: #94a3b8;
-          font-size: 11px;
-          margin-top: 2px;
-        }
-        .lux-noti-product-money {
-          color: #bbf7d0;
-          font-size: 12px;
-          font-weight: 900;
-          white-space: nowrap;
-        }
-        .lux-noti-empty-detail {
-          color: #94a3b8;
-          font-size: 12px;
         }
         .lux-noti-actions {
           display: flex;
@@ -1047,125 +755,45 @@ export default function Layout({ children }) {
                               No hay notificaciones recientes
                             </div>
                           ) : (
-                            notifications.map((noti) => {
-                              const isExpanded = !!expandedNoti[noti.id];
-                              const kindLabel =
-                                noti.entidad === "venta_tienda" ? "Venta tienda" : "Pedido";
-                              const detalles = Array.isArray(noti.detalles)
-                                ? noti.detalles
-                                : [];
+                            notifications.map((noti) => (
+                              <div
+                                key={noti.id}
+                                className={`lux-noti-item ${
+                                  noti.leido ? "read" : "unread"
+                                }`}
+                              >
+                                <p className="lux-noti-text">{noti.mensaje}</p>
+                                <span className="lux-noti-time">
+                                  {noti.tiempo}
+                                </span>
 
-                              return (
-                                <div
-                                  key={noti.id}
-                                  className={`lux-noti-item ${
-                                    noti.leido ? "read" : "unread"
-                                  }`}
-                                >
-                                  <div className="lux-noti-topline">
-                                    <div>
-                                      <span className="lux-noti-kind">{kindLabel}</span>
-                                      <p className="lux-noti-text" style={{ marginTop: 8 }}>
-                                        {noti.titulo || noti.mensaje}
-                                      </p>
-                                      <span className="lux-noti-time">{noti.tiempo}</span>
-                                    </div>
-                                    <div className="lux-noti-total">{money(noti.total)}</div>
-                                  </div>
-
-                                  <div className="lux-noti-meta-grid">
-                                    <div className="lux-noti-meta-card">
-                                      <span className="lux-noti-meta-label">Cliente</span>
-                                      <span className="lux-noti-meta-value">{noti.cliente}</span>
-                                    </div>
-                                    <div className="lux-noti-meta-card">
-                                      <span className="lux-noti-meta-label">Sucursal</span>
-                                      <span className="lux-noti-meta-value">{noti.sucursal}</span>
-                                    </div>
-                                    <div className="lux-noti-meta-card">
-                                      <span className="lux-noti-meta-label">Vendedor</span>
-                                      <span className="lux-noti-meta-value">{noti.vendedor}</span>
-                                    </div>
-                                    <div className="lux-noti-meta-card">
-                                      <span className="lux-noti-meta-label">Estado</span>
-                                      <span className="lux-noti-meta-value">{noti.estado}</span>
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    className="lux-noti-detail-btn"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setExpandedNoti((prev) => ({
-                                        ...prev,
-                                        [noti.id]: !prev[noti.id],
-                                      }));
-                                    }}
+                                {noti.tipo === "pendiente" && (
+                                  <div
+                                    className="lux-noti-actions"
+                                    onClick={(e) => e.stopPropagation()}
                                   >
-                                    {isExpanded ? "Ocultar detalles" : "Ver detalles"}
-                                  </button>
-
-                                  {isExpanded && (
-                                    <div className="lux-noti-detail-panel">
-                                      <div className="lux-noti-detail-title">
-                                        Productos solicitados
-                                      </div>
-                                      {detalles.length === 0 ? (
-                                        <div className="lux-noti-empty-detail">
-                                          No hay detalles disponibles para mostrar.
-                                        </div>
-                                      ) : (
-                                        detalles.map((detalle, index) => (
-                                          <div
-                                            className="lux-noti-product-row"
-                                            key={`${noti.id}-detalle-${index}`}
-                                          >
-                                            <div>
-                                              <div className="lux-noti-product-name">
-                                                {getDetalleNombre(detalle)}
-                                              </div>
-                                              <div className="lux-noti-product-sub">
-                                                Cantidad: {detalle.cantidad || 0} · Presentación: {detalle.presentacion || "—"}
-                                              </div>
-                                            </div>
-                                            <div className="lux-noti-product-money">
-                                              {money(
-                                                detalle.subtotal ||
-                                                  Number(detalle.cantidad || 0) *
-                                                    Number(detalle.precio_unitario || 0)
-                                              )}
-                                            </div>
-                                          </div>
-                                        ))
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {noti.tipo === "pendiente" && (
-                                    <div
-                                      className="lux-noti-actions"
-                                      onClick={(e) => e.stopPropagation()}
+                                    <button
+                                      type="button"
+                                      className="lux-btn-approve"
+                                      onClick={() =>
+                                        handleAprobarMonto(noti)
+                                      }
                                     >
-                                      <button
-                                        type="button"
-                                        className="lux-btn-approve"
-                                        onClick={() => handleAprobarMonto(noti)}
-                                      >
-                                        Aprobar
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="lux-btn-reject"
-                                        onClick={() => handleRechazarMonto(noti)}
-                                      >
-                                        Rechazar
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })
+                                      Aprobar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="lux-btn-reject"
+                                      onClick={() =>
+                                        handleRechazarMonto(noti)
+                                      }
+                                    >
+                                      Rechazar
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ))
                           )}
                         </div>
                       </motion.div>

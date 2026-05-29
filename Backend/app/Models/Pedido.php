@@ -29,6 +29,10 @@ class Pedido extends Model
         'fecha_entrega',
         'entregado_en',
         'canal',
+
+        'monto_variable_estado',
+        'monto_variable_aprobado_por',
+        'monto_variable_aprobado_en',
     ];
 
     protected $casts = [
@@ -44,6 +48,9 @@ class Pedido extends Model
         'entregado_en'   => 'datetime',
         'creado_en'      => 'datetime',
         'actualizado_en' => 'datetime',
+
+        'monto_variable_aprobado_por' => 'int',
+        'monto_variable_aprobado_en'  => 'datetime',
     ];
 
     public function detalles()

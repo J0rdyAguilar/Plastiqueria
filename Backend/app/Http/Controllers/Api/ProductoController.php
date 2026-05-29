@@ -20,7 +20,7 @@ class ProductoController extends Controller
 
         $query = Producto::with([
             'imagenPrincipal:id,producto_id,url,es_principal,orden',
-            'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
+            'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,precio_ruta,activo,creado_en,actualizado_en',
         ]);
 
         if ($q !== '') {
@@ -63,6 +63,7 @@ class ProductoController extends Controller
             'precios.*.factor_base' => 'required|numeric|min:0.0001',
             'precios.*.precio_costo' => 'required|numeric|min:0',
             'precios.*.precio_venta' => 'required|numeric|min:0',
+            'precios.*.precio_ruta' => 'nullable|numeric|min:0',
             'precios.*.activo' => 'nullable|boolean',
         ]);
 
@@ -86,6 +87,7 @@ class ProductoController extends Controller
                     'factor_base' => $item['factor_base'],
                     'precio_costo' => $item['precio_costo'],
                     'precio_venta' => $item['precio_venta'],
+                    'precio_ruta' => $item['precio_ruta'] ?? $item['precio_venta'],
                     'activo' => $item['activo'] ?? true,
                     'creado_en' => $ahora,
                     'actualizado_en' => $ahora,
@@ -94,7 +96,7 @@ class ProductoController extends Controller
 
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
-                'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
+                'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,precio_ruta,activo,creado_en,actualizado_en',
             ]);
 
             return response()->json([
@@ -107,7 +109,7 @@ class ProductoController extends Controller
     public function show(Producto $producto)
     {
         $producto->load([
-            'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
+            'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,precio_ruta,activo,creado_en,actualizado_en',
             'imagenes',
             'imagenPrincipal',
         ]);
@@ -137,6 +139,7 @@ class ProductoController extends Controller
             'precios.*.factor_base' => 'required|numeric|min:0.0001',
             'precios.*.precio_costo' => 'required|numeric|min:0',
             'precios.*.precio_venta' => 'required|numeric|min:0',
+            'precios.*.precio_ruta' => 'nullable|numeric|min:0',
             'precios.*.activo' => 'nullable|boolean',
         ]);
 
@@ -180,6 +183,7 @@ class ProductoController extends Controller
                             'factor_base' => $item['factor_base'],
                             'precio_costo' => $item['precio_costo'],
                             'precio_venta' => $item['precio_venta'],
+                    'precio_ruta' => $item['precio_ruta'] ?? $item['precio_venta'],
                             'activo' => $item['activo'] ?? true,
                             'actualizado_en' => $ahora,
                         ]);
@@ -190,6 +194,7 @@ class ProductoController extends Controller
                             'factor_base' => $item['factor_base'],
                             'precio_costo' => $item['precio_costo'],
                             'precio_venta' => $item['precio_venta'],
+                    'precio_ruta' => $item['precio_ruta'] ?? $item['precio_venta'],
                             'activo' => $item['activo'] ?? true,
                             'creado_en' => $ahora,
                             'actualizado_en' => $ahora,
@@ -202,6 +207,7 @@ class ProductoController extends Controller
                         'factor_base' => $item['factor_base'],
                         'precio_costo' => $item['precio_costo'],
                         'precio_venta' => $item['precio_venta'],
+                    'precio_ruta' => $item['precio_ruta'] ?? $item['precio_venta'],
                         'activo' => $item['activo'] ?? true,
                         'creado_en' => $ahora,
                         'actualizado_en' => $ahora,
@@ -211,7 +217,7 @@ class ProductoController extends Controller
 
             $producto->load([
                 'imagenPrincipal:id,producto_id,url,es_principal,orden',
-                'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,activo,creado_en,actualizado_en',
+                'precios:id,producto_id,presentacion,factor_base,precio_costo,precio_venta,precio_ruta,activo,creado_en,actualizado_en',
             ]);
 
             return response()->json([

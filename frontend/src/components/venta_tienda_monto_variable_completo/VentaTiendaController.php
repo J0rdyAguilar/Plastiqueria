@@ -90,20 +90,13 @@ class VentaTiendaController extends Controller
                 return (int) $m->producto_id === (int) $d->producto_id;
             });
 
-            $productoPrecioId = (int) (
-                $mov?->producto_precio_id
-                ?? $d->producto_precio_id
-                ?? 0
-            );
-
-            $presentacion = $mov?->presentacion ?? $d->presentacion ?? null;
             $productoPrecio = null;
 
-            if ($productoPrecioId > 0) {
+            if ($mov && !empty($mov->producto_precio_id)) {
                 if ($preciosById !== null) {
-                    $productoPrecio = $preciosById->get($productoPrecioId);
+                    $productoPrecio = $preciosById->get((int) $mov->producto_precio_id);
                 } else {
-                    $productoPrecio = ProductoPrecio::query()->find($productoPrecioId);
+                    $productoPrecio = ProductoPrecio::query()->find((int) $mov->producto_precio_id);
                 }
             }
 
@@ -119,8 +112,8 @@ class VentaTiendaController extends Controller
                 'id' => $d->id,
                 'producto_id' => (int) $d->producto_id,
                 'producto_nombre' => $d->producto?->nombre ?? null,
-                'producto_precio_id' => $productoPrecioId > 0 ? $productoPrecioId : null,
-                'presentacion' => $presentacion,
+                'producto_precio_id' => $mov ? (int) ($mov->producto_precio_id ?? 0) : null,
+                'presentacion' => $mov?->presentacion ?? null,
                 'cantidad' => $cantidad,
                 'precio_costo' => $precioCosto,
                 'precio_unitario' => $precioUnitario,
@@ -414,144 +407,6 @@ class VentaTiendaController extends Controller
         ]);
     }
 
-    private function crearDetallesVenta(VentaTienda $venta, array $itemsPreparados): void
-    {
-        foreach ($itemsPreparados as $item) {
-            VentaTiendaDetalle::create([
-                'venta_id' => (int) $venta->id,
-                'producto_id' => (int) $item['producto_id'],
-                'producto_precio_id' => (int) $item['producto_precio_id'],
-                'presentacion' => $item['presentacion'] ?? null,
-                'cantidad' => (float) $item['cantidad'],
-                'precio_unitario' => (float) $item['precio_unitario'],
-                'subtotal' => (float) $item['subtotal'],
-                'es_monto_variable' => !empty($item['es_monto_variable']) ? 1 : 0,
-                'creado_en' => now(),
-            ]);
-        }
-    }
-
-    private function procesarVentaCompletada(VentaTienda $venta, $user, ?array $cuotasData = null): void
-    {
-        $venta->loadMissing(['detalles']);
-
-        $yaDescontoStock = MovimientoStock::query()
-            ->where('referencia_tipo', 'venta_tienda')
-            ->where('referencia_id', (int) $venta->id)
-            ->exists();
-
-        if (!$yaDescontoStock) {
-            foreach ($venta->detalles as $detalle) {
-                $productoId = (int) $detalle->producto_id;
-                $productoPrecioId = (int) ($detalle->producto_precio_id ?? 0);
-                $cantidad = (float) ($detalle->cantidad ?? 0);
-
-                if ($productoPrecioId <= 0) {
-                    throw new \RuntimeException(
-                        "El detalle de la venta #{$venta->id} no tiene producto_precio_id. No se puede descontar stock."
-                    );
-                }
-
-                $stock = Stock::query()
-                    ->where('ubicacion_id', (int) $venta->ubicacion_id)
-                    ->where('producto_id', $productoId)
-                    ->where('producto_precio_id', $productoPrecioId)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$stock) {
-                    throw new \RuntimeException(
-                        "No existe stock para el producto {$productoId} en esta sucursal."
-                    );
-                }
-
-                $disponible = (float) ($stock->cantidad ?? 0);
-
-                if ($disponible < $cantidad) {
-                    throw new \RuntimeException(
-                        "Stock insuficiente para el producto {$productoId}. Disponible: {$disponible}"
-                    );
-                }
-
-                $productoPrecio = ProductoPrecio::query()->find($productoPrecioId);
-                $cantidadBase = $this->cantidadBaseDesdeProductoPrecio($productoPrecio, $cantidad);
-
-                $stock->cantidad = $disponible - $cantidad;
-                $stock->save();
-
-                MovimientoStock::create([
-                    'tipo' => 'salida',
-                    'producto_id' => $productoId,
-                    'producto_precio_id' => $productoPrecioId,
-                    'ubicacion_origen_id' => (int) $venta->ubicacion_id,
-                    'ubicacion_destino_id' => null,
-                    'cantidad' => $cantidad,
-                    'cantidad_base' => $cantidadBase,
-                    'presentacion' => $detalle->presentacion ?? $productoPrecio?->presentacion,
-                    'motivo' => 'Venta tienda',
-                    'referencia_tipo' => 'venta_tienda',
-                    'referencia_id' => (int) $venta->id,
-                    'creado_por' => (int) $user->id,
-                    'creado_en' => now(),
-                ]);
-            }
-        }
-
-        $esCuotas = $venta->metodo_pago === 'cuotas';
-
-        if (!$esCuotas) {
-            $yaTieneMovimientoCaja = MovimientoCaja::query()
-                ->where('referencia_tipo', 'venta_tienda')
-                ->where('referencia_id', (int) $venta->id)
-                ->exists();
-
-            if (!$yaTieneMovimientoCaja) {
-                $caja = Caja::query()
-                    ->where('ubicacion_id', (int) $venta->ubicacion_id)
-                    ->whereNull('cerrado_en')
-                    ->latest('id')
-                    ->first();
-
-                if (!$caja) {
-                    throw new \RuntimeException(
-                        'No hay una caja abierta en esta sucursal para registrar la venta.'
-                    );
-                }
-
-                MovimientoCaja::create([
-                    'caja_id' => (int) $caja->id,
-                    'ubicacion_id' => (int) $venta->ubicacion_id,
-                    'usuario_id' => (int) $user->id,
-                    'tipo' => 'ingreso',
-                    'concepto' => 'venta_tienda',
-                    'monto' => (float) $venta->total,
-                    'metodo_pago' => $venta->metodo_pago,
-                    'referencia_id' => (int) $venta->id,
-                    'referencia_tipo' => 'venta_tienda',
-                    'notas' => 'Venta registrada desde módulo de tienda'
-                        . (!empty($venta->referencia_pago) ? ' | Ref: ' . $venta->referencia_pago : ''),
-                ]);
-            }
-        }
-
-        if ($esCuotas && $cuotasData !== null) {
-            app(RegistrarCuotaService::class)->registrarVentaTienda([
-                'venta_id' => (int) $venta->id,
-                'cliente_id' => (int) $venta->cliente_id,
-                'ubicacion_id' => (int) $venta->ubicacion_id,
-                'rutero_id' => null,
-                'usuario_id' => (int) $user->id,
-                'total' => (float) $venta->total,
-                'numero_cuotas' => (int) $cuotasData['numero_cuotas'],
-                'frecuencia_pago' => $cuotasData['frecuencia_pago'] ?? 'mensual',
-                'fecha_primer_pago' => !empty($cuotasData['fecha_primer_pago'])
-                    ? Carbon::parse($cuotasData['fecha_primer_pago'])
-                    : now()->addMonth(),
-                'observaciones' => $venta->referencia_pago,
-            ]);
-        }
-    }
-
     public function store(Request $request)
     {
         $user = $request->user();
@@ -584,11 +439,6 @@ class VentaTiendaController extends Controller
             'items.*.es_monto_variable' => ['nullable', 'in:0,1,true,false'],
         ]);
 
-        $tieneMontoVariable = collect($data['items'])->contains(function ($item) {
-            return !empty($item['es_monto_variable'])
-                && !in_array($item['es_monto_variable'], ['0', 0, false], true);
-        });
-
         if (($data['metodo_pago'] ?? '') === 'cuotas') {
             if (empty($data['cliente_id'])) {
                 return response()->json([
@@ -599,12 +449,6 @@ class VentaTiendaController extends Controller
             if (empty($data['numero_cuotas']) || (int) $data['numero_cuotas'] < 1) {
                 return response()->json([
                     'message' => 'Debes indicar el número de cuotas.'
-                ], 422);
-            }
-
-            if ($tieneMontoVariable) {
-                return response()->json([
-                    'message' => 'Las ventas a crédito con monto variable deben aprobarse manualmente. Usa efectivo/tarjeta o registra la venta sin monto variable.'
                 ], 422);
             }
         }
@@ -623,109 +467,180 @@ class VentaTiendaController extends Controller
             ], 422);
         }
 
-        try {
-            return DB::transaction(function () use ($data, $user, $ventaUbicacionId, $tieneMontoVariable) {
-                $subtotal = 0;
-                $itemsPreparados = [];
+        return DB::transaction(function () use ($data, $user, $ventaUbicacionId) {
+            $subtotal = 0;
+            $itemsPreparados = [];
+            $tieneMontoVariable = false;
 
-                foreach ($data['items'] as $item) {
-                    $productoId = (int) $item['producto_id'];
-                    $productoPrecioId = (int) $item['producto_precio_id'];
-                    $cantidad = (float) $item['cantidad'];
-                    $precioUnitario = (float) $item['precio_unitario'];
-                    $esMontoVariable = !empty($item['es_monto_variable'])
-                        && !in_array($item['es_monto_variable'], ['0', 0, false], true);
+            foreach ($data['items'] as $item) {
+                $productoId = (int) $item['producto_id'];
+                $productoPrecioId = (int) $item['producto_precio_id'];
+                $cantidad = (float) $item['cantidad'];
+                $precioUnitario = (float) $item['precio_unitario'];
+                $esMontoVariable = !empty($item['es_monto_variable']);
 
-                    $stock = Stock::query()
-                        ->where('ubicacion_id', $ventaUbicacionId)
-                        ->where('producto_id', $productoId)
-                        ->where('producto_precio_id', $productoPrecioId)
-                        ->lockForUpdate()
-                        ->first();
-
-                    if (!$stock) {
-                        return response()->json([
-                            'message' => "No existe stock para esa presentación del producto {$productoId} en esta sucursal."
-                        ], 422);
-                    }
-
-                    $productoPrecio = ProductoPrecio::query()->find($productoPrecioId);
-                    $cantidadBase = $this->cantidadBaseDesdeProductoPrecio($productoPrecio, $cantidad);
-
-                    $disponible = (float) ($stock->cantidad ?? 0);
-
-                    if ($disponible < $cantidad) {
-                        return response()->json([
-                            'message' => "Stock insuficiente para el producto {$productoId}. Disponible: {$disponible}"
-                        ], 422);
-                    }
-
-                    $subtotalItem = round($cantidad * $precioUnitario, 2);
-                    $subtotal += $subtotalItem;
-
-                    $itemsPreparados[] = [
-                        'producto_id' => $productoId,
-                        'producto_precio_id' => $productoPrecioId,
-                        'cantidad' => $cantidad,
-                        'cantidad_base' => $cantidadBase,
-                        'precio_unitario' => $precioUnitario,
-                        'subtotal' => $subtotalItem,
-                        'presentacion' => $item['presentacion'] ?? $productoPrecio?->presentacion,
-                        'es_monto_variable' => $esMontoVariable ? 1 : 0,
-                    ];
+                if ($esMontoVariable) {
+                    $tieneMontoVariable = true;
                 }
 
-                $esCuotas = ($data['metodo_pago'] ?? 'efectivo') === 'cuotas';
-                $total = round((float) $subtotal, 2);
+                $stock = Stock::query()
+                    ->where('ubicacion_id', $ventaUbicacionId)
+                    ->where('producto_id', $productoId)
+                    ->where('producto_precio_id', $productoPrecioId)
+                    ->lockForUpdate()
+                    ->first();
 
-                $venta = VentaTienda::create([
-                    'ubicacion_id' => $ventaUbicacionId,
-                    'usuario_id' => (int) $user->id,
-                    'cliente_id' => !empty($data['cliente_id']) ? (int) $data['cliente_id'] : null,
-                    'estado' => $tieneMontoVariable ? 'pendiente_revision' : 'completada',
-                    'metodo_pago' => $data['metodo_pago'],
-                    'referencia_pago' => $data['referencia_pago'] ?? null,
-                    'subtotal' => $total,
-                    'descuento' => 0,
-                    'total' => $total,
-                    'saldo_pendiente' => $esCuotas ? $total : 0,
-                    'monto_variable_estado' => $tieneMontoVariable ? 'pendiente' : null,
-                    'monto_variable_aprobado_por' => null,
-                    'monto_variable_aprobado_en' => null,
+                if (!$stock) {
+                    return response()->json([
+                        'message' => "No existe stock para esa presentación del producto {$productoId} en esta sucursal."
+                    ], 422);
+                }
+
+                $productoPrecio = ProductoPrecio::query()->find($productoPrecioId);
+                $cantidadBase = $this->cantidadBaseDesdeProductoPrecio($productoPrecio, $cantidad);
+
+                $disponible = (float) ($stock->cantidad ?? 0);
+
+                if ($disponible < $cantidad) {
+                    return response()->json([
+                        'message' => "Stock insuficiente para el producto {$productoId}. Disponible: {$disponible}"
+                    ], 422);
+                }
+
+                $subtotalItem = round($cantidad * $precioUnitario, 2);
+                $subtotal += $subtotalItem;
+
+                $itemsPreparados[] = [
+                    'producto_id' => $productoId,
+                    'producto_precio_id' => $productoPrecioId,
+                    'cantidad' => $cantidad,
+                    'cantidad_base' => $cantidadBase,
+                    'precio_unitario' => $precioUnitario,
+                    'subtotal' => $subtotalItem,
+                    'presentacion' => $item['presentacion'] ?? null,
+                    'es_monto_variable' => $esMontoVariable ? 1 : 0,
+                ];
+            }
+
+            $esCuotas = ($data['metodo_pago'] ?? 'efectivo') === 'cuotas';
+            $total = round((float) $subtotal, 2);
+
+            $venta = VentaTienda::create([
+                'ubicacion_id'    => $ventaUbicacionId,
+                'usuario_id'      => (int) $user->id,
+                'cliente_id'      => !empty($data['cliente_id']) ? (int) $data['cliente_id'] : null,
+                'estado'          => 'completada',
+                'metodo_pago'     => $data['metodo_pago'],
+                'referencia_pago' => $data['referencia_pago'] ?? null,
+                'subtotal'        => $total,
+                'descuento'       => 0,
+                'total'           => $total,
+                'saldo_pendiente' => $esCuotas ? $total : 0,
+                'monto_variable_estado' => $tieneMontoVariable ? 'pendiente' : null,
+                'monto_variable_aprobado_por' => null,
+                'monto_variable_aprobado_en' => null,
+                'creado_en'       => now(),
+            ]);
+
+            foreach ($itemsPreparados as $item) {
+                VentaTiendaDetalle::create([
+                    'venta_id'        => (int) $venta->id,
+                    'producto_id'     => $item['producto_id'],
+                    'cantidad'        => $item['cantidad'],
+                    'precio_unitario' => $item['precio_unitario'],
+                    'subtotal'        => $item['subtotal'],
+                    'es_monto_variable' => $item['es_monto_variable'],
+                ]);
+
+                $stock = Stock::query()
+                    ->where('ubicacion_id', $ventaUbicacionId)
+                    ->where('producto_id', $item['producto_id'])
+                    ->where('producto_precio_id', $item['producto_precio_id'])
+                    ->lockForUpdate()
+                    ->first();
+
+                $stock->cantidad = (float) $stock->cantidad - (float) $item['cantidad'];
+                $stock->save();
+
+                MovimientoStock::create([
+                    'tipo' => 'salida',
+                    'producto_id' => $item['producto_id'],
+                    'producto_precio_id' => $item['producto_precio_id'],
+                    'ubicacion_origen_id' => $ventaUbicacionId,
+                    'ubicacion_destino_id' => null,
+                    'cantidad' => $item['cantidad'],
+                    'cantidad_base' => $item['cantidad_base'],
+                    'presentacion' => $item['presentacion'],
+                    'motivo' => 'Venta tienda',
+                    'referencia_tipo' => 'venta_tienda',
+                    'referencia_id' => (int) $venta->id,
+                    'creado_por' => (int) $user->id,
                     'creado_en' => now(),
                 ]);
+            }
 
-                $this->crearDetallesVenta($venta, $itemsPreparados);
+            if (!$esCuotas) {
+                $caja = Caja::query()
+                    ->where('ubicacion_id', $ventaUbicacionId)
+                    ->whereNull('cerrado_en')
+                    ->latest('id')
+                    ->first();
 
-                if (!$tieneMontoVariable) {
-                    $this->procesarVentaCompletada($venta, $user, $esCuotas ? [
-                        'numero_cuotas' => (int) $data['numero_cuotas'],
-                        'frecuencia_pago' => $data['frecuencia_pago'] ?? 'mensual',
-                        'fecha_primer_pago' => $data['fecha_primer_pago'] ?? null,
-                    ] : null);
+                if (!$caja) {
+                    return response()->json([
+                        'message' => 'No hay una caja abierta en esta sucursal para registrar la venta.'
+                    ], 422);
                 }
 
-                $venta->load([
-                    'ubicacion:id,nombre',
-                    'usuario:id,usuario,nombre',
-                    'cliente:id,nombre',
-                    'detalles.producto:id,nombre',
+                MovimientoCaja::create([
+                    'caja_id' => (int) $caja->id,
+                    'ubicacion_id' => (int) $ventaUbicacionId,
+                    'usuario_id' => (int) $user->id,
+                    'tipo' => 'ingreso',
+                    'concepto' => 'venta_tienda',
+                    'monto' => $total,
+                    'metodo_pago' => $data['metodo_pago'],
+                    'referencia_id' => (int) $venta->id,
+                    'referencia_tipo' => 'venta_tienda',
+                    'notas' => 'Venta registrada desde módulo de tienda'
+                        . (!empty($data['nombre_comprador']) ? ' | Comprador: ' . $data['nombre_comprador'] : '')
+                        . (!empty($data['referencia_pago']) ? ' | Ref: ' . $data['referencia_pago'] : ''),
                 ]);
+            }
 
-                return response()->json([
-                    'message' => $tieneMontoVariable
-                        ? 'Venta enviada a aprobación del Super Admin. No se descontó stock ni se registró movimiento de caja.'
-                        : ($esCuotas ? 'Venta a crédito registrada correctamente.' : 'Venta registrada correctamente.'),
-                    'requiere_aprobacion' => $tieneMontoVariable,
-                    'data' => $this->buildVentaResponse($venta),
-                ], 201);
-            });
-        } catch (\Throwable $e) {
+            if ($esCuotas) {
+                app(RegistrarCuotaService::class)->registrarVentaTienda([
+                    'venta_id' => (int) $venta->id,
+                    'cliente_id' => (int) $data['cliente_id'],
+                    'ubicacion_id' => (int) $ventaUbicacionId,
+                    'rutero_id' => null,
+                    'usuario_id' => (int) $user->id,
+                    'total' => $total,
+                    'numero_cuotas' => (int) $data['numero_cuotas'],
+                    'frecuencia_pago' => $data['frecuencia_pago'] ?? 'mensual',
+                    'fecha_primer_pago' => !empty($data['fecha_primer_pago'])
+                        ? Carbon::parse($data['fecha_primer_pago'])
+                        : now()->addMonth(),
+                    'observaciones' => $data['referencia_pago'] ?? null,
+                ]);
+            }
+
+            $venta->load([
+                'ubicacion:id,nombre',
+                'usuario:id,usuario,nombre',
+                'cliente:id,nombre',
+                'detalles.producto:id,nombre',
+            ]);
+
             return response()->json([
-                'message' => $e->getMessage() ?: 'No se pudo registrar la venta.'
-            ], 422);
-        }
+                'message' => $esCuotas
+                    ? 'Venta a crédito registrada correctamente.'
+                    : 'Venta registrada correctamente.',
+                'data' => $this->buildVentaResponse($venta),
+            ], 201);
+        });
     }
+
 
     public function montosVariablesPendientes(Request $request)
     {
@@ -776,50 +691,22 @@ class VentaTiendaController extends Controller
             return response()->json(['message' => 'Esta venta no tiene monto variable pendiente.'], 422);
         }
 
-        if ($venta->metodo_pago === 'cuotas') {
-            return response()->json([
-                'message' => 'No se puede aprobar automáticamente una venta a crédito con monto variable porque no se deben generar cuotas antes de aprobación.'
-            ], 422);
-        }
+        $venta->monto_variable_estado = 'aprobado';
+        $venta->monto_variable_aprobado_por = (int) $user->id;
+        $venta->monto_variable_aprobado_en = now();
+        $venta->save();
 
-        try {
-            return DB::transaction(function () use ($venta, $user) {
-                $venta = VentaTienda::query()
-                    ->where('id', (int) $venta->id)
-                    ->lockForUpdate()
-                    ->firstOrFail();
+        $venta->load([
+            'ubicacion:id,nombre',
+            'usuario:id,usuario,nombre',
+            'cliente:id,nombre',
+            'detalles.producto:id,nombre',
+        ]);
 
-                if ($venta->monto_variable_estado !== 'pendiente') {
-                    return response()->json([
-                        'message' => 'Esta venta ya fue procesada.'
-                    ], 422);
-                }
-
-                $venta->estado = 'completada';
-                $venta->monto_variable_estado = 'aprobado';
-                $venta->monto_variable_aprobado_por = (int) $user->id;
-                $venta->monto_variable_aprobado_en = now();
-                $venta->save();
-
-                $this->procesarVentaCompletada($venta, $user, null);
-
-                $venta->load([
-                    'ubicacion:id,nombre',
-                    'usuario:id,usuario,nombre',
-                    'cliente:id,nombre',
-                    'detalles.producto:id,nombre',
-                ]);
-
-                return response()->json([
-                    'message' => 'Monto variable aprobado. La venta fue completada, se descontó stock y se registró caja.',
-                    'data' => $this->buildVentaResponse($venta),
-                ]);
-            });
-        } catch (\Throwable $e) {
-            return response()->json([
-                'message' => $e->getMessage() ?: 'No se pudo aprobar la venta.'
-            ], 422);
-        }
+        return response()->json([
+            'message' => 'Monto variable de venta tienda aprobado correctamente.',
+            'data' => $this->buildVentaResponse($venta),
+        ]);
     }
 
     public function rechazarMontoVariable(VentaTienda $venta, Request $request)
@@ -843,7 +730,6 @@ class VentaTiendaController extends Controller
             return response()->json(['message' => 'Esta venta no tiene monto variable pendiente.'], 422);
         }
 
-        $venta->estado = 'rechazada';
         $venta->monto_variable_estado = 'rechazado';
         $venta->monto_variable_aprobado_por = (int) $user->id;
         $venta->monto_variable_aprobado_en = now();
@@ -857,9 +743,8 @@ class VentaTiendaController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'Monto variable rechazado. No se descontó stock ni se registró movimiento de caja.',
+            'message' => 'Monto variable de venta tienda rechazado correctamente.',
             'data' => $this->buildVentaResponse($venta),
         ]);
     }
-
 }

@@ -6,6 +6,7 @@ import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Usuarios from "./pages/Usuarios";
+import Clientes from "./pages/Clientes";
 import Vendedores from "./pages/Vendedores";
 import Zonas from "./pages/Zonas";
 import Rutas from "./pages/Rutas";
@@ -125,6 +126,16 @@ export const router = createBrowserRouter([
     element: (
       <WrapWithLayout roles={["admin", "super_admin"]}>
         <Dashboard />
+      </WrapWithLayout>
+    ),
+  },
+
+
+  {
+    path: "/clientes",
+    element: (
+      <WrapWithLayout roles={["super_admin"]}>
+        <Clientes />
       </WrapWithLayout>
     ),
   },

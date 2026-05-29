@@ -99,7 +99,6 @@ class PedidoController extends Controller
         $precioVenta = (float) ($d->precio_unitario ?? 0);
         $precioCosto = (float) ($precioConfig?->precio_costo ?? 0);
         $precioVentaCatalogo = (float) ($precioConfig?->precio_venta ?? 0);
-        $precioRutaCatalogo = (float) ($precioConfig?->precio_ruta ?? $precioConfig?->precio_venta ?? 0);
         $subtotal = (float) ($d->subtotal ?? 0);
 
         if ($subtotal <= 0) {
@@ -121,7 +120,6 @@ class PedidoController extends Controller
             'precio_costo' => $precioCosto,
             'precio_unitario' => $precioVenta,
             'precio_venta_catalogo' => $precioVentaCatalogo,
-            'precio_ruta_catalogo' => $precioRutaCatalogo,
 
             'subtotal' => $subtotal,
             'ganancia_unitaria' => $gananciaUnitaria,
@@ -180,6 +178,11 @@ class PedidoController extends Controller
             'actualizado_en' => optional($p->actualizado_en)->format('Y-m-d H:i:s'),
             'fecha_en_ruta' => optional($p->fecha_en_ruta)->format('Y-m-d H:i:s'),
             'entregado_en' => optional($p->entregado_en)->format('Y-m-d H:i:s'),
+
+            'monto_variable_estado' => $p->monto_variable_estado,
+            'monto_variable_aprobado_por' => $p->monto_variable_aprobado_por,
+            'monto_variable_aprobado_en' => optional($p->monto_variable_aprobado_en)->format('Y-m-d H:i:s'),
+            'tiene_monto_variable' => $detalles->contains(fn($d) => !empty($d['es_monto_variable'])),
 
             'rutero' => $p->rutero ? [
                 'id' => (int) $p->rutero->id,
@@ -363,7 +366,6 @@ class PedidoController extends Controller
                 ->values(),
         ]);
     }
-
     public function store(Request $request)
     {
         $user = $request->user();
@@ -444,46 +446,18 @@ class PedidoController extends Controller
         }
 
         return DB::transaction(function () use ($data) {
-            /*
-             * IMPORTANTE:
-             * - Si NO es monto variable, el backend fuerza precio_ruta como precio del pedido.
-             * - Si SÍ es monto variable, respeta el precio solicitado por el vendedor.
-             * Así ya no depende del frontend y pedidos/ruteros no usarán precio_venta por error.
-             */
-            $detallesNormalizados = collect($data['detalles'])->map(function ($d) {
-                $productoId = (int) $d['producto_id'];
-                $presentacion = (string) $d['presentacion'];
+            $tieneMontoVariable = collect($data['detalles'])->contains(function ($d) {
+                return !empty($d['es_monto_variable']);
+            });
+
+            $total = collect($data['detalles'])->sum(function ($d) {
                 $cantidad = (float) ($d['cantidad'] ?? 0);
-                $cantidadBase = (int) ($d['cantidad_base'] ?? 0);
-                $esMontoVariable = !empty($d['es_monto_variable']);
+                $precio = (float) ($d['precio_unitario'] ?? 0);
 
-                $precioConfig = $this->findProductoPrecio($productoId, $presentacion);
-
-                $precioRutaCatalogo = (float) (
-                    $precioConfig?->precio_ruta
-                    ?? $precioConfig?->precio_venta
-                    ?? $d['precio_unitario']
-                    ?? 0
-                );
-
-                $precio = $esMontoVariable
-                    ? (float) ($d['precio_unitario'] ?? 0)
-                    : $precioRutaCatalogo;
-
-                $subtotal = $cantidad * $precio;
-
-                return [
-                    'producto_id' => $productoId,
-                    'presentacion' => $presentacion,
-                    'cantidad' => $cantidad,
-                    'cantidad_base' => $cantidadBase,
-                    'precio_unitario' => $precio,
-                    'subtotal' => $subtotal,
-                    'es_monto_variable' => $esMontoVariable ? 1 : 0,
-                ];
-            })->values();
-
-            $total = (float) $detallesNormalizados->sum('subtotal');
+                return array_key_exists('subtotal', $d) && $d['subtotal'] !== null
+                    ? (float) $d['subtotal']
+                    : ($cantidad * $precio);
+            });
 
             $pedido = Pedido::create([
                 'codigo' => $this->generarCodigo(),
@@ -499,27 +473,44 @@ class PedidoController extends Controller
                 'fecha_pedido' => now()->toDateString(),
                 'fecha_en_ruta' => null,
                 'canal' => 'ruta',
+
+                'monto_variable_estado' => $tieneMontoVariable ? 'pendiente' : null,
+                'monto_variable_aprobado_por' => null,
+                'monto_variable_aprobado_en' => null,
+
                 'creado_en' => now(),
                 'actualizado_en' => now(),
             ]);
 
-            foreach ($detallesNormalizados as $d) {
+            foreach ($data['detalles'] as $d) {
+                $cantidad = (float) $d['cantidad'];
+                $precio = (float) $d['precio_unitario'];
+
+                $subtotal = array_key_exists('subtotal', $d) && $d['subtotal'] !== null
+                    ? (float) $d['subtotal']
+                    : ($cantidad * $precio);
+
                 PedidoDetalle::create([
                     'pedido_id' => $pedido->id,
                     'producto_id' => (int) $d['producto_id'],
                     'presentacion' => $d['presentacion'],
-                    'cantidad' => (float) $d['cantidad'],
+                    'cantidad' => $cantidad,
                     'cantidad_base' => (int) $d['cantidad_base'],
-                    'precio_unitario' => (float) $d['precio_unitario'],
-                    'subtotal' => (float) $d['subtotal'],
+                    'precio_unitario' => $precio,
+                    'subtotal' => $subtotal,
                     'es_monto_variable' => !empty($d['es_monto_variable']) ? 1 : 0,
                 ]);
             }
 
+            $pedido->total = (float) $pedido->detalles()->sum('subtotal');
+            $pedido->save();
+
             $this->loadPedidoRelations($pedido);
 
             return response()->json([
-                'message' => 'Pedido creado correctamente.',
+                'message' => $tieneMontoVariable
+                    ? 'Pedido creado correctamente. El monto variable queda pendiente de aprobación del Super Admin.'
+                    : 'Pedido creado correctamente.',
                 'data' => $this->pedidoResponse($pedido),
             ], 201);
         });
@@ -725,6 +716,96 @@ class PedidoController extends Controller
             ]);
         });
     }
+    public function montosVariablesPendientes(Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+
+        if ($role !== 'super_admin') {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        $pedidos = Pedido::query()
+            ->with([
+                'cliente:id,nombre,ruta_id,zona_id',
+                'vendedor:id,codigo,usuario_id',
+                'vendedor.usuario:id,usuario,nombre',
+                'rutero:id,usuario,nombre,rol,ubicacion_id',
+                'ruta:id,nombre',
+                'zona:id,nombre',
+                'ubicacion:id,nombre,tipo',
+                'detalles.producto:id,nombre,sku',
+            ])
+            ->where('monto_variable_estado', 'pendiente')
+            ->orderByDesc('creado_en')
+            ->limit(50)
+            ->get();
+
+        return response()->json([
+            'data' => $pedidos
+                ->map(fn($p) => $this->pedidoResponse($p))
+                ->values(),
+        ]);
+    }
+
+    public function aprobarMontoVariable(Pedido $pedido, Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+
+        if ($role !== 'super_admin') {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($pedido->monto_variable_estado !== 'pendiente') {
+            return response()->json([
+                'message' => 'Este monto variable ya fue procesado o no está pendiente.'
+            ], 422);
+        }
+
+        $pedido->monto_variable_estado = 'aprobado';
+        $pedido->monto_variable_aprobado_por = (int) $user->id;
+        $pedido->monto_variable_aprobado_en = now();
+        $pedido->actualizado_en = now();
+        $pedido->save();
+
+        $this->loadPedidoRelations($pedido);
+
+        return response()->json([
+            'message' => 'Monto variable aprobado correctamente.',
+            'data' => $this->pedidoResponse($pedido),
+        ]);
+    }
+
+    public function rechazarMontoVariable(Pedido $pedido, Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+
+        if ($role !== 'super_admin') {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($pedido->monto_variable_estado !== 'pendiente') {
+            return response()->json([
+                'message' => 'Este monto variable ya fue procesado o no está pendiente.'
+            ], 422);
+        }
+
+        $pedido->monto_variable_estado = 'rechazado';
+        $pedido->monto_variable_aprobado_por = (int) $user->id;
+        $pedido->monto_variable_aprobado_en = now();
+        $pedido->actualizado_en = now();
+        $pedido->save();
+
+        $this->loadPedidoRelations($pedido);
+
+        return response()->json([
+            'message' => 'Monto variable rechazado correctamente.',
+            'data' => $this->pedidoResponse($pedido),
+        ]);
+    }
+
 
     public function preparar(Pedido $pedido, Request $request)
     {

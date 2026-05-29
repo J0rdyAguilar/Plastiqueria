@@ -23,6 +23,10 @@ class CajaController extends Controller
             return 'caja';
         }
 
+        if ($r === 'administrador_de_bodega' || $r === 'adminbod') {
+            return 'admin_bodega';
+        }
+
         return $r;
     }
 
@@ -34,179 +38,121 @@ class CajaController extends Controller
 
     private function canManageCaja(string $role): bool
     {
-        return in_array($role, ['super_admin', 'admin', 'caja'], true);
+        return in_array($role, ['super_admin', 'admin', 'admin_bodega', 'caja'], true);
     }
 
-    private function resolveUbicacionId(Request $request): ?int
+    private function canViewCaja(string $role): bool
     {
-        $user = $request->user();
-        $role = $this->roleOf($user);
-        $requested = $request->query('ubicacion_id');
+        return in_array($role, ['super_admin', 'admin', 'admin_bodega', 'caja', 'vendedor_tienda', 'rutero'], true);
+    }
 
+    private function resolveUbicacionId(Request $request, string $role): ?int
+    {
         if ($role === 'super_admin') {
-            return $requested ? (int) $requested : null;
+            $id = $request->query('ubicacion_id', $request->input('ubicacion_id'));
+            return $id !== null && $id !== '' ? (int) $id : null;
         }
 
-        return $this->userUbicacionId($user);
-    }
-
-    private function formatDateTime($value): ?string
-    {
-        if (!$value) {
-            return null;
-        }
-
-        try {
-            return $value->format('Y-m-d H:i:s');
-        } catch (\Throwable $e) {
-            try {
-                return Carbon::parse($value)->format('Y-m-d H:i:s');
-            } catch (\Throwable $e2) {
-                return (string) $value;
-            }
-        }
-    }
-
-    private function parseMes(?string $mes): array
-    {
-        $mes = trim((string) $mes);
-
-        if ($mes === '') {
-            $inicio = now()->startOfMonth();
-            $fin = now()->endOfMonth();
-            return [$inicio, $fin];
-        }
-
-        try {
-            $inicio = Carbon::createFromFormat('Y-m', $mes)->startOfMonth();
-            $fin = (clone $inicio)->endOfMonth();
-            return [$inicio, $fin];
-        } catch (\Throwable $e) {
-            $inicio = now()->startOfMonth();
-            $fin = now()->endOfMonth();
-            return [$inicio, $fin];
-        }
-    }
-
-    private function calcularTotalesCaja(Caja $caja): array
-    {
-        $ingresos = (float) MovimientoCaja::query()
-            ->where('caja_id', (int) $caja->id)
-            ->where('tipo', 'ingreso')
-            ->sum('monto');
-
-        $egresos = (float) MovimientoCaja::query()
-            ->where('caja_id', (int) $caja->id)
-            ->where('tipo', 'egreso')
-            ->sum('monto');
-
-        $inicial = (float) ($caja->efectivo_inicial ?? 0);
-        $saldoEsperado = $inicial + $ingresos - $egresos;
-
-        return [
-            'ingresos' => round($ingresos, 2),
-            'egresos' => round($egresos, 2),
-            'saldo_esperado' => round($saldoEsperado, 2),
-        ];
-    }
-
-    private function mapMovimiento($m): array
-    {
-        return [
-            'id' => (int) $m->id,
-            'tipo' => $m->tipo,
-            'concepto' => $m->concepto,
-            'monto' => (float) $m->monto,
-            'metodo_pago' => $m->metodo_pago,
-            'referencia_id' => $m->referencia_id,
-            'referencia_tipo' => $m->referencia_tipo,
-            'notas' => $m->notas,
-            'creado_en' => $this->formatDateTime($m->creado_en ?? $m->created_at ?? null),
-        ];
+        return $this->userUbicacionId($request->user());
     }
 
     private function mapCaja(Caja $caja, bool $withMovimientos = false): array
     {
-        $totales = $this->calcularTotalesCaja($caja);
+        $movimientos = $caja->relationLoaded('movimientos')
+            ? $caja->movimientos
+            : collect();
 
-        $base = [
+        $totalIngresos = (float) $movimientos
+            ->where('tipo', 'ingreso')
+            ->sum('monto');
+
+        $totalEgresos = (float) $movimientos
+            ->where('tipo', 'egreso')
+            ->sum('monto');
+
+        $saldoEsperado = ((float) $caja->efectivo_inicial + $totalIngresos) - $totalEgresos;
+
+        return [
             'id' => (int) $caja->id,
             'ubicacion_id' => (int) $caja->ubicacion_id,
-            'usuario_id' => !empty($caja->abierto_por) ? (int) $caja->abierto_por : null,
-            'ubicacion' => $caja->ubicacion ? [
-                'id' => (int) $caja->ubicacion->id,
-                'nombre' => $caja->ubicacion->nombre,
-            ] : null,
-            'abierto_en' => $this->formatDateTime($caja->abierto_en),
-            'cerrado_en' => $this->formatDateTime($caja->cerrado_en),
-            'efectivo_inicial' => (float) ($caja->efectivo_inicial ?? 0),
+            'ubicacion' => $caja->relationLoaded('ubicacion') && $caja->ubicacion
+                ? [
+                    'id' => (int) $caja->ubicacion->id,
+                    'nombre' => $caja->ubicacion->nombre,
+                ]
+                : null,
+            'abierto_en' => optional($caja->abierto_en)->toDateTimeString(),
+            'cerrado_en' => optional($caja->cerrado_en)->toDateTimeString(),
+            'efectivo_inicial' => (float) $caja->efectivo_inicial,
             'efectivo_final' => $caja->efectivo_final !== null ? (float) $caja->efectivo_final : null,
             'notas' => $caja->notas,
-            'total_ingresos' => (float) $totales['ingresos'],
-            'total_egresos' => (float) $totales['egresos'],
-            'saldo_esperado' => (float) $totales['saldo_esperado'],
+            'total_ingresos' => $totalIngresos,
+            'total_egresos' => $totalEgresos,
+            'saldo_esperado' => $saldoEsperado,
+            'movimientos' => $withMovimientos
+                ? $movimientos->map(function ($m) {
+                    return [
+                        'id' => (int) $m->id,
+                        'caja_id' => (int) $m->caja_id,
+                        'ubicacion_id' => isset($m->ubicacion_id) ? (int) $m->ubicacion_id : null,
+                        'tipo' => $m->tipo,
+                        'concepto' => $m->concepto,
+                        'monto' => (float) $m->monto,
+                        'metodo_pago' => $m->metodo_pago,
+                        'referencia_tipo' => $m->referencia_tipo,
+                        'referencia_id' => $m->referencia_id,
+                        'notas' => $m->notas,
+                        'creado_en' => optional($m->creado_en)->toDateTimeString(),
+                    ];
+                })->values()
+                : [],
         ];
-
-        if ($withMovimientos) {
-            $base['movimientos'] = MovimientoCaja::query()
-                ->where('caja_id', (int) $caja->id)
-                ->orderByDesc('id')
-                ->limit(100)
-                ->get()
-                ->map(fn ($m) => $this->mapMovimiento($m))
-                ->values();
-        }
-
-        return $base;
     }
 
     public function actual(Request $request)
     {
         $user = $request->user();
         $role = $this->roleOf($user);
-        $ubicacionId = $this->resolveUbicacionId($request);
+
+        if (!$this->canViewCaja($role)) {
+            return response()->json([
+                'message' => 'No autorizado.'
+            ], 403);
+        }
+
+        $ubicacionId = $this->resolveUbicacionId($request, $role);
+
+        $query = Caja::query()
+            ->with([
+                'ubicacion:id,nombre',
+                'movimientos' => function ($q) {
+                    $q->orderByDesc('creado_en')->orderByDesc('id');
+                },
+            ])
+            ->whereNull('cerrado_en');
+
+        if ($ubicacionId) {
+            $query->where('ubicacion_id', $ubicacionId);
+        }
 
         if ($role === 'super_admin' && !$ubicacionId) {
-            $cajas = Caja::query()
-                ->with('ubicacion:id,nombre')
-                ->whereNull('cerrado_en')
+            $rows = $query
                 ->orderByDesc('id')
                 ->get()
-                ->groupBy('ubicacion_id')
-                ->map(function ($group) {
-                    return $this->mapCaja($group->first(), true);
-                })
+                ->map(fn ($caja) => $this->mapCaja($caja, false))
                 ->values();
 
             return response()->json([
-                'data' => $cajas,
-                'modo' => 'todas',
+                'data' => $rows,
             ]);
         }
 
-        if (!$ubicacionId) {
-            return response()->json([
-                'message' => 'El usuario no tiene una sucursal asignada.'
-            ], 422);
-        }
-
-        $caja = Caja::query()
-            ->with('ubicacion:id,nombre')
-            ->where('ubicacion_id', $ubicacionId)
-            ->whereNull('cerrado_en')
+        $caja = $query
             ->latest('id')
             ->first();
 
-        if (!$caja) {
-            return response()->json([
-                'data' => null,
-                'modo' => 'una',
-            ]);
-        }
-
         return response()->json([
-            'data' => $this->mapCaja($caja, true),
-            'modo' => 'una',
+            'data' => $caja ? $this->mapCaja($caja, true) : null,
         ]);
     }
 
@@ -214,39 +160,51 @@ class CajaController extends Controller
     {
         $user = $request->user();
         $role = $this->roleOf($user);
-        $ubicacionId = $this->resolveUbicacionId($request);
-        $perPage = max(1, min(100, (int) $request->query('per_page', 20)));
-        [$inicio, $fin] = $this->parseMes($request->query('mes'));
+
+        if (!$this->canViewCaja($role)) {
+            return response()->json([
+                'message' => 'No autorizado.'
+            ], 403);
+        }
+
+        $ubicacionId = $this->resolveUbicacionId($request, $role);
+        $perPage = max(1, min((int) $request->query('per_page', 50), 200));
+        $mes = trim((string) $request->query('mes', ''));
 
         $query = Caja::query()
-            ->with('ubicacion:id,nombre')
-            ->whereBetween('abierto_en', [$inicio, $fin]);
+            ->with([
+                'ubicacion:id,nombre',
+                'movimientos',
+            ]);
 
-        if ($role === 'super_admin') {
-            if ($ubicacionId) {
-                $query->where('ubicacion_id', $ubicacionId);
-            }
-        } else {
-            if (!$ubicacionId) {
-                return response()->json([
-                    'data' => [],
-                ]);
-            }
-
+        if ($ubicacionId) {
             $query->where('ubicacion_id', $ubicacionId);
         }
 
-        $items = $query
+        if ($mes !== '') {
+            try {
+                $inicio = Carbon::createFromFormat('Y-m', $mes)->startOfMonth();
+                $fin = (clone $inicio)->endOfMonth();
+
+                $query->where(function ($q) use ($inicio, $fin) {
+                    $q->whereBetween('abierto_en', [$inicio, $fin])
+                      ->orWhereBetween('cerrado_en', [$inicio, $fin]);
+                });
+            } catch (\Throwable $e) {
+                // si el mes viene mal, no filtramos
+            }
+        }
+
+        $rows = $query
+            ->orderByDesc('abierto_en')
             ->orderByDesc('id')
             ->paginate($perPage);
 
-        $items->setCollection(
-            $items->getCollection()->map(function ($caja) {
-                return $this->mapCaja($caja, false);
-            })
+        $rows->setCollection(
+            $rows->getCollection()->map(fn ($caja) => $this->mapCaja($caja, false))
         );
 
-        return response()->json($items);
+        return response()->json($rows);
     }
 
     public function abrir(Request $request)
@@ -261,25 +219,26 @@ class CajaController extends Controller
         }
 
         $data = $request->validate([
-            'ubicacion_id' => ['required', 'integer'],
+            'ubicacion_id' => ['nullable', 'integer'],
             'efectivo_inicial' => ['required', 'numeric', 'min:0'],
             'notas' => ['nullable', 'string', 'max:255'],
         ]);
 
         $ubicacionId = $role === 'super_admin'
-            ? (int) $data['ubicacion_id']
-            : $this->userUbicacionId($user);
+            ? (int) ($data['ubicacion_id'] ?? 0)
+            : (int) ($this->userUbicacionId($user) ?? 0);
 
         if (!$ubicacionId) {
             return response()->json([
-                'message' => 'No se encontró una sucursal válida.'
+                'message' => 'Debes seleccionar una sucursal válida.'
             ], 422);
         }
 
         $abierta = Caja::query()
             ->where('ubicacion_id', $ubicacionId)
             ->whereNull('cerrado_en')
-            ->exists();
+            ->latest('id')
+            ->first();
 
         if ($abierta) {
             return response()->json([
@@ -289,13 +248,19 @@ class CajaController extends Controller
 
         $caja = Caja::create([
             'ubicacion_id' => $ubicacionId,
-            'abierto_por' => (int) $user->id,
-            'abierto_en' => now(),
-            'efectivo_inicial' => round((float) $data['efectivo_inicial'], 2),
+            'efectivo_inicial' => (float) $data['efectivo_inicial'],
+            'efectivo_final' => null,
             'notas' => $data['notas'] ?? null,
+            'abierto_en' => now(),
+            'cerrado_en' => null,
         ]);
 
-        $caja->load('ubicacion:id,nombre');
+        $caja->load([
+            'ubicacion:id,nombre',
+            'movimientos' => function ($q) {
+                $q->orderByDesc('creado_en')->orderByDesc('id');
+            },
+        ]);
 
         return response()->json([
             'message' => 'Caja abierta correctamente.',
@@ -315,18 +280,18 @@ class CajaController extends Controller
         }
 
         $data = $request->validate([
-            'ubicacion_id' => ['required', 'integer'],
+            'ubicacion_id' => ['nullable', 'integer'],
             'efectivo_final' => ['required', 'numeric', 'min:0'],
             'notas' => ['nullable', 'string', 'max:255'],
         ]);
 
         $ubicacionId = $role === 'super_admin'
-            ? (int) $data['ubicacion_id']
-            : $this->userUbicacionId($user);
+            ? (int) ($data['ubicacion_id'] ?? 0)
+            : (int) ($this->userUbicacionId($user) ?? 0);
 
         if (!$ubicacionId) {
             return response()->json([
-                'message' => 'No se encontró una sucursal válida.'
+                'message' => 'Debes seleccionar una sucursal válida.'
             ], 422);
         }
 
@@ -342,16 +307,92 @@ class CajaController extends Controller
             ], 422);
         }
 
+        $caja->efectivo_final = (float) $data['efectivo_final'];
         $caja->cerrado_en = now();
-        $caja->efectivo_final = round((float) $data['efectivo_final'], 2);
         $caja->notas = $data['notas'] ?? $caja->notas;
         $caja->save();
 
-        $caja->load('ubicacion:id,nombre');
+        $caja->load([
+            'ubicacion:id,nombre',
+            'movimientos' => function ($q) {
+                $q->orderByDesc('creado_en')->orderByDesc('id');
+            },
+        ]);
 
         return response()->json([
             'message' => 'Caja cerrada correctamente.',
             'data' => $this->mapCaja($caja, true),
+        ]);
+    }
+
+    public function registrarEgreso(Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+
+        if (!$this->canManageCaja($role)) {
+            return response()->json([
+                'message' => 'No autorizado.'
+            ], 403);
+        }
+
+        $data = $request->validate([
+            'ubicacion_id' => ['required', 'integer'],
+            'concepto' => ['required', 'string', 'max:255'],
+            'monto' => ['required', 'numeric', 'min:0.01'],
+            'referencia' => ['nullable', 'string', 'max:255'],
+            'notas' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $ubicacionId = $role === 'super_admin'
+            ? (int) $data['ubicacion_id']
+            : (int) ($this->userUbicacionId($user) ?? $data['ubicacion_id']);
+
+        if (!$ubicacionId) {
+            return response()->json([
+                'message' => 'No se encontró una sucursal válida.'
+            ], 422);
+        }
+
+        $caja = Caja::query()
+            ->where('ubicacion_id', $ubicacionId)
+            ->whereNull('cerrado_en')
+            ->latest('id')
+            ->first();
+
+        if (!$caja) {
+            return response()->json([
+                'message' => 'No hay una caja abierta para registrar el egreso.'
+            ], 422);
+        }
+
+        MovimientoCaja::create([
+            'caja_id' => (int) $caja->id,
+            'ubicacion_id' => (int) $ubicacionId,
+            'tipo' => 'egreso',
+            'concepto' => trim((string) $data['concepto']),
+            'monto' => round((float) $data['monto'], 2),
+            'metodo_pago' => 'efectivo',
+            'referencia_tipo' => !empty($data['referencia']) ? 'egreso_manual' : null,
+            'referencia_id' => null,
+            'notas' => !empty($data['referencia']) && !empty($data['notas'])
+                ? trim((string) $data['referencia']) . ' | ' . trim((string) $data['notas'])
+                : (!empty($data['referencia'])
+                    ? trim((string) $data['referencia'])
+                    : ($data['notas'] ?? null)),
+            'creado_en' => now(),
+        ]);
+
+        $caja->load([
+            'ubicacion:id,nombre',
+            'movimientos' => function ($q) {
+                $q->orderByDesc('creado_en')->orderByDesc('id');
+            },
+        ]);
+
+        return response()->json([
+            'message' => 'Egreso registrado correctamente.',
+            'data' => $this->mapCaja($caja->fresh(['ubicacion:id,nombre', 'movimientos']), true),
         ]);
     }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { stockApi } from "../lib/stock";
 import { ubicacionesApi } from "../lib/ubicaciones";
 import { getSession } from "../lib/auth";
@@ -8,6 +8,20 @@ function formatNumber(value) {
   return Number.isFinite(n)
     ? n.toLocaleString("es-GT", { maximumFractionDigits: 2 })
     : "0";
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function wordsOf(value) {
+  return normalizeText(value)
+    .split(/\s+/)
+    .filter(Boolean);
 }
 
 function getStockBadge(cantidad) {
@@ -72,7 +86,57 @@ function normalizeRole(roleValue) {
     .toLowerCase()
     .trim()
     .replace(/\s+/g, "")
-    .replace(/_/g, "");
+    .replace(/_/g, "")
+    .replace(/-/g, "");
+}
+
+function getSearchScore(item, rawTerm, mode) {
+  const term = normalizeText(rawTerm);
+  if (!term) return 1;
+
+  const nombre = normalizeText(item.producto_nombre);
+  const sku = normalizeText(item.producto_sku);
+  const presentacion = normalizeText(item.presentacion);
+  const id = normalizeText(item.producto_id || item.id);
+
+  const target =
+    mode === "nombre"
+      ? nombre
+      : mode === "codigo"
+      ? sku
+      : mode === "presentacion"
+      ? presentacion
+      : mode === "id"
+      ? id
+      : normalizeText(`${nombre} ${sku} ${presentacion} ${id}`);
+
+  if (!target.includes(term)) return -1;
+
+  let score = 0;
+
+  if (sku === term) score += 220;
+  if (nombre === term) score += 200;
+  if (presentacion === term) score += 170;
+  if (id === term) score += 260;
+
+  if (sku.startsWith(term)) score += 130;
+  if (nombre.startsWith(term)) score += 120;
+  if (presentacion.startsWith(term)) score += 100;
+  if (id.startsWith(term)) score += 200;
+
+  const termWords = wordsOf(term);
+  const targetWords = wordsOf(target);
+
+  for (const word of termWords) {
+    if (targetWords.includes(word)) score += 20;
+    if (target.startsWith(word)) score += 10;
+    if (target.includes(word)) score += 6;
+  }
+
+  score += Math.max(0, 40 - target.indexOf(term));
+  score += Math.max(0, 25 - Math.abs(target.length - term.length));
+
+  return score;
 }
 
 export default function Stock() {
@@ -88,12 +152,13 @@ export default function Stock() {
   );
 
   const [q, setQ] = useState("");
+  const [searchFocus, setSearchFocus] = useState(false);
+  const [searchMode, setSearchMode] = useState("todos");
+
   const [ubicacionId, setUbicacionId] = useState("");
   const [ubicaciones, setUbicaciones] = useState([]);
 
   const [items, setItems] = useState([]);
-  const [meta, setMeta] = useState(null);
-
   const [page, setPage] = useState(1);
   const [perPage] = useState(20);
 
@@ -103,6 +168,8 @@ export default function Stock() {
 
   const [soloAlertas, setSoloAlertas] = useState(false);
   const [mostrarPanelAlertas, setMostrarPanelAlertas] = useState(false);
+
+  const searchBoxRef = useRef(null);
 
   async function loadUbicaciones() {
     try {
@@ -142,14 +209,9 @@ export default function Stock() {
     }
   }
 
-  async function load(p = page, forcedUbicacionId = ubicacionId) {
+  async function load(forcedUbicacionId = ubicacionId) {
     if (!forcedUbicacionId) {
       setItems([]);
-      setMeta({
-        current_page: 1,
-        last_page: 1,
-        total: 0,
-      });
       return;
     }
 
@@ -158,26 +220,22 @@ export default function Stock() {
 
     try {
       const res = await stockApi.list({
-        q,
+        q: "",
         ubicacion_id: forcedUbicacionId,
-        page: p,
-        per_page: perPage,
+        page: 1,
+        per_page: 500,
       });
 
-      setItems(res?.data || []);
-      setMeta({
-        current_page: res?.current_page || 1,
-        last_page: res?.last_page || 1,
-        total: res?.total || 0,
-      });
+      const arr = Array.isArray(res?.data)
+        ? res.data
+        : Array.isArray(res)
+        ? res
+        : [];
+
+      setItems(arr);
     } catch (e) {
       console.error(e);
       setItems([]);
-      setMeta({
-        current_page: 1,
-        last_page: 1,
-        total: 0,
-      });
       setError(e?.response?.data?.message || e?.message || "Error cargando inventario");
     } finally {
       setLoading(false);
@@ -192,37 +250,73 @@ export default function Stock() {
   useEffect(() => {
     if (ubicacionId) {
       setPage(1);
-      load(1, ubicacionId);
+      load(ubicacionId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubicacionId]);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      if (ubicacionId) {
-        setPage(1);
-        load(1, ubicacionId);
+    function handleClickOutside(e) {
+      if (!searchBoxRef.current?.contains(e.target)) {
+        setSearchFocus(false);
       }
-    }, 300);
+    }
 
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const resumen = useMemo(() => {
     const totalFilas = items.length;
     const totalCantidad = items.reduce((acc, it) => acc + Number(it.cantidad || 0), 0);
     const agotados = items.filter((it) => Number(it.cantidad || 0) <= 0).length;
-    const bajos = items.filter((it) => Number(it.cantidad || 0) > 0 && Number(it.cantidad || 0) <= 10).length;
+    const bajos = items.filter(
+      (it) => Number(it.cantidad || 0) > 0 && Number(it.cantidad || 0) <= 10
+    ).length;
     const alertas = items.filter((it) => Number(it.cantidad || 0) <= 10).length;
 
     return { totalFilas, totalCantidad, agotados, bajos, alertas };
   }, [items]);
 
-  const itemsFiltrados = useMemo(() => {
-    if (!soloAlertas) return items;
-    return items.filter((it) => Number(it.cantidad || 0) <= 10);
-  }, [items, soloAlertas]);
+  const itemsBuscados = useMemo(() => {
+    let lista = [...items];
+
+    if (soloAlertas) {
+      lista = lista.filter((it) => Number(it.cantidad || 0) <= 10);
+    }
+
+    const term = q.trim();
+    if (!term) {
+      return lista.sort((a, b) => {
+        const nombreA = String(a.producto_nombre || "");
+        const nombreB = String(b.producto_nombre || "");
+        return nombreA.localeCompare(nombreB);
+      });
+    }
+
+    return lista
+      .map((it) => ({
+        ...it,
+        __score: getSearchScore(it, term, searchMode),
+      }))
+      .filter((it) => it.__score >= 0)
+      .sort((a, b) => {
+        if (b.__score !== a.__score) return b.__score - a.__score;
+
+        const stockA = Number(a.cantidad || 0);
+        const stockB = Number(b.cantidad || 0);
+        if (stockA !== stockB) return stockA - stockB;
+
+        return String(a.producto_nombre || "").localeCompare(
+          String(b.producto_nombre || "")
+        );
+      });
+  }, [items, q, searchMode, soloAlertas]);
+
+  const sugerencias = useMemo(() => {
+    if (!q.trim()) return [];
+    return itemsBuscados.slice(0, 6);
+  }, [itemsBuscados, q]);
 
   const listaAlertas = useMemo(() => {
     return items
@@ -230,8 +324,29 @@ export default function Stock() {
       .sort((a, b) => Number(a.cantidad || 0) - Number(b.cantidad || 0));
   }, [items]);
 
-  const canPrev = (meta?.current_page || 1) > 1 && !soloAlertas;
-  const canNext = (meta?.current_page || 1) < (meta?.last_page || 1) && !soloAlertas;
+  const meta = useMemo(() => {
+    const total = itemsBuscados.length;
+    const lastPage = Math.max(1, Math.ceil(total / perPage));
+    const currentPage = Math.min(page, lastPage);
+
+    return {
+      current_page: currentPage,
+      last_page: lastPage,
+      total,
+    };
+  }, [itemsBuscados, page, perPage]);
+
+  const itemsPaginados = useMemo(() => {
+    const start = (meta.current_page - 1) * perPage;
+    return itemsBuscados.slice(start, start + perPage);
+  }, [itemsBuscados, meta, perPage]);
+
+  const canPrev = meta.current_page > 1;
+  const canNext = meta.current_page < meta.last_page;
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, searchMode, soloAlertas, ubicacionId]);
 
   return (
     <div className="page">
@@ -299,7 +414,7 @@ export default function Stock() {
             Filas visibles
           </div>
           <div style={miniValue}>
-            {loading ? <InlineLoader /> : soloAlertas ? itemsFiltrados.length : resumen.totalFilas}
+            {loading ? <InlineLoader /> : itemsBuscados.length}
           </div>
         </div>
 
@@ -501,9 +616,9 @@ export default function Stock() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.1fr 1fr auto",
+            gridTemplateColumns: "1.05fr 1.35fr auto",
             gap: 12,
-            alignItems: "end",
+            alignItems: "start",
             marginBottom: 14,
           }}
         >
@@ -517,7 +632,6 @@ export default function Stock() {
                 value={ubicacionId}
                 onChange={(e) => {
                   setUbicacionId(e.target.value);
-                  setPage(1);
                 }}
                 disabled={loading || loadingUbicaciones || ubicaciones.length === 0}
               >
@@ -544,14 +658,244 @@ export default function Stock() {
             )}
           </div>
 
-          <div className="field">
+          <div
+            ref={searchBoxRef}
+            style={{
+              position: "relative",
+            }}
+          >
             <label>Buscar producto o presentación</label>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Nombre, SKU, ID o presentación..."
-              disabled={loadingUbicaciones || !ubicacionId}
-            />
+
+            <div style={{ position: "relative" }}>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onFocus={() => setSearchFocus(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setSearchFocus(false);
+                  }
+
+                  if (e.key === "Enter" && sugerencias.length > 0) {
+                    e.preventDefault();
+                    setQ(sugerencias[0].producto_nombre || "");
+                    setSearchFocus(false);
+                  }
+                }}
+                placeholder="Nombre, SKU, ID o presentación..."
+                disabled={loadingUbicaciones || !ubicacionId}
+                style={{
+                  width: "100%",
+                  border: "1px solid #d1d5db",
+                  borderRadius: 10,
+                  padding: "10px 42px 10px 42px",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  boxShadow: searchFocus
+                    ? "0 0 0 4px rgba(37, 99, 235, 0.10)"
+                    : "none",
+                  borderColor: searchFocus ? "#3b82f6" : "#d1d5db",
+                  transition: "all .2s ease",
+                }}
+              />
+
+              <span
+                style={{
+                  position: "absolute",
+                  left: 14,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  fontSize: 16,
+                  opacity: 0.7,
+                }}
+              >
+                🔎
+              </span>
+
+              {q ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQ("");
+                    setSearchFocus(false);
+                  }}
+                  style={{
+                    position: "absolute",
+                    right: 10,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    border: 0,
+                    background: "transparent",
+                    cursor: "pointer",
+                    fontSize: 16,
+                    opacity: 0.7,
+                  }}
+                >
+                  ✕
+                </button>
+              ) : null}
+            </div>
+
+            {searchFocus && sugerencias.length > 0 ? (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 8px)",
+                  left: 0,
+                  right: 0,
+                  background: "#fff",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 14,
+                  boxShadow: "0 18px 50px rgba(15, 23, 42, 0.12)",
+                  padding: 8,
+                  zIndex: 30,
+                  display: "grid",
+                  gap: 6,
+                }}
+              >
+                {sugerencias.map((item) => {
+                  const badge = getStockBadge(item.cantidad);
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setQ(item.producto_nombre || "");
+                        setSearchFocus(false);
+                      }}
+                      style={{
+                        textAlign: "left",
+                        border: "1px solid #eef2f7",
+                        background: "#fff",
+                        borderRadius: 10,
+                        padding: "10px 12px",
+                        cursor: "pointer",
+                        display: "grid",
+                        gap: 4,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, color: "#0f172a" }}>
+                          {item.producto_nombre || "-"}
+                        </div>
+
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            background: badge.bg,
+                            color: badge.color,
+                            border: `1px solid ${badge.border}`,
+                            fontWeight: 800,
+                            fontSize: 11,
+                          }}
+                        >
+                          {badge.label}
+                        </span>
+                      </div>
+
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        SKU: {item.producto_sku || "-"} · Presentación: {item.presentacion || "-"}
+                      </div>
+
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        ID: {item.producto_id || item.id} · Cantidad: {formatNumber(item.cantidad)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSearchMode("todos")}
+                style={searchMode === "todos" ? chipActive : chipBtn}
+              >
+                Todo
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode("nombre")}
+                style={searchMode === "nombre" ? chipActive : chipBtn}
+              >
+                Nombre
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode("codigo")}
+                style={searchMode === "codigo" ? chipActive : chipBtn}
+              >
+                SKU
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode("presentacion")}
+                style={searchMode === "presentacion" ? chipActive : chipBtn}
+              >
+                Presentación
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode("id")}
+                style={searchMode === "id" ? chipActive : chipBtn}
+              >
+                ID
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                fontSize: 13,
+                color: "#64748b",
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              <span>
+                {q.trim()
+                  ? `${itemsBuscados.length} resultado(s) para "${q}"`
+                  : `${itemsBuscados.length} producto(s) en la sucursal`}
+              </span>
+
+              {q.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => setQ("")}
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    color: "#2563eb",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
+                >
+                  Limpiar búsqueda
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div className="field">
@@ -559,7 +903,7 @@ export default function Stock() {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
                 className="btn"
-                onClick={() => load(1, ubicacionId)}
+                onClick={() => load(ubicacionId)}
                 disabled={loading || loadingUbicaciones || !ubicacionId}
               >
                 {loading ? <InlineLoader /> : "Buscar"}
@@ -570,9 +914,10 @@ export default function Stock() {
                 type="button"
                 onClick={() => {
                   setQ("");
+                  setSearchMode("todos");
                   setSoloAlertas(false);
                   setPage(1);
-                  load(1, ubicacionId);
+                  load(ubicacionId);
                 }}
                 disabled={loading || loadingUbicaciones || !ubicacionId}
               >
@@ -629,7 +974,7 @@ export default function Stock() {
                     <TableLoader />
                   </td>
                 </tr>
-              ) : itemsFiltrados.length === 0 ? (
+              ) : itemsPaginados.length === 0 ? (
                 <tr>
                   <td colSpan="8" style={{ padding: 18 }} className="muted">
                     {soloAlertas
@@ -638,7 +983,7 @@ export default function Stock() {
                   </td>
                 </tr>
               ) : (
-                itemsFiltrados.map((it) => {
+                itemsPaginados.map((it) => {
                   const badge = getStockBadge(it.cantidad);
 
                   return (
@@ -675,48 +1020,38 @@ export default function Stock() {
           </table>
         </div>
 
-        {meta && !soloAlertas && (
-          <div
-            className="row between mt"
-            style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #e5e7eb" }}
-          >
-            <div className="muted">
-              {loading ? (
-                <InlineLoader />
-              ) : (
-                <>
-                  Página {meta.current_page} de {meta.last_page} · Total {meta.total}
-                </>
-              )}
-            </div>
-
-            <div className="row gap">
-              <button
-                className="btn"
-                disabled={!canPrev || loading}
-                onClick={() => {
-                  const p = page - 1;
-                  setPage(p);
-                  load(p, ubicacionId);
-                }}
-              >
-                Anterior
-              </button>
-
-              <button
-                className="btn"
-                disabled={!canNext || loading}
-                onClick={() => {
-                  const p = page + 1;
-                  setPage(p);
-                  load(p, ubicacionId);
-                }}
-              >
-                Siguiente
-              </button>
-            </div>
+        <div
+          className="row between mt"
+          style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #e5e7eb" }}
+        >
+          <div className="muted">
+            {loading ? (
+              <InlineLoader />
+            ) : (
+              <>
+                Página {meta.current_page} de {meta.last_page} · Total {meta.total}
+              </>
+            )}
           </div>
-        )}
+
+          <div className="row gap">
+            <button
+              className="btn"
+              disabled={!canPrev || loading}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              Anterior
+            </button>
+
+            <button
+              className="btn"
+              disabled={!canNext || loading}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -737,6 +1072,25 @@ const miniValue = {
   minHeight: 32,
   display: "flex",
   alignItems: "center",
+};
+
+const chipBtn = {
+  border: "1px solid #dbe4f0",
+  background: "#fff",
+  color: "#334155",
+  borderRadius: 999,
+  padding: "8px 12px",
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 13,
+};
+
+const chipActive = {
+  ...chipBtn,
+  background: "#eff6ff",
+  border: "1px solid #93c5fd",
+  color: "#1d4ed8",
+  boxShadow: "0 4px 14px rgba(37, 99, 235, 0.12)",
 };
 
 const thStyle = {

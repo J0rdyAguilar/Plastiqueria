@@ -15,6 +15,10 @@ import {
   TrendingDown,
   Building2,
   CalendarRange,
+  FileText,
+  Tags,
+  BadgeDollarSign,
+  BarChart3,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { getSession } from "../lib/auth";
@@ -82,6 +86,22 @@ function currentMonthValue() {
   return `${year}-${month}`;
 }
 
+const TIPOS_EGRESO = [
+  "Luz",
+  "Agua",
+  "Internet",
+  "Alquiler",
+  "Transporte",
+  "Combustible",
+  "Viáticos",
+  "Papelería",
+  "Limpieza",
+  "Compra",
+  "Mantenimiento",
+  "Pago a proveedor",
+  "Otro",
+];
+
 export default function Caja() {
   const nav = useNavigate();
   const me = getSession()?.user || {};
@@ -118,6 +138,13 @@ export default function Caja() {
 
   const [openedOnce, setOpenedOnce] = useState(false);
   const [mesFiltro, setMesFiltro] = useState(currentMonthValue());
+
+  const [egresoTipo, setEgresoTipo] = useState("Compra");
+  const [egresoConcepto, setEgresoConcepto] = useState("");
+  const [egresoMonto, setEgresoMonto] = useState("");
+  const [egresoReferencia, setEgresoReferencia] = useState("");
+  const [egresoNotas, setEgresoNotas] = useState("");
+  const [egresoModalOpen, setEgresoModalOpen] = useState(false);
 
   const hasUbicacion =
     isSuperAdmin ? String(ubicacionId || "").trim() !== "" : !!ubicacionId;
@@ -306,12 +333,10 @@ export default function Caja() {
     if (isSuperAdmin) {
       loadUbicaciones();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin]);
 
   useEffect(() => {
     load(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ubicacionId, isSuperAdmin, mesFiltro]);
 
   useEffect(() => {
@@ -319,6 +344,20 @@ export default function Caja() {
       setEfectivoFinal(actual.saldo_esperado ?? actual.efectivo_inicial);
     }
   }, [actual]);
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        setEgresoModalOpen(false);
+      }
+    }
+
+    if (egresoModalOpen) {
+      window.addEventListener("keydown", onKeyDown);
+    }
+
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [egresoModalOpen]);
 
   const resumen = useMemo(() => {
     if (!actual) return null;
@@ -405,6 +444,42 @@ export default function Caja() {
     );
   }, [historial]);
 
+  const movimientosActuales = useMemo(() => {
+    return Array.isArray(actual?.movimientos) ? actual.movimientos : [];
+  }, [actual]);
+
+  const egresosActuales = useMemo(() => {
+    return movimientosActuales.filter((m) => String(m?.tipo) === "egreso");
+  }, [movimientosActuales]);
+
+  const dashboardEgresos = useMemo(() => {
+    const porTipo = {};
+    let total = 0;
+
+    egresosActuales.forEach((m) => {
+      const monto = Number(m?.monto ?? 0);
+      total += monto;
+
+      const key =
+        String(m?.concepto || "").trim() ||
+        String(m?.referencia_tipo || "").trim() ||
+        "Sin tipo";
+
+      porTipo[key] = (porTipo[key] || 0) + monto;
+    });
+
+    const ranking = Object.entries(porTipo)
+      .map(([tipo, monto]) => ({ tipo, monto }))
+      .sort((a, b) => b.monto - a.monto);
+
+    return {
+      total,
+      cantidad: egresosActuales.length,
+      ranking,
+      mayor: ranking[0] || null,
+    };
+  }, [egresosActuales]);
+
   const estadoCajaLabel = loading
     ? "Cargando…"
     : vistaTodasSucursales
@@ -475,6 +550,208 @@ export default function Caja() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function abrirModalEgreso() {
+    if (!ubicacionId) {
+      notify.error("Debes seleccionar una sucursal.");
+      return;
+    }
+
+    if (!isAbierta) {
+      notify.error("No hay una caja abierta para registrar egresos.");
+      return;
+    }
+
+    setEgresoModalOpen(true);
+  }
+
+  function cerrarModalEgreso() {
+    if (busy) return;
+    setEgresoModalOpen(false);
+  }
+
+  async function registrarEgreso(e) {
+    e.preventDefault();
+
+    if (!ubicacionId) {
+      notify.error("Debes seleccionar una sucursal.");
+      return;
+    }
+
+    if (!isAbierta) {
+      notify.error("No hay una caja abierta para registrar egresos.");
+      return;
+    }
+
+    const monto = Number(egresoMonto || 0);
+    const conceptoFinal =
+      egresoTipo === "Otro"
+        ? String(egresoConcepto || "").trim()
+        : String(egresoTipo || "").trim();
+
+    if (!conceptoFinal) {
+      notify.error("Debes indicar el tipo o concepto del egreso.");
+      return;
+    }
+
+    if (!monto || monto <= 0) {
+      notify.error("El monto del egreso debe ser mayor a 0.");
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      await notify.promise(
+        api.cajaRegistrarEgreso({
+          ubicacion_id: Number(ubicacionId),
+          concepto: conceptoFinal,
+          monto,
+          referencia: (egresoReferencia || "").trim() || null,
+          notas: (egresoNotas || "").trim() || null,
+        }),
+        {
+          loading: "Registrando egreso...",
+          success: "Egreso registrado correctamente",
+          error: "No se pudo registrar el egreso",
+        }
+      );
+
+      setEgresoTipo("Compra");
+      setEgresoConcepto("");
+      setEgresoMonto("");
+      setEgresoReferencia("");
+      setEgresoNotas("");
+      setEgresoModalOpen(false);
+
+      await load(false);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exportarPdfEgresos() {
+    if (!hasUbicacion) {
+      notify.error("Debes seleccionar una sucursal.");
+      return;
+    }
+
+    const rows = egresosActuales;
+    const total = rows.reduce((acc, row) => acc + Number(row?.monto ?? 0), 0);
+
+    const html = `
+      <html>
+        <head>
+          <title>Reporte de egresos</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              padding: 24px;
+              color: #0f172a;
+            }
+            h1 {
+              margin: 0 0 8px;
+            }
+            p {
+              margin: 0 0 8px;
+              color: #475569;
+            }
+            .meta {
+              margin-bottom: 20px;
+              padding: 14px;
+              border: 1px solid #cbd5e1;
+              border-radius: 12px;
+              background: #f8fafc;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 16px;
+            }
+            th, td {
+              border: 1px solid #cbd5e1;
+              padding: 10px;
+              text-align: left;
+              font-size: 13px;
+            }
+            th {
+              background: #e2e8f0;
+            }
+            .total {
+              margin-top: 18px;
+              font-weight: 700;
+              font-size: 16px;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Reporte de egresos</h1>
+          <div class="meta">
+            <p><strong>Sucursal:</strong> ${nombreSucursal}</p>
+            <p><strong>Fecha:</strong> ${new Date().toLocaleString()}</p>
+            <p><strong>Caja:</strong> ${resumen?.id ?? "—"}</p>
+            <p><strong>Total de egresos:</strong> ${money(total)}</p>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Concepto</th>
+                <th>Método</th>
+                <th>Monto</th>
+                <th>Referencia</th>
+                <th>Fecha</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                rows.length === 0
+                  ? `<tr><td colspan="6">Sin egresos registrados.</td></tr>`
+                  : rows
+                      .map(
+                        (m) => `
+                    <tr>
+                      <td>${m?.id ?? "—"}</td>
+                      <td>${m?.concepto || "—"}</td>
+                      <td>${m?.metodo_pago || "—"}</td>
+                      <td>${money(m?.monto)}</td>
+                      <td>${
+                        m?.referencia_tipo
+                          ? `${m?.referencia_tipo} ${m?.referencia_id ?? ""}`
+                          : "—"
+                      }</td>
+                      <td>${formatDate(m?.creado_en)}</td>
+                    </tr>
+                  `
+                      )
+                      .join("")
+              }
+            </tbody>
+          </table>
+
+          <div class="total">Total: ${money(total)}</div>
+          <script>
+            window.onload = function() {
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    const w = window.open("", "_blank", "width=1000,height=700");
+    if (!w) {
+      notify.error("El navegador bloqueó la ventana para imprimir.");
+      return;
+    }
+
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
   }
 
   return (
@@ -550,9 +827,8 @@ export default function Caja() {
                   lineHeight: 1.6,
                 }}
               >
-                Gestión de apertura, cierre y control operativo de caja por
-                sucursal. El super admin puede visualizar todas las cajas y
-                operar una específica cuando la seleccione.
+                Gestión de apertura, cierre, egresos, reporte PDF y dashboard
+                operativo de caja por sucursal.
               </p>
             </div>
 
@@ -632,7 +908,7 @@ export default function Caja() {
 
             <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
               En “Todas las sucursales” solo se muestra el resumen global. Para
-              abrir o cerrar caja, selecciona una sucursal específica.
+              abrir, cerrar o registrar egresos, selecciona una sucursal.
             </div>
           </div>
         ) : null}
@@ -757,171 +1033,170 @@ export default function Caja() {
         </div>
 
         {vistaTodasSucursales ? (
-          <>
+          <div
+            style={{
+              background: "rgba(255,255,255,0.82)",
+              borderRadius: 28,
+              padding: 24,
+              border: "1px solid rgba(148,163,184,0.18)",
+              boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+            }}
+          >
             <div
               style={{
-                background: "rgba(255,255,255,0.82)",
-                borderRadius: 28,
-                padding: 24,
-                border: "1px solid rgba(148,163,184,0.18)",
-                boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 16,
+                flexWrap: "wrap",
+                marginBottom: 16,
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 16,
-                  flexWrap: "wrap",
-                  marginBottom: 16,
-                }}
-              >
-                <div>
-                  <h2
-                    style={{
-                      margin: 0,
-                      fontSize: 24,
-                      fontWeight: 800,
-                      color: "#0f172a",
-                    }}
-                  >
-                    Cajas abiertas por sucursal
-                  </h2>
-                  <p
-                    style={{
-                      margin: "6px 0 0",
-                      color: "#64748b",
-                      fontSize: 14,
-                    }}
-                  >
-                    Vista global para super admin.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => load(true)}
-                  disabled={loading || busy}
+              <div>
+                <h2
                   style={{
-                    ...secondaryButtonStyle,
-                    opacity: loading || busy ? 0.6 : 1,
-                    cursor: loading || busy ? "not-allowed" : "pointer",
+                    margin: 0,
+                    fontSize: 24,
+                    fontWeight: 800,
+                    color: "#0f172a",
                   }}
                 >
-                  <RefreshCw size={16} />
-                  Refrescar
-                </button>
+                  Cajas abiertas por sucursal
+                </h2>
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    color: "#64748b",
+                    fontSize: 14,
+                  }}
+                >
+                  Vista global para super admin.
+                </p>
               </div>
 
-              <div
+              <button
+                type="button"
+                onClick={() => load(true)}
+                disabled={loading || busy}
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-                  gap: 16,
+                  ...secondaryButtonStyle,
+                  opacity: loading || busy ? 0.6 : 1,
+                  cursor: loading || busy ? "not-allowed" : "pointer",
                 }}
               >
-                {loading ? (
-                  <div style={panelEmptyStyle}>Cargando sucursales…</div>
-                ) : actualLista.length === 0 ? (
-                  <div style={panelEmptyStyle}>No hay cajas abiertas.</div>
-                ) : (
-                  actualLista.map((caja) => {
-                    const abierta = !caja?.cerrado_en;
-                    const nombre =
-                      caja?.ubicacion?.nombre ||
-                      (caja?.ubicacion_id
-                        ? `Sucursal #${caja.ubicacion_id}`
-                        : "Sucursal");
+                <RefreshCw size={16} />
+                Refrescar
+              </button>
+            </div>
 
-                    return (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                gap: 16,
+              }}
+            >
+              {loading ? (
+                <div style={panelEmptyStyle}>Cargando sucursales…</div>
+              ) : actualLista.length === 0 ? (
+                <div style={panelEmptyStyle}>No hay cajas abiertas.</div>
+              ) : (
+                actualLista.map((caja) => {
+                  const abierta = !caja?.cerrado_en;
+                  const nombre =
+                    caja?.ubicacion?.nombre ||
+                    (caja?.ubicacion_id
+                      ? `Sucursal #${caja.ubicacion_id}`
+                      : "Sucursal");
+
+                  return (
+                    <div
+                      key={caja.id}
+                      style={{
+                        borderRadius: 22,
+                        padding: 18,
+                        background:
+                          "linear-gradient(180deg, rgba(248,250,252,0.96) 0%, rgba(241,245,249,0.96) 100%)",
+                        border: "1px solid #e2e8f0",
+                        display: "grid",
+                        gap: 12,
+                      }}
+                    >
                       <div
-                        key={caja.id}
                         style={{
-                          borderRadius: 22,
-                          padding: 18,
-                          background:
-                            "linear-gradient(180deg, rgba(248,250,252,0.96) 0%, rgba(241,245,249,0.96) 100%)",
-                          border: "1px solid #e2e8f0",
-                          display: "grid",
+                          display: "flex",
+                          justifyContent: "space-between",
                           gap: 12,
+                          alignItems: "center",
                         }}
                       >
                         <div
                           style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 12,
-                            alignItems: "center",
+                            fontWeight: 900,
+                            color: "#0f172a",
+                            fontSize: 18,
                           }}
                         >
-                          <div
-                            style={{
-                              fontWeight: 900,
-                              color: "#0f172a",
-                              fontSize: 18,
-                            }}
-                          >
-                            {nombre}
-                          </div>
-                          {abierta ? (
-                            <span style={badgeStyle("green")}>Abierta</span>
-                          ) : (
-                            <span style={badgeStyle("gray")}>Cerrada</span>
-                          )}
+                          {nombre}
                         </div>
-
-                        <div
-                          style={{
-                            color: "#475569",
-                            fontSize: 14,
-                            lineHeight: 1.7,
-                          }}
-                        >
-                          <div>
-                            <strong>ID caja:</strong> {caja?.id ?? "—"}
-                          </div>
-                          <div>
-                            <strong>Apertura:</strong>{" "}
-                            {formatDate(caja?.abierto_en)}
-                          </div>
-                          <div>
-                            <strong>Base:</strong> {money(caja?.efectivo_inicial)}
-                          </div>
-                          <div>
-                            <strong>Ingresos:</strong>{" "}
-                            {money(caja?.total_ingresos)}
-                          </div>
-                          <div>
-                            <strong>Egresos:</strong>{" "}
-                            {money(caja?.total_egresos)}
-                          </div>
-                          <div>
-                            <strong>Esperado:</strong>{" "}
-                            {money(caja?.saldo_esperado)}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setUbicacionId(String(caja?.ubicacion_id || ""))
-                          }
-                          style={{
-                            ...primaryButtonStyle,
-                            width: "100%",
-                            height: 46,
-                          }}
-                        >
-                          Ver esta sucursal
-                        </button>
+                        {abierta ? (
+                          <span style={badgeStyle("green")}>Abierta</span>
+                        ) : (
+                          <span style={badgeStyle("gray")}>Cerrada</span>
+                        )}
                       </div>
-                    );
-                  })
-                )}
-              </div>
+
+                      <div
+                        style={{
+                          color: "#475569",
+                          fontSize: 14,
+                          lineHeight: 1.7,
+                        }}
+                      >
+                        <div>
+                          <strong>ID caja:</strong> {caja?.id ?? "—"}
+                        </div>
+                        <div>
+                          <strong>Apertura:</strong>{" "}
+                          {formatDate(caja?.abierto_en)}
+                        </div>
+                        <div>
+                          <strong>Base:</strong>{" "}
+                          {money(caja?.efectivo_inicial)}
+                        </div>
+                        <div>
+                          <strong>Ingresos:</strong>{" "}
+                          {money(caja?.total_ingresos)}
+                        </div>
+                        <div>
+                          <strong>Egresos:</strong>{" "}
+                          {money(caja?.total_egresos)}
+                        </div>
+                        <div>
+                          <strong>Esperado:</strong>{" "}
+                          {money(caja?.saldo_esperado)}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setUbicacionId(String(caja?.ubicacion_id || ""))
+                        }
+                        style={{
+                          ...primaryButtonStyle,
+                          width: "100%",
+                          height: 46,
+                        }}
+                      >
+                        Ver esta sucursal
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
-          </>
+          </div>
         ) : (
           <>
             <div
@@ -1001,12 +1276,16 @@ export default function Caja() {
                   <InfoPanel
                     icon={<Clock3 size={16} />}
                     title="Apertura"
-                    value={resumen?.abierto_en ? formatDate(resumen.abierto_en) : "—"}
+                    value={
+                      resumen?.abierto_en ? formatDate(resumen.abierto_en) : "—"
+                    }
                   />
                   <InfoPanel
                     icon={<ShieldCheck size={16} />}
                     title="Cierre"
-                    value={resumen?.cerrado_en ? formatDate(resumen.cerrado_en) : "—"}
+                    value={
+                      resumen?.cerrado_en ? formatDate(resumen.cerrado_en) : "—"
+                    }
                   />
                   <InfoPanel
                     icon={<Wallet size={16} />}
@@ -1112,14 +1391,14 @@ export default function Caja() {
                       fontSize: 14,
                     }}
                   >
-                    Apertura y cierre de caja con mejor control visual.
+                    Apertura, cierre y control de egresos.
                   </p>
                 </div>
 
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
+                    gridTemplateColumns: "repeat(3, 1fr)",
                     gap: 16,
                   }}
                 >
@@ -1183,7 +1462,9 @@ export default function Caja() {
                         ...primaryButtonStyle,
                         width: "100%",
                         opacity:
-                          busy || loading || isAbierta || !hasUbicacion ? 0.6 : 1,
+                          busy || loading || isAbierta || !hasUbicacion
+                            ? 0.6
+                            : 1,
                         cursor:
                           busy || loading || isAbierta || !hasUbicacion
                             ? "not-allowed"
@@ -1260,7 +1541,9 @@ export default function Caja() {
                         ...dangerButtonStyle,
                         width: "100%",
                         opacity:
-                          busy || loading || !isAbierta || !hasUbicacion ? 0.6 : 1,
+                          busy || loading || !isAbierta || !hasUbicacion
+                            ? 0.6
+                            : 1,
                         cursor:
                           busy || loading || !isAbierta || !hasUbicacion
                             ? "not-allowed"
@@ -1279,143 +1562,396 @@ export default function Caja() {
                       </p>
                     )}
                   </form>
+
+                  <div
+                    style={{
+                      borderRadius: 22,
+                      padding: 18,
+                      border: "1px solid #fed7aa",
+                      background:
+                        "linear-gradient(180deg, rgba(255,247,237,0.95) 0%, rgba(254,215,170,0.45) 100%)",
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                      gap: 14,
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          alignItems: "center",
+                          marginBottom: 14,
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, color: "#0f172a" }}>
+                          Egresos
+                        </div>
+
+                        {!isAbierta ? (
+                          <span style={badgeStyle("gray")}>Sin caja</span>
+                        ) : (
+                          <span style={badgeStyle("red")}>Disponible</span>
+                        )}
+                      </div>
+
+                      <div
+                        style={{
+                          color: "#475569",
+                          fontSize: 14,
+                          lineHeight: 1.7,
+                        }}
+                      >
+                        Registra una salida de dinero desde un modal más limpio
+                        y rápido.
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={abrirModalEgreso}
+                      disabled={busy || loading || !isAbierta || !hasUbicacion}
+                      style={{
+                        ...dangerButtonStyle,
+                        width: "100%",
+                        opacity:
+                          busy || loading || !isAbierta || !hasUbicacion
+                            ? 0.6
+                            : 1,
+                        cursor:
+                          busy || loading || !isAbierta || !hasUbicacion
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                    >
+                      {busy ? "Procesando..." : "Egresos"}
+                    </button>
+
+                    {!isAbierta ? (
+                      <p style={hintStyle}>
+                        Debe existir una caja abierta para registrar egresos.
+                      </p>
+                    ) : (
+                      <p style={hintStyle}>
+                        Presiona el botón para abrir el modal.
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
             <div
               style={{
-                background: "rgba(255,255,255,0.82)",
-                borderRadius: 28,
-                padding: 24,
-                border: "1px solid rgba(148,163,184,0.18)",
-                boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+                display: "grid",
+                gridTemplateColumns: "1.05fr 0.95fr",
+                gap: 24,
               }}
             >
               <div
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 16,
-                  flexWrap: "wrap",
-                  marginBottom: 16,
+                  background: "rgba(255,255,255,0.82)",
+                  borderRadius: 28,
+                  padding: 24,
+                  border: "1px solid rgba(148,163,184,0.18)",
+                  boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
                 }}
               >
-                <div>
-                  <h2
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 16,
+                    flexWrap: "wrap",
+                    marginBottom: 16,
+                  }}
+                >
+                  <div>
+                    <h2
+                      style={{
+                        margin: 0,
+                        fontSize: 24,
+                        fontWeight: 800,
+                        color: "#0f172a",
+                      }}
+                    >
+                      Movimientos del día
+                    </h2>
+                    <p
+                      style={{
+                        margin: "6px 0 0",
+                        color: "#64748b",
+                        fontSize: 14,
+                      }}
+                    >
+                      Ingresos y egresos registrados en la caja actual.
+                    </p>
+                  </div>
+
+                  <div
                     style={{
-                      margin: 0,
-                      fontSize: 24,
-                      fontWeight: 800,
-                      color: "#0f172a",
+                      padding: "10px 14px",
+                      borderRadius: 999,
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      border: "1px solid #bfdbfe",
                     }}
                   >
-                    Movimientos del día
-                  </h2>
-                  <p
-                    style={{
-                      margin: "6px 0 0",
-                      color: "#64748b",
-                      fontSize: 14,
-                    }}
-                  >
-                    Ingresos y egresos registrados en la caja actual.
-                  </p>
+                    {loading
+                      ? "Cargando…"
+                      : `${movimientosActuales.length} movimiento(s)`}
+                  </div>
                 </div>
 
                 <div
                   style={{
-                    padding: "10px 14px",
-                    borderRadius: 999,
-                    background: "#eff6ff",
-                    color: "#1d4ed8",
-                    fontWeight: 700,
-                    fontSize: 13,
-                    border: "1px solid #bfdbfe",
+                    overflowX: "auto",
+                    borderRadius: 22,
+                    border: "1px solid #e2e8f0",
                   }}
                 >
-                  {loading
-                    ? "Cargando…"
-                    : `${
-                        Array.isArray(actual?.movimientos)
-                          ? actual.movimientos.length
-                          : 0
-                      } movimiento(s)`}
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      minWidth: 900,
+                      background: "#fff",
+                    }}
+                  >
+                    <thead>
+                      <tr
+                        style={{
+                          background:
+                            "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
+                        }}
+                      >
+                        <th style={thStyle}>ID</th>
+                        <th style={thStyle}>Tipo</th>
+                        <th style={thStyle}>Concepto</th>
+                        <th style={thStyle}>Método</th>
+                        <th style={thStyle}>Monto</th>
+                        <th style={thStyle}>Referencia</th>
+                        <th style={thStyle}>Fecha</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {loading ? (
+                        <tr>
+                          <td colSpan={7} style={emptyTdStyle}>
+                            Cargando…
+                          </td>
+                        </tr>
+                      ) : movimientosActuales.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} style={emptyTdStyle}>
+                            Sin movimientos registrados.
+                          </td>
+                        </tr>
+                      ) : (
+                        movimientosActuales.map((m) => (
+                          <tr key={m.id} style={{ borderTop: "1px solid #eef2f7" }}>
+                            <td style={tdStyle}>{m.id}</td>
+                            <td style={tdStyle}>
+                              {m.tipo === "ingreso" ? (
+                                <span style={badgeStyle("green")}>Ingreso</span>
+                              ) : (
+                                <span style={badgeStyle("red")}>Egreso</span>
+                              )}
+                            </td>
+                            <td style={tdStyle}>{m.concepto || "—"}</td>
+                            <td style={tdStyle}>{m.metodo_pago || "—"}</td>
+                            <td style={tdStyle}>{money(m.monto)}</td>
+                            <td style={tdStyle}>
+                              {m.referencia_tipo
+                                ? `${m.referencia_tipo} #${m.referencia_id ?? ""}`
+                                : "—"}
+                            </td>
+                            <td style={tdStyle}>{formatDate(m.creado_en)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
               <div
                 style={{
-                  overflowX: "auto",
-                  borderRadius: 22,
-                  border: "1px solid #e2e8f0",
+                  background: "rgba(255,255,255,0.82)",
+                  borderRadius: 28,
+                  padding: 24,
+                  border: "1px solid rgba(148,163,184,0.18)",
+                  boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+                  display: "grid",
+                  gap: 16,
+                  alignContent: "start",
                 }}
               >
-                <table
+                <div
                   style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    minWidth: 900,
-                    background: "#fff",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    alignItems: "center",
+                    flexWrap: "wrap",
                   }}
                 >
-                  <thead>
-                    <tr
+                  <div>
+                    <h2
                       style={{
-                        background:
-                          "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
+                        margin: 0,
+                        fontSize: 24,
+                        fontWeight: 800,
+                        color: "#0f172a",
                       }}
                     >
-                      <th style={thStyle}>ID</th>
-                      <th style={thStyle}>Tipo</th>
-                      <th style={thStyle}>Concepto</th>
-                      <th style={thStyle}>Método</th>
-                      <th style={thStyle}>Monto</th>
-                      <th style={thStyle}>Referencia</th>
-                      <th style={thStyle}>Fecha</th>
-                    </tr>
-                  </thead>
+                      Dashboard de egresos
+                    </h2>
+                    <p
+                      style={{
+                        margin: "6px 0 0",
+                        color: "#64748b",
+                        fontSize: 14,
+                      }}
+                    >
+                      Resumen rápido, ranking y PDF.
+                    </p>
+                  </div>
 
-                  <tbody>
-                    {loading ? (
-                      <tr>
-                        <td colSpan={7} style={emptyTdStyle}>
-                          Cargando…
-                        </td>
-                      </tr>
-                    ) : !Array.isArray(actual?.movimientos) ||
-                      actual.movimientos.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} style={emptyTdStyle}>
-                          Sin movimientos registrados.
-                        </td>
-                      </tr>
-                    ) : (
-                      actual.movimientos.map((m) => (
-                        <tr key={m.id} style={{ borderTop: "1px solid #eef2f7" }}>
-                          <td style={tdStyle}>{m.id}</td>
-                          <td style={tdStyle}>
-                            {m.tipo === "ingreso" ? (
-                              <span style={badgeStyle("green")}>Ingreso</span>
-                            ) : (
-                              <span style={badgeStyle("red")}>Egreso</span>
-                            )}
-                          </td>
-                          <td style={tdStyle}>{m.concepto || "—"}</td>
-                          <td style={tdStyle}>{m.metodo_pago || "—"}</td>
-                          <td style={tdStyle}>{money(m.monto)}</td>
-                          <td style={tdStyle}>
-                            {m.referencia_tipo
-                              ? `${m.referencia_tipo} #${m.referencia_id ?? ""}`
-                              : "—"}
-                          </td>
-                          <td style={tdStyle}>{formatDate(m.creado_en)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                  <button
+                    type="button"
+                    onClick={exportarPdfEgresos}
+                    disabled={loading || !hasUbicacion}
+                    style={{
+                      ...secondaryButtonStyle,
+                      opacity: loading || !hasUbicacion ? 0.6 : 1,
+                      cursor:
+                        loading || !hasUbicacion ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <FileText size={16} />
+                    PDF egresos
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(2, 1fr)",
+                    gap: 14,
+                  }}
+                >
+                  <InfoPanel
+                    icon={<BadgeDollarSign size={16} />}
+                    title="Total egresado"
+                    value={money(dashboardEgresos.total)}
+                  />
+                  <InfoPanel
+                    icon={<ReceiptText size={16} />}
+                    title="Cantidad"
+                    value={String(dashboardEgresos.cantidad)}
+                  />
+                  <InfoPanel
+                    icon={<Tags size={16} />}
+                    title="Mayor egreso"
+                    value={
+                      dashboardEgresos.mayor
+                        ? `${dashboardEgresos.mayor.tipo} · ${money(
+                            dashboardEgresos.mayor.monto
+                          )}`
+                        : "—"
+                    }
+                  />
+                  <InfoPanel
+                    icon={<BarChart3 size={16} />}
+                    title="Promedio"
+                    value={
+                      dashboardEgresos.cantidad > 0
+                        ? money(
+                            dashboardEgresos.total / dashboardEgresos.cantidad
+                          )
+                        : money(0)
+                    }
+                  />
+                </div>
+
+                <div
+                  style={{
+                    borderRadius: 22,
+                    border: "1px solid #e2e8f0",
+                    background:
+                      "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.95) 100%)",
+                    padding: 18,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 800,
+                      color: "#0f172a",
+                      marginBottom: 12,
+                    }}
+                  >
+                    Ranking por tipo
+                  </div>
+
+                  {dashboardEgresos.ranking.length === 0 ? (
+                    <div style={{ color: "#64748b", fontSize: 14 }}>
+                      No hay egresos para mostrar.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {dashboardEgresos.ranking.slice(0, 8).map((item) => {
+                        const porcentaje =
+                          dashboardEgresos.total > 0
+                            ? (item.monto / dashboardEgresos.total) * 100
+                            : 0;
+
+                        return (
+                          <div key={item.tipo}>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                marginBottom: 6,
+                                fontSize: 14,
+                                color: "#334155",
+                              }}
+                            >
+                              <span>{item.tipo}</span>
+                              <strong>{money(item.monto)}</strong>
+                            </div>
+                            <div
+                              style={{
+                                width: "100%",
+                                height: 10,
+                                background: "#e2e8f0",
+                                borderRadius: 999,
+                                overflow: "hidden",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, porcentaje)}%`,
+                                  height: "100%",
+                                  background:
+                                    "linear-gradient(135deg, #f97316 0%, #ea580c 100%)",
+                                  borderRadius: 999,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </>
@@ -1597,7 +2133,8 @@ export default function Caja() {
                       c?.ubicacion?.nombre ||
                       ubicacionesDisponibles.find(
                         (u) =>
-                          Number(u.id) === Number(c?.ubicacion_id || c?.ubicacion?.id)
+                          Number(u.id) ===
+                          Number(c?.ubicacion_id || c?.ubicacion?.id)
                       )?.nombre ||
                       nombreSucursal ||
                       (c?.ubicacion_id ? `Sucursal #${c.ubicacion_id}` : "—");
@@ -1644,6 +2181,200 @@ export default function Caja() {
         </div>
       </div>
 
+      {egresoModalOpen ? (
+        <div
+          onClick={cerrarModalEgreso}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.55)",
+            backdropFilter: "blur(4px)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 560,
+              borderRadius: 28,
+              background: "#ffffff",
+              boxShadow: "0 30px 80px rgba(15,23,42,0.35)",
+              border: "1px solid rgba(148,163,184,0.20)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                padding: "22px 24px 16px",
+                background:
+                  "linear-gradient(135deg, rgba(255,247,237,1) 0%, rgba(254,215,170,0.58) 100%)",
+                borderBottom: "1px solid #fed7aa",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 16,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: 24,
+                    fontWeight: 900,
+                    color: "#0f172a",
+                    letterSpacing: "-0.03em",
+                  }}
+                >
+                  Registrar egreso
+                </div>
+                <div
+                  style={{
+                    marginTop: 6,
+                    fontSize: 14,
+                    color: "#7c2d12",
+                  }}
+                >
+                  Sucursal: {nombreSucursal}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={cerrarModalEgreso}
+                disabled={busy}
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 14,
+                  border: "1px solid #fdba74",
+                  background: "#fff",
+                  color: "#9a3412",
+                  fontSize: 22,
+                  cursor: busy ? "not-allowed" : "pointer",
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={registrarEgreso} style={{ padding: 24 }}>
+              <div style={{ display: "grid", gap: 14 }}>
+                <div>
+                  <label style={labelStyle}>Tipo</label>
+                  <select
+                    value={egresoTipo}
+                    onChange={(e) => setEgresoTipo(e.target.value)}
+                    disabled={busy || loading || !isAbierta || !hasUbicacion}
+                    style={selectStyle}
+                  >
+                    {TIPOS_EGRESO.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {egresoTipo === "Otro" ? (
+                  <div>
+                    <label style={labelStyle}>Concepto personalizado</label>
+                    <input
+                      value={egresoConcepto}
+                      onChange={(e) => setEgresoConcepto(e.target.value)}
+                      placeholder="Escribe el concepto"
+                      disabled={busy || loading || !isAbierta || !hasUbicacion}
+                      style={inputStyle}
+                    />
+                  </div>
+                ) : null}
+
+                <div>
+                  <label style={labelStyle}>Monto</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={egresoMonto}
+                    onChange={(e) => setEgresoMonto(e.target.value)}
+                    placeholder="0.00"
+                    disabled={busy || loading || !isAbierta || !hasUbicacion}
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Referencia</label>
+                  <input
+                    value={egresoReferencia}
+                    onChange={(e) => setEgresoReferencia(e.target.value)}
+                    placeholder="Factura, recibo, comprobante"
+                    disabled={busy || loading || !isAbierta || !hasUbicacion}
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Notas</label>
+                  <input
+                    value={egresoNotas}
+                    onChange={(e) => setEgresoNotas(e.target.value)}
+                    placeholder="Observación opcional"
+                    disabled={busy || loading || !isAbierta || !hasUbicacion}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 12,
+                  marginTop: 22,
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={cerrarModalEgreso}
+                  disabled={busy}
+                  style={{
+                    ...secondaryButtonStyle,
+                    height: 50,
+                    minWidth: 120,
+                    cursor: busy ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={busy || loading || !isAbierta || !hasUbicacion}
+                  style={{
+                    ...dangerButtonStyle,
+                    height: 50,
+                    minWidth: 170,
+                    opacity:
+                      busy || loading || !isAbierta || !hasUbicacion ? 0.6 : 1,
+                    cursor:
+                      busy || loading || !isAbierta || !hasUbicacion
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                >
+                  {busy ? "Guardando..." : "Guardar egreso"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       <style>
         {`
           @media (max-width: 1200px) {
@@ -1652,6 +2383,10 @@ export default function Caja() {
             }
 
             div[style*="grid-template-columns: 1.05fr 0.95fr"] {
+              grid-template-columns: 1fr !important;
+            }
+
+            div[style*="grid-template-columns: repeat(3, 1fr)"] {
               grid-template-columns: 1fr !important;
             }
           }

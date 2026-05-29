@@ -1,7 +1,7 @@
 import { getToken, clearSession } from "./auth";
 
 const BASE_URL =
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
+  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api/v1";
 
 async function request(path, { method = "GET", body, headers = {} } = {}) {
   const token = getToken();
@@ -40,12 +40,27 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
   return data;
 }
 
+function buildQuery(params = {}) {
+  const qs = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+
+    const text = String(value).trim();
+    if (text === "") return;
+
+    qs.set(key, text);
+  });
+
+  return qs.toString();
+}
+
 export const api = {
   login: (payload) =>
     request("/login", { method: "POST", body: payload }),
 
   usuariosList: (params = {}) => {
-    const qs = new URLSearchParams(params).toString();
+    const qs = buildQuery(params);
     return request(`/usuarios${qs ? `?${qs}` : ""}`);
   },
 
@@ -62,7 +77,7 @@ export const api = {
     request(`/usuarios/${id}`),
 
   ubicacionesList: (params = {}) => {
-    const qs = new URLSearchParams(params).toString();
+    const qs = buildQuery(params);
     return request(`/ubicaciones${qs ? `?${qs}` : ""}`);
   },
 
@@ -82,7 +97,7 @@ export const api = {
     request(`/ubicaciones/${id}/toggle`, { method: "PATCH" }),
 
   vendedoresList: (params = {}) => {
-    const qs = new URLSearchParams(params).toString();
+    const qs = buildQuery(params);
     return request(`/vendedores${qs ? `?${qs}` : ""}`);
   },
 
@@ -105,7 +120,7 @@ export const api = {
     request(`/vendedores/${id}`),
 
   rutasList: (params = {}) => {
-    const qs = new URLSearchParams(params).toString();
+    const qs = buildQuery(params);
     return request(`/rutas${qs ? `?${qs}` : ""}`);
   },
 
@@ -122,7 +137,7 @@ export const api = {
     request(`/rutas/${id}`),
 
   zonasList: (params = {}) => {
-    const qs = new URLSearchParams(params).toString();
+    const qs = buildQuery(params);
     return request(`/zonas${qs ? `?${qs}` : ""}`);
   },
 
@@ -138,18 +153,14 @@ export const api = {
   zonasShow: (id) =>
     request(`/zonas/${id}`),
 
-  cajaActual: ({ ubicacion_id }) => {
-    const qs = new URLSearchParams({
-      ubicacion_id: String(ubicacion_id),
-    }).toString();
-    return request(`/caja/actual?${qs}`);
+  cajaActual: (params = {}) => {
+    const qs = buildQuery(params);
+    return request(`/caja/actual${qs ? `?${qs}` : ""}`);
   },
 
-  cajaHistorial: ({ ubicacion_id }) => {
-    const qs = new URLSearchParams({
-      ubicacion_id: String(ubicacion_id),
-    }).toString();
-    return request(`/caja/historial?${qs}`);
+  cajaHistorial: (params = {}) => {
+    const qs = buildQuery(params);
+    return request(`/caja/historial${qs ? `?${qs}` : ""}`);
   },
 
   cajaAbrir: (payload) =>
@@ -158,8 +169,11 @@ export const api = {
   cajaCerrar: (payload) =>
     request("/caja/cerrar", { method: "POST", body: payload }),
 
+  cajaRegistrarEgreso: (payload) =>
+    request("/caja/egresos", { method: "POST", body: payload }),
+
   ventasTiendaList: (params = {}) => {
-    const qs = new URLSearchParams(params).toString();
+    const qs = buildQuery(params);
     return request(`/ventas-tienda${qs ? `?${qs}` : ""}`);
   },
 

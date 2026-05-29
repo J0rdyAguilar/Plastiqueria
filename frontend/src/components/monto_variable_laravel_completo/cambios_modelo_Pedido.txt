@@ -1,0 +1,10 @@
+En app/Models/Pedido.php agrega en $fillable:
+
+'monto_variable_estado',
+'monto_variable_aprobado_por',
+'monto_variable_aprobado_en',
+
+Y en $casts agrega:
+
+'monto_variable_aprobado_por' => 'int',
+'monto_variable_aprobado_en'  => 'datetime',

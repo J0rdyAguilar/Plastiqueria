@@ -13,6 +13,14 @@ const TIPOS = [
   { value: "ajuste", label: "Ajuste" },
 ];
 
+function normalizeRole(value) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
+}
+
 function normalizarPrecios(precios = []) {
   if (!Array.isArray(precios)) return [];
 
@@ -88,8 +96,8 @@ export default function MovimientosStock() {
   const session = getSession();
   const user = session?.user || {};
 
-  const role = String(user?.role || user?.rol || "").toLowerCase();
-  const isSuperAdmin = role === "superadmin";
+  const role = normalizeRole(user?.role || user?.rol || "");
+  const isSuperAdmin = role === "super_admin" || role === "superadmin";
   const userUbicacionId = String(user?.ubicacion_id || user?.sucursal_id || "");
 
   const [tipo, setTipo] = useState("");

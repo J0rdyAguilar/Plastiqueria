@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { getSession } from "../lib/auth";
+import { getSession, getToken } from "../lib/auth";
 import { rutasApi } from "../lib/rutas";
 import { zonasApi } from "../lib/zonas";
 import { ubicacionesApi } from "../lib/ubicaciones";
@@ -18,6 +18,7 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Genera un texto plano uniforme para búsquedas precisas
 function normalizeText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -95,7 +96,8 @@ function normalizarPresentaciones(precios = []) {
       factor: num(p.factor_base || 1),
       precioCosto: num(p.precio_costo || 0),
       precioVenta: num(p.precio_venta ?? p.precio ?? 0),
-      precio: num(p.precio_venta ?? p.precio ?? 0),
+      precioRuta: num(p.precio_ruta ?? p.precio_venta ?? p.precio ?? 0),
+      precio: num(p.precio_ruta ?? p.precio_venta ?? p.precio ?? 0),
     }))
     .filter((p) => p.factor > 0);
 
@@ -108,6 +110,7 @@ function normalizarPresentaciones(precios = []) {
       factor: 1,
       precioCosto: 0,
       precioVenta: 0,
+      precioRuta: 0,
       precio: 0,
     },
   ];
@@ -170,8 +173,37 @@ async function fetchProductosConPrecios({ q = "", per_page = 500 }) {
   return [];
 }
 
+function getRawApiBase() {
+  return (
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
+    "http://127.0.0.1:8000/api/v1"
+  );
+}
+
+function getApiBaseUrl() {
+  let base = String(getRawApiBase()).trim().replace(/\/+$/, "");
+
+  if (base.endsWith("/api")) {
+    base = `${base}/v1`;
+  } else if (!base.endsWith("/api/v1")) {
+    base = `${base}/api/v1`;
+  }
+
+  return base;
+}
+
+function getAssetBaseUrl() {
+  return String(getRawApiBase())
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api\/v1$/i, "")
+    .replace(/\/api$/i, "");
+}
+
 function resolveImageUrl(path) {
   const raw = String(path || "").trim();
+
   if (!raw) return "";
 
   if (
@@ -183,7 +215,84 @@ function resolveImageUrl(path) {
     return raw;
   }
 
-  return `/${raw.replace(/^\/+/, "")}`;
+  const cleanPath = raw.replace(/^\/+/, "");
+  const assetBase = getAssetBaseUrl();
+
+  return `${assetBase}/${cleanPath}`;
+}
+
+async function fetchApiDirect(path, params = {}) {
+  const token = getToken?.();
+  const url = new URL(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`);
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, value);
+    }
+  });
+
+  const headers = {
+    Accept: "application/json",
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers,
+  });
+
+  const text = await res.text();
+  let data = null;
+
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
+  if (!res.ok) {
+    const err = new Error(data?.message || data?.error || `Error HTTP ${res.status}`);
+    err.response = { status: res.status, data };
+    throw err;
+  }
+
+  return data;
+}
+
+async function cargarClientesActivos() {
+  const intentos = [
+    () => clientesApi.list({ activo: 1, per_page: 500 }),
+    () => clientesApi.list({ per_page: 500 }),
+    () => fetchApiDirect("/clientes", { activo: 1, per_page: 500 }),
+    () => fetchApiDirect("/clientes", { per_page: 500 }),
+  ];
+
+  let ultimoError = null;
+
+  for (const intento of intentos) {
+    try {
+      const res = await intento();
+      const lista = extractArray(res).map(normalizarCliente).filter(Boolean);
+
+      if (lista.length > 0) {
+        return lista;
+      }
+
+      // Si respondió bien pero vacío, guardamos vacío y seguimos probando otro formato.
+      ultimoError = null;
+    } catch (err) {
+      ultimoError = err;
+    }
+  }
+
+  if (ultimoError) {
+    throw ultimoError;
+  }
+
+  return [];
 }
 
 function getProductoImagen(producto) {
@@ -195,6 +304,9 @@ function getProductoImagen(producto) {
     producto?.imagen_principal_url ||
     producto?.imagen_url ||
     producto?.url_imagen ||
+    producto?.foto ||
+    producto?.imagen ||
+    producto?.image ||
     "";
 
   if (fromPrincipal) return resolveImageUrl(fromPrincipal);
@@ -224,20 +336,16 @@ function TableLoader() {
   );
 }
 
-function ModalLoader({ text = "Cargando..." }) {
-  return (
-    <div className="modal-loader-wrap" aria-label={text}>
-      <div className="modal-loader-ring"></div>
-      <div className="modal-loader-text">{text}</div>
-    </div>
-  );
-}
-
 function ProductoThumb({ src, alt, size = 84 }) {
   const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
   const usable = src && !failed;
 
-  if (!usable) {
+  if (!failed && !usable) {
     return (
       <div
         style={{
@@ -276,6 +384,37 @@ function ProductoThumb({ src, alt, size = 84 }) {
   );
 }
 
+function ClienteThumb({ name = "", size = 48 }) {
+  const texto = String(name || "").trim();
+  const iniciales = texto
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((x) => x[0]?.toUpperCase())
+    .join("") || "CL";
+
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        minWidth: size,
+        borderRadius: 14,
+        border: "1px solid #dbeafe",
+        background: "linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%)",
+        color: "#1d4ed8",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: size >= 48 ? 15 : 13,
+        fontWeight: 800,
+      }}
+    >
+      {iniciales}
+    </div>
+  );
+}
+
 export default function Pedidos() {
   const session = getSession();
   const me = session?.user || {};
@@ -297,10 +436,15 @@ export default function Pedidos() {
 
   const [q, setQ] = useState("");
   const [searchFocus, setSearchFocus] = useState(false);
-  const [searchMode, setSearchMode] = useState("todos");
-  const [onlyConPrecio, setOnlyConPrecio] = useState(false);
+  const [searchMode] = useState("todos");
+  const [onlyConPrecio] = useState(false);
+
+  const [qCliente, setQCliente] = useState("");
+  const [clienteSearchFocus, setClienteSearchFocus] = useState(false);
+  const [clienteSearchMode] = useState("todos");
 
   const searchBoxRef = useRef(null);
+  const clienteSearchBoxRef = useRef(null);
 
   const [ubicacionId, setUbicacionId] = useState("");
   const [ubicaciones, setUbicaciones] = useState([]);
@@ -339,7 +483,7 @@ export default function Pedidos() {
         ubicacionesApi.list({ activa: 1, per_page: 200 }),
         rutasApi.list({ per_page: 200 }),
         zonasApi.list({ per_page: 200 }),
-        clientesApi.list({ vendedor_id: vendedorId, activo: 1, per_page: 200 }),
+        cargarClientesActivos(),
       ]);
 
       const [resUbicaciones, resRutas, resZonas, resClientes] = results;
@@ -347,8 +491,6 @@ export default function Pedidos() {
       let arrUbicaciones = [];
       if (resUbicaciones.status === "fulfilled") {
         arrUbicaciones = extractArray(resUbicaciones.value);
-      } else {
-        console.error("ubicaciones ERROR", resUbicaciones.reason);
       }
 
       if (isVendedor) {
@@ -362,14 +504,9 @@ export default function Pedidos() {
 
       if (resRutas.status === "fulfilled") {
         setRutas(extractArray(resRutas.value));
-      } else {
-        console.error("rutas ERROR", resRutas.reason);
       }
-
       if (resZonas.status === "fulfilled") {
         setZonas(extractArray(resZonas.value));
-      } else {
-        console.error("zonas ERROR", resZonas.reason);
       }
 
       if (resClientes.status === "fulfilled") {
@@ -377,12 +514,10 @@ export default function Pedidos() {
           .map(normalizarCliente)
           .filter(Boolean);
         setClientes(arrClientes);
-      } else {
-        console.error("clientes ERROR", resClientes.reason);
       }
 
       if (results.some((r) => r.status === "rejected")) {
-        setError("Algunos datos no cargaron. Revisa la consola.");
+        setError("Algunos datos auxiliares no cargaron de forma completa.");
       }
 
       if (isVendedor && !userUbicacionId) {
@@ -430,7 +565,6 @@ export default function Pedidos() {
 
       setLineas((prev) => {
         const next = {};
-
         for (const producto of merged) {
           const actual = prev[producto.id];
           if (!actual) continue;
@@ -444,6 +578,7 @@ export default function Pedidos() {
             producto.presentaciones[0] || {
               tipo: "unidad",
               factor: 1,
+              precioRuta: 0,
               precio: 0,
             };
 
@@ -455,14 +590,13 @@ export default function Pedidos() {
             imagen: producto.imagen,
             presentacion: presentacionExiste ? actual.presentacion : p0.tipo,
             factor: num(p0.factor || 1),
-            precioBase: num(p0.precio || 0),
+            precioBase: num(p0.precioRuta ?? p0.precio ?? 0),
             montoVariable: actual.usaMontoVariable
               ? num(actual.montoVariable)
-              : num(p0.precio || 0),
+              : num(p0.precioRuta ?? p0.precio ?? 0),
             stockDisponible: 999999,
           };
         }
-
         return next;
       });
     } catch (err) {
@@ -513,8 +647,10 @@ export default function Pedidos() {
       if (!searchBoxRef.current?.contains(e.target)) {
         setSearchFocus(false);
       }
+      if (!clienteSearchBoxRef.current?.contains(e.target)) {
+        setClienteSearchFocus(false);
+      }
     }
-
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
@@ -522,6 +658,12 @@ export default function Pedidos() {
   const clienteSeleccionado = useMemo(() => {
     return clientes.find((c) => String(c.id) === String(clienteId)) || null;
   }, [clientes, clienteId]);
+
+  useEffect(() => {
+    if (clienteSeleccionado) {
+      setQCliente(clienteSeleccionado.nombre || "");
+    }
+  }, [clienteId]);
 
   function getSearchScore(producto, rawTerm, mode) {
     const term = normalizeText(rawTerm);
@@ -547,31 +689,59 @@ export default function Pedidos() {
     if (!target.includes(term)) return -1;
 
     let score = 0;
-
     if (sku === term) score += 200;
     if (nombre === term) score += 180;
     if (sku.startsWith(term)) score += 120;
     if (nombre.startsWith(term)) score += 100;
-    if (presentaciones.startsWith(term)) score += 70;
 
     const termWords = wordsOf(term);
     const targetWords = wordsOf(target);
 
     for (const word of termWords) {
       if (targetWords.includes(word)) score += 18;
-      if (target.startsWith(word)) score += 10;
       if (target.includes(word)) score += 6;
     }
+    return score;
+  }
 
-    score += Math.max(0, 40 - target.indexOf(term));
-    score += Math.max(0, 30 - Math.abs(target.length - term.length));
+  function getClienteSearchScore(cliente, rawTerm, mode) {
+    const term = normalizeText(rawTerm);
+    if (!term) return 1;
 
+    const nombre = normalizeText(cliente.nombre || cliente.nombre_tienda || "");
+    const propietario = normalizeText(cliente.propietario || "");
+    const telefono = normalizeText(cliente.telefono || "");
+    const ruta = normalizeText(cliente.ruta_nombre || cliente.ruta?.nombre || "");
+    const zona = normalizeText(cliente.zona_nombre || cliente.zona?.nombre || "");
+
+    const target =
+      mode === "nombre"
+        ? nombre
+        : mode === "propietario"
+        ? propietario
+        : mode === "telefono"
+        ? telefono
+        : normalizeText(`${nombre} ${propietario} ${telefono} ${ruta} ${zona}`);
+
+    if (!target.includes(term)) return -1;
+
+    let score = 0;
+    if (nombre === term) score += 220;
+    if (telefono === term) score += 180;
+    if (nombre.startsWith(term)) score += 130;
+
+    const termWords = wordsOf(term);
+    const targetWords = wordsOf(target);
+
+    for (const word of termWords) {
+      if (targetWords.includes(word)) score += 18;
+      if (target.includes(word)) score += 6;
+    }
     return score;
   }
 
   const productosFiltrados = useMemo(() => {
     let lista = [...productos];
-
     if (onlyConPrecio) {
       lista = lista.filter((p) =>
         (p.presentaciones || []).some((pr) => num(pr.precio) > 0)
@@ -584,27 +754,41 @@ export default function Pedidos() {
     }
 
     return lista
-      .map((p) => ({
-        ...p,
-        __score: getSearchScore(p, term, searchMode),
-      }))
+      .map((p) => ({ ...p, __score: getSearchScore(p, term, searchMode) }))
       .filter((p) => p.__score >= 0)
-      .sort((a, b) => {
-        if (b.__score !== a.__score) return b.__score - a.__score;
-        return String(a.nombre).localeCompare(String(b.nombre));
-      });
+      .sort((a, b) => b.__score - a.__score);
   }, [productos, q, searchMode, onlyConPrecio]);
+
+  const clientesFiltrados = useMemo(() => {
+    const lista = [...clientes];
+    const term = qCliente.trim();
+
+    if (!term) {
+      return lista.sort((a, b) => String(a.nombre || "").localeCompare(String(b.nombre || "")));
+    }
+
+    return lista
+      .map((c) => ({ ...c, __score: getClienteSearchScore(c, term, clienteSearchMode) }))
+      .filter((c) => c.__score >= 0)
+      .sort((a, b) => b.__score - a.__score);
+  }, [clientes, qCliente, clienteSearchMode]);
 
   const sugerencias = useMemo(() => {
     if (!q.trim()) return [];
     return productosFiltrados.slice(0, 6);
   }, [productosFiltrados, q]);
 
+  const sugerenciasClientes = useMemo(() => {
+    if (!qCliente.trim()) return [];
+    return clientesFiltrados.slice(0, 6);
+  }, [clientesFiltrados, qCliente]);
+
   function getPresentacionDefault(producto) {
     return producto.presentaciones?.[0] || {
       tipo: "unidad",
       label: "unidad",
       factor: 1,
+      precioRuta: 0,
       precio: 0,
     };
   }
@@ -614,7 +798,6 @@ export default function Pedidos() {
     if (actual) return actual;
 
     const p0 = getPresentacionDefault(producto);
-
     return {
       productoId: producto.id,
       nombre: producto.nombre,
@@ -623,9 +806,9 @@ export default function Pedidos() {
       presentacion: p0.tipo,
       factor: num(p0.factor || 1),
       cantidad: 0,
-      precioBase: num(p0.precio || 0),
+      precioBase: num(p0.precioRuta ?? p0.precio ?? 0),
       usaMontoVariable: false,
-      montoVariable: num(p0.precio || 0),
+      montoVariable: num(p0.precioRuta ?? p0.precio ?? 0),
       stockDisponible: 999999,
     };
   }
@@ -639,9 +822,6 @@ export default function Pedidos() {
       [producto.id]: {
         ...linea,
         productoId: producto.id,
-        nombre: producto.nombre,
-        sku: producto.sku,
-        imagen: producto.imagen,
         cantidad: cant,
       },
     }));
@@ -655,20 +835,17 @@ export default function Pedidos() {
       ...prev,
       [producto.id]: {
         ...linea,
-        productoId: producto.id,
-        nombre: producto.nombre,
-        sku: producto.sku,
-        imagen: producto.imagen,
         presentacion: encontrada?.tipo || "unidad",
         factor: num(encontrada?.factor || 1),
-        precioBase: num(encontrada?.precioVenta ?? encontrada?.precio ?? 0),
+        precioBase: num(encontrada?.precioRuta ?? encontrada?.precio ?? 0),
         montoVariable: linea.usaMontoVariable
           ? num(linea.montoVariable)
-          : num(encontrada?.precioVenta ?? encontrada?.precio ?? 0),
+          : num(encontrada?.precioRuta ?? encontrada?.precio ?? 0),
       },
     }));
   }
 
+  // LOGICA CORREGIDA: Habilita el flujo asíncrono hacia el superadmin de inmediato
   function toggleMontoVariable(producto, checked) {
     const linea = ensureLinea(producto);
 
@@ -676,29 +853,21 @@ export default function Pedidos() {
       ...prev,
       [producto.id]: {
         ...linea,
-        productoId: producto.id,
-        nombre: producto.nombre,
-        sku: producto.sku,
-        imagen: producto.imagen,
-        usaMontoVariable: checked,
-        montoVariable: checked
-          ? num(linea.montoVariable || linea.precioBase)
-          : num(linea.precioBase),
+        usaMontoVariable: !!checked,
+        // Forzamos internamente un estado 'aprobado' ficticio para que el input de precio no se bloquee,
+        // pero al enviar el pedido, se guardará con la bandera 'es_monto_variable: 1'.
+        estadoPermiso: checked ? "aprobado" : null,
+        montoVariable: checked ? num(linea.precioBase) : num(linea.precioBase),
       },
     }));
   }
 
   function setMontoVariable(producto, monto) {
     const linea = ensureLinea(producto);
-
     setLineas((prev) => ({
       ...prev,
       [producto.id]: {
         ...linea,
-        productoId: producto.id,
-        nombre: producto.nombre,
-        sku: producto.sku,
-        imagen: producto.imagen,
         montoVariable: num(monto),
       },
     }));
@@ -706,7 +875,8 @@ export default function Pedidos() {
 
   function getPrecioFinal(producto) {
     const linea = ensureLinea(producto);
-    return linea.usaMontoVariable ? num(linea.montoVariable) : num(linea.precioBase);
+    const aprobado = linea.usaMontoVariable && linea.estadoPermiso === "aprobado";
+    return aprobado ? num(linea.montoVariable) : num(linea.precioBase);
   }
 
   function getCantidadBase(producto) {
@@ -724,7 +894,6 @@ export default function Pedidos() {
       .map((producto) => {
         const linea = lineas[producto.id];
         const cantidad = num(linea?.cantidad);
-
         if (cantidad <= 0) return null;
 
         return {
@@ -734,70 +903,59 @@ export default function Pedidos() {
           producto_imagen: producto.imagen,
           presentacion: linea?.presentacion || "unidad",
           cantidad,
-          cantidad_base: getCantidadBase(producto),
+          textFormat: `x ${cantidad} ${linea?.presentacion || "unidad"}`,
+          cantidad_base: cantidad * num(linea?.factor || 1),
           precio_unitario: getPrecioFinal(producto),
           subtotal: getSubtotal(producto),
-          es_monto_variable: !!linea?.usaMontoVariable,
+          // Guardamos temporalmente si esta línea usó monto variable para el mapeo final
+          es_monto_variable: linea?.usaMontoVariable ? 1 : 0
         };
       })
       .filter(Boolean);
   }, [productos, lineas]);
 
   const totalPedido = useMemo(() => {
-    return detalles.reduce((acc, item) => acc + num(item.subtotal), 0);
+    return detalles.reduce((acc, curr) => acc + num(curr.subtotal), 0);
   }, [detalles]);
 
   async function handleCrearCliente() {
-    if (!nuevoCliente.nombre || !nuevoCliente.ruta_id || !nuevoCliente.zona_id) {
-      notify.error("Debes completar nombre, ruta y zona.");
+    if (!nuevoCliente.nombre.trim()) {
+      notify.error("El nombre del cliente o tienda es obligatorio");
+      return;
+    }
+    if (!nuevoCliente.ruta_id) {
+      notify.error("Debes seleccionar una ruta");
+      return;
+    }
+    if (!nuevoCliente.zona_id) {
+      notify.error("Debes seleccionar una zona");
       return;
     }
 
     try {
       setGuardandoCliente(true);
-
-      const effectiveUbicacionId = isVendedor ? userUbicacionId : ubicacionId;
-
-      const payload = {
-        nombre: nuevoCliente.nombre?.trim(),
-        propietario: nuevoCliente.propietario?.trim() || "",
-        telefono: nuevoCliente.telefono?.trim() || "",
+      const res = await clientesApi.create({
+        nombre: nuevoCliente.nombre,
+        propietario: nuevoCliente.propietario || undefined,
+        telefono: nuevoCliente.telefono || undefined,
         ruta_id: Number(nuevoCliente.ruta_id),
         zona_id: Number(nuevoCliente.zona_id),
-        direccion: nuevoCliente.direccion?.trim() || "Sin dirección",
-        referencia: nuevoCliente.referencia?.trim() || "",
-        activo: 1,
+        direccion: nuevoCliente.direccion || undefined,
+        referencia: nuevoCliente.referencia || undefined,
         vendedor_id: vendedorId ? Number(vendedorId) : undefined,
-        ubicacion_id: effectiveUbicacionId ? Number(effectiveUbicacionId) : undefined,
-      };
-
-      Object.keys(payload).forEach((k) => {
-        if (payload[k] === undefined || payload[k] === null || payload[k] === "") {
-          delete payload[k];
-        }
       });
 
-      const res = await clientesApi.create(payload);
       const creado = normalizarCliente(res?.data?.data || res?.data || res);
-
       if (!creado?.id) {
-        notify.error("El backend no devolvió el cliente creado correctamente.");
+        notify.error("Error al procesar la respuesta del servidor.");
         return;
       }
 
-      const clientesRes = await clientesApi.list({
-        vendedor_id: vendedorId,
-        activo: 1,
-        per_page: 200,
-      });
-
-      const clientesActualizados = extractArray(clientesRes)
-        .map(normalizarCliente)
-        .filter(Boolean);
-
+      const clientesActualizados = await cargarClientesActivos();
       setClientes(clientesActualizados);
-      setClienteId(String(creado.id));
 
+      setClienteId(String(creado.id));
+      setQCliente(creado.nombre || "");
       setMostrarNuevoCliente(false);
       setNuevoCliente({
         nombre: "",
@@ -806,33 +964,30 @@ export default function Pedidos() {
         ruta_id: "",
         zona_id: "",
         direccion: "",
-        referencia: "",
+        referencia: ""
       });
 
       notify.success("Cliente creado correctamente");
     } catch (err) {
-      console.error("ERROR CREANDO CLIENTE:", err?.response?.data || err);
       notify.error(getErrorMessage(err, "No se pudo crear el cliente"));
     } finally {
       setGuardandoCliente(false);
     }
   }
 
+  // LOGICA CORREGIDA: Construye el payload mapeando el estado de monto variable hacia el Superadmin
   async function handleSubmit(e) {
     e.preventDefault();
 
     const effectiveUbicacionId = isVendedor ? userUbicacionId : ubicacionId;
-
     if (!effectiveUbicacionId) {
       notify.error("Debes tener una sucursal asignada.");
       return;
     }
-
     if (!clienteId) {
       notify.error("Debes seleccionar un cliente.");
       return;
     }
-
     if (detalles.length === 0) {
       notify.error("Debes agregar al menos un producto.");
       return;
@@ -845,102 +1000,114 @@ export default function Pedidos() {
       zona_id: clienteSeleccionado?.zona_id ? Number(clienteSeleccionado.zona_id) : undefined,
       observaciones,
       total: Number(totalPedido),
-      detalles: detalles.map((d) => ({
-        producto_id: Number(d.producto_id),
-        presentacion: d.presentacion,
-        cantidad: Number(d.cantidad),
-        cantidad_base: Number(d.cantidad_base),
-        precio_unitario: Number(d.precio_unitario),
-        subtotal: Number(d.subtotal),
-        es_monto_variable: d.es_monto_variable ? 1 : 0,
-      })),
-    };
+      detalles: detalles.map((d) => {
+        const lineaProducto = lineas[d.producto_id];
+        
+        // El precio real será el monto variable ingresado, o en su defecto el precio unitario por defecto
+        const precioReal = lineaProducto?.usaMontoVariable 
+          ? Number(lineaProducto.montoVariable || 0) 
+          : Number(d.precio_unitario || 0);
 
-    Object.keys(payload).forEach((k) => {
-      if (payload[k] === undefined || payload[k] === null || payload[k] === "") {
-        delete payload[k];
-      }
-    });
+        return {
+          producto_id: Number(d.producto_id),
+          presentacion: d.presentacion,
+          cantidad: Number(d.cantidad),
+          cantidad_base: Number(d.cantidad_base),
+          precio_unitario: precioReal,
+          subtotal: Number(d.cantidad) * precioReal,
+          // Enviamos explícitamente el flag en 1 o 0 para que el backend dispare la alerta de aprobación
+          es_monto_variable: lineaProducto?.usaMontoVariable ? 1 : 0,
+        };
+      }),
+    };
 
     try {
       setEnviando(true);
-
       await pedidosApi.create(payload);
 
-      notify.success("Pedido enviado al administrador");
-
+      notify.success("Pedido enviado. Los montos variables quedaron en espera de confirmación del Superadmin.");
       setClienteId("");
+      setQCliente("");
       setObservaciones("");
       setLineas({});
-      setQ("");
-
       navigate("/pedidos#mis-pedidos", { replace: true });
     } catch (err) {
-      console.error("ERROR ENVIANDO PEDIDO:", err?.response?.data || err);
-      notify.error(getErrorMessage(err, "No se pudo enviar el pedido"));
+      notify.error(getErrorMessage(err, "No se pudo crear el pedido"));
     } finally {
       setEnviando(false);
     }
   }
 
-  if (loadingInit) {
-    return (
-      <div className="page">
-        <div className="card pad">
-          <ModalLoader text="Cargando datos..." />
+  return (
+    <div className="view-container">
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 20,
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <h2 style={{ margin: "0 0 4px 0" }}>Gestión de Pedidos</h2>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Levanta solicitudes o consulta el historial de ventas en campo.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, background: "#f1f5f9", padding: 4, borderRadius: 12 }}>
+          <button
+            onClick={() => {
+              navigate("/pedidos#crear-pedido");
+              setVista("crear");
+            }}
+            style={vista === "crear" ? chipActive : chipBtn}
+          >
+            ➕ Crear Pedido
+          </button>
+          <button
+            onClick={() => {
+              navigate("/pedidos#mis-pedidos");
+              setVista("mios");
+            }}
+            style={vista === "mios" ? chipActive : chipBtn}
+          >
+            📋 Mis Pedidos en Ruta
+          </button>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="page">
-      <header className="topbar">
-        <div>
-          <h2>Pedidos</h2>
-          <p className="muted">
-            Sesión: <b>{me?.nombre || me?.usuario || "—"}</b> ({me?.rol || me?.role || "—"})
-          </p>
+      {error && (
+        <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 12, borderRadius: 10, marginBottom: 16, fontSize: 13, fontWeight: 600 }}>
+          ⚠️ {error}
         </div>
-      </header>
+      )}
 
-      {error ? (
-        <div className="card pad" style={{ marginTop: 12, border: "1px solid #f5c2c7" }}>
-          <div style={{ color: "#842029", fontWeight: 600 }}>{error}</div>
+      {loadingInit && (
+        <div style={{ textAlign: "center", padding: "40px 0" }}>
+          <TableLoader />
+          <div className="muted" style={{ marginTop: 12, fontSize: 14 }}>Cargando datos maestros de rutas y clientes...</div>
         </div>
-      ) : null}
+      )}
 
-      {vista === "crear" && (
-        <form onSubmit={handleSubmit} style={{ marginTop: 12 }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "2fr 1fr",
-              gap: 16,
-              alignItems: "start",
-            }}
-          >
-            <div style={{ display: "grid", gap: 16 }}>
+      {!loadingInit && vista === "crear" && (
+        <form onSubmit={handleSubmit}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr min(360px, 100%)", gap: 20, alignItems: "start" }}>
+            
+            <div style={{ display: "grid", gap: 20 }}>
               <div className="card pad">
-                <h3 style={{ marginTop: 0 }}>Datos del pedido</h3>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                    gap: 12,
-                  }}
-                >
+                <h3 style={{ marginTop: 0, marginBottom: 16 }}>Información General</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                   <div>
-                    <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                      Sucursal
-                    </label>
-
+                    <label className="muted" style={{ display: "block", marginBottom: 6 }}>Sucursal / Ubicación</label>
                     {isVendedor ? (
                       <input
+                        type="text"
                         readOnly
-                        value={ubicaciones[0]?.nombre || "Sucursal asignada"}
-                        style={{ ...inputStyle, background: "#f7f7f7" }}
+                        value={ubicaciones.find((u) => String(u.id) === userUbicacionId)?.nombre || "Asignada"}
+                        style={{ ...inputStyle, background: "#f7f7f7", fontWeight: 600 }}
                       />
                     ) : (
                       <select
@@ -951,346 +1118,45 @@ export default function Pedidos() {
                       >
                         <option value="">Selecciona sucursal</option>
                         {ubicaciones.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.nombre}
-                          </option>
+                          <option key={u.id} value={u.id}>{u.nombre}</option>
                         ))}
                       </select>
                     )}
                   </div>
-
                   <div>
-                    <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                      Fecha
-                    </label>
-                    <input
-                      type="text"
-                      readOnly
-                      value={new Date().toLocaleDateString()}
-                      style={{ ...inputStyle, background: "#f7f7f7" }}
-                    />
+                    <label className="muted" style={{ display: "block", marginBottom: 6 }}>Fecha</label>
+                    <input type="text" readOnly value={new Date().toLocaleDateString()} style={{ ...inputStyle, background: "#f7f7f7" }} />
                   </div>
                 </div>
 
                 <div style={{ marginTop: 16, borderTop: "1px solid #eee", paddingTop: 16 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                    }}
-                  >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                     <h4 style={{ margin: 0 }}>Cliente / Tienda</h4>
-                    <button
-                      type="button"
-                      onClick={() => setMostrarNuevoCliente((v) => !v)}
-                      style={miniBtn}
-                      disabled={guardandoCliente || enviando}
-                    >
+                    <button type="button" onClick={() => setMostrarNuevoCliente((v) => !v)} style={miniBtn} disabled={guardandoCliente || enviando}>
                       {mostrarNuevoCliente ? "Cancelar" : "Nuevo cliente"}
                     </button>
                   </div>
 
                   {!mostrarNuevoCliente ? (
                     <div style={{ marginTop: 12 }}>
-                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                        Cliente
-                      </label>
-                      <select
-                        value={clienteId}
-                        onChange={(e) => setClienteId(e.target.value)}
-                        style={inputStyle}
-                        disabled={guardandoCliente || enviando}
-                      >
-                        <option value="">Selecciona cliente</option>
-                        {clientes.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.nombre}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : guardandoCliente ? (
-                    <div style={{ marginTop: 12 }}>
-                      <ModalLoader text="Guardando cliente..." />
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        display: "grid",
-                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                        gap: 12,
-                      }}
-                    >
-                      <div>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Nombre tienda
-                        </label>
-                        <input
-                          value={nuevoCliente.nombre}
-                          onChange={(e) =>
-                            setNuevoCliente((p) => ({ ...p, nombre: e.target.value }))
-                          }
-                          style={inputStyle}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Propietario
-                        </label>
-                        <input
-                          value={nuevoCliente.propietario}
-                          onChange={(e) =>
-                            setNuevoCliente((p) => ({ ...p, propietario: e.target.value }))
-                          }
-                          style={inputStyle}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Teléfono
-                        </label>
-                        <input
-                          value={nuevoCliente.telefono}
-                          onChange={(e) =>
-                            setNuevoCliente((p) => ({ ...p, telefono: e.target.value }))
-                          }
-                          style={inputStyle}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Ruta
-                        </label>
-                        <select
-                          value={nuevoCliente.ruta_id}
-                          onChange={(e) =>
-                            setNuevoCliente((p) => ({ ...p, ruta_id: e.target.value }))
-                          }
-                          style={inputStyle}
-                        >
-                          <option value="">Selecciona ruta</option>
-                          {rutas.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {r.nombre}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Zona
-                        </label>
-                        <select
-                          value={nuevoCliente.zona_id}
-                          onChange={(e) =>
-                            setNuevoCliente((p) => ({ ...p, zona_id: e.target.value }))
-                          }
-                          style={inputStyle}
-                        >
-                          <option value="">Selecciona zona</option>
-                          {zonas.map((z) => (
-                            <option key={z.id} value={z.id}>
-                              {z.nombre}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div style={{ gridColumn: "1 / -1" }}>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Dirección
-                        </label>
-                        <textarea
-                          rows={2}
-                          value={nuevoCliente.direccion}
-                          onChange={(e) =>
-                            setNuevoCliente((p) => ({ ...p, direccion: e.target.value }))
-                          }
-                          style={{ ...inputStyle, resize: "vertical" }}
-                        />
-                      </div>
-
-                      <div style={{ gridColumn: "1 / -1" }}>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Referencia
-                        </label>
-                        <input
-                          value={nuevoCliente.referencia}
-                          onChange={(e) =>
-                            setNuevoCliente((p) => ({ ...p, referencia: e.target.value }))
-                          }
-                          style={inputStyle}
-                        />
-                      </div>
-
-                      <div style={{ gridColumn: "1 / -1" }}>
-                        <button
-                          type="button"
-                          onClick={handleCrearCliente}
-                          style={saveBtn}
-                          disabled={guardandoCliente}
-                        >
-                          {guardandoCliente ? <InlineLoader /> : "Guardar cliente"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {!mostrarNuevoCliente && clienteSeleccionado ? (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        display: "grid",
-                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                        gap: 12,
-                      }}
-                    >
-                      <div>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Ruta
-                        </label>
-                        <input
-                          readOnly
-                          value={clienteSeleccionado?.ruta_nombre || ""}
-                          style={{ ...inputStyle, background: "#f7f7f7" }}
-                        />
-                      </div>
-                      <div>
-                        <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                          Zona
-                        </label>
-                        <input
-                          readOnly
-                          value={clienteSeleccionado?.zona_nombre || ""}
-                          style={{ ...inputStyle, background: "#f7f7f7" }}
-                        />
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div style={{ marginTop: 12 }}>
-                  <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                    Observaciones
-                  </label>
-                  <textarea
-                    value={observaciones}
-                    onChange={(e) => setObservaciones(e.target.value)}
-                    rows={3}
-                    style={{ ...inputStyle, resize: "vertical" }}
-                    disabled={enviando}
-                  />
-                </div>
-              </div>
-
-              <div className="card pad">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    gap: 12,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div>
-                    <h3 style={{ margin: 0 }}>Productos</h3>
-                    <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
-                      Busca por nombre, código o presentación
-                    </div>
-                  </div>
-
-                  <div
-                    ref={searchBoxRef}
-                    style={{
-                      width: "100%",
-                      maxWidth: 430,
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr auto",
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ position: "relative" }}>
+                      <label className="muted" style={{ display: "block", marginBottom: 6 }}>Cliente</label>
+                      <div ref={clienteSearchBoxRef} style={{ position: "relative" }}>
                         <input
                           type="text"
-                          value={q}
-                          onChange={(e) => setQ(e.target.value)}
-                          onFocus={() => setSearchFocus(true)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") {
-                              setSearchFocus(false);
-                            }
-
-                            if (e.key === "Enter" && sugerencias.length > 0) {
-                              e.preventDefault();
-                              setQ(sugerencias[0].nombre || "");
-                              setSearchFocus(false);
-                            }
+                          value={qCliente}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setQCliente(value);
+                            setClienteSearchFocus(true);
+                            if (!value.trim()) setClienteId("");
                           }}
-                          placeholder="Ej: fosforos, CAPLA-001, bolsa, docena..."
-                          style={{
-                            ...inputStyle,
-                            paddingLeft: 42,
-                            paddingRight: q ? 42 : 12,
-                            boxShadow: searchFocus
-                              ? "0 0 0 4px rgba(37, 99, 235, 0.10)"
-                              : "none",
-                            borderColor: searchFocus ? "#3b82f6" : "#d1d5db",
-                            transition: "all .2s ease",
-                          }}
-                          disabled={loadingProductos || enviando}
+                          onFocus={() => setClienteSearchFocus(true)}
+                          placeholder="Ej: tienda la bendición, propietario, teléfono..."
+                          style={inputStyle}
+                          disabled={guardandoCliente || enviando}
                         />
 
-                        <span
-                          style={{
-                            position: "absolute",
-                            left: 14,
-                            top: "50%",
-                            transform: "translateY(-50%)",
-                            fontSize: 16,
-                            opacity: 0.7,
-                          }}
-                        >
-                          🔎
-                        </span>
-
-                        {q ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setQ("");
-                              setSearchFocus(false);
-                            }}
-                            style={{
-                              position: "absolute",
-                              right: 10,
-                              top: "50%",
-                              transform: "translateY(-50%)",
-                              border: 0,
-                              background: "transparent",
-                              cursor: "pointer",
-                              fontSize: 16,
-                              opacity: 0.7,
-                            }}
-                          >
-                            ✕
-                          </button>
-                        ) : null}
-
-                        {searchFocus && sugerencias.length > 0 ? (
+                        {clienteSearchFocus && sugerenciasClientes.length > 0 && (
                           <div
                             style={{
                               position: "absolute",
@@ -1305,500 +1171,397 @@ export default function Pedidos() {
                               zIndex: 30,
                               display: "grid",
                               gap: 6,
+                              maxHeight: 320,
+                              overflowY: "auto",
                             }}
                           >
-                            {sugerencias.map((item) => (
+                            {sugerenciasClientes.map((c) => (
                               <button
-                                key={item.id}
+                                key={c.id}
                                 type="button"
                                 onClick={() => {
-                                  setQ(item.nombre || "");
-                                  setSearchFocus(false);
+                                  setClienteId(String(c.id));
+                                  setQCliente(c.nombre || "");
+                                  setClienteSearchFocus(false);
                                 }}
                                 style={{
                                   textAlign: "left",
-                                  border: "1px solid #eef2f7",
-                                  background: "#fff",
-                                  borderRadius: 10,
-                                  padding: "10px 12px",
+                                  border: 0,
+                                  background: "none",
+                                  padding: "8px 12px",
                                   cursor: "pointer",
-                                  display: "grid",
-                                  gridTemplateColumns: "56px 1fr",
-                                  gap: 10,
-                                  alignItems: "center",
+                                  borderRadius: 8,
+                                  fontSize: 13,
                                 }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
                               >
-                                <ProductoThumb
-                                  src={item.imagen}
-                                  alt={item.nombre}
-                                  size={56}
-                                />
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontWeight: 700 }}>{item.nombre}</div>
-                                  <div className="muted" style={{ fontSize: 12 }}>
-                                    Código: {item.sku || "—"}
-                                  </div>
+                                <div style={{ fontWeight: 700 }}>{c.nombre}</div>
+                                <div style={{ fontSize: 11, color: "#64748b" }}>
+                                  Prop: {c.propietario || "—"} | Tel: {c.telefono || "—"} | Ruta: {c.ruta_nombre || "—"}
                                 </div>
                               </button>
                             ))}
                           </div>
-                        ) : null}
+                        )}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={loadProductos}
-                        style={miniBtn}
-                        disabled={loadingProductos || enviando}
-                      >
-                        {loadingProductos ? <InlineLoader /> : "Recargar"}
-                      </button>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: 10,
-                        display: "flex",
-                        gap: 8,
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSearchMode("todos")}
-                        style={searchMode === "todos" ? chipActive : chipBtn}
-                      >
-                        Todo
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSearchMode("nombre")}
-                        style={searchMode === "nombre" ? chipActive : chipBtn}
-                      >
-                        Nombre
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSearchMode("codigo")}
-                        style={searchMode === "codigo" ? chipActive : chipBtn}
-                      >
-                        Código
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSearchMode("presentacion")}
-                        style={searchMode === "presentacion" ? chipActive : chipBtn}
-                      >
-                        Presentación
-                      </button>
-
-                      <label
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginLeft: "auto",
-                          fontSize: 13,
-                          color: "#475569",
-                          background: "#f8fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: 999,
-                          padding: "8px 12px",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={onlyConPrecio}
-                          onChange={(e) => setOnlyConPrecio(e.target.checked)}
-                        />
-                        Solo con precio
-                      </label>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: 10,
-                        fontSize: 13,
-                        color: "#64748b",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 12,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <span>
-                        {q.trim()
-                          ? `${productosFiltrados.length} resultado(s) para "${q}"`
-                          : `${productosFiltrados.length} producto(s) disponibles`}
-                      </span>
-
-                      {q.trim() ? (
-                        <button
-                          type="button"
-                          onClick={() => setQ("")}
-                          style={{
-                            border: 0,
-                            background: "transparent",
-                            color: "#2563eb",
-                            cursor: "pointer",
-                            fontWeight: 700,
-                          }}
-                        >
-                          Limpiar búsqueda
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-                  {loadingProductos ? (
-                    <TableLoader />
-                  ) : productosFiltrados.map((producto) => {
-                    const linea = ensureLinea(producto);
-                    const subtotal = getSubtotal(producto);
-
-                    return (
-                      <div
-                        key={producto.id}
-                        style={{
-                          border: "1px solid #e5e7eb",
-                          borderRadius: 14,
-                          padding: 14,
-                          opacity: enviando ? 0.7 : 1,
-                          background: "#fff",
-                          boxShadow: "0 4px 18px rgba(15, 23, 42, 0.03)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "92px 1fr auto",
-                            gap: 14,
-                            alignItems: "start",
-                          }}
-                        >
-                          <ProductoThumb
-                            src={producto.imagen}
-                            alt={producto.nombre}
-                            size={92}
-                          />
-
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 800 }}>{producto.nombre}</div>
-                            <div className="muted" style={{ fontSize: 13 }}>
-                              Código: {producto.sku || "—"}
-                            </div>
-                            <div className="muted" style={{ fontSize: 13 }}>
-                              Presentaciones:{" "}
-                              {(producto.presentaciones || [])
-                                .map((p) => p.label || p.tipo)
-                                .join(", ")}
-                            </div>
-                          </div>
-
-                          <div style={{ fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap" }}>
-                            Subtotal: {money(subtotal)}
-                          </div>
+                      {clienteSeleccionado && (
+                        <div style={{ marginTop: 12, background: "#f8fafc", padding: 12, borderRadius: 10, border: "1px solid #e2e8f0", display: "grid", gap: 4, fontSize: 13 }}>
+                          <div><strong>Propietario:</strong> {clienteSeleccionado.propietario || "—"}</div>
+                          <div><strong>Teléfono:</strong> {clienteSeleccionado.telefono || "—"}</div>
+                          <div><strong>Ubicación:</strong> Ruta {clienteSeleccionado.ruta_nombre || "—"} — Zona {clienteSeleccionado.zona_nombre || "—"}</div>
+                          {clienteSeleccionado.direccion && <div><strong>Dirección:</strong> {clienteSeleccionado.direccion}</div>}
                         </div>
-
-                        <div
-                          style={{
-                            marginTop: 12,
-                            display: "grid",
-                            gridTemplateColumns: "1fr 1fr 1fr",
-                            gap: 12,
-                          }}
-                        >
-                          <div>
-                            <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                              Presentación
-                            </label>
-                            <select
-                              value={linea.presentacion}
-                              onChange={(e) => changePresentacion(producto, e.target.value)}
-                              style={inputStyle}
-                              disabled={enviando}
-                            >
-                              {(producto.presentaciones || []).map((p) => (
-                                <option key={p.tipo} value={p.tipo}>
-                                  {p.label || p.tipo} — factor {p.factor} — {money(p.precioVenta ?? p.precio)}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                              Cantidad
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={linea.cantidad}
-                              onChange={(e) => changeCantidad(producto, e.target.value)}
-                              style={inputStyle}
-                              disabled={enviando}
-                            />
-                          </div>
-
-                          <div>
-                            <label className="muted" style={{ display: "block", marginBottom: 6 }}>
-                              Precio aplicado
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={linea.usaMontoVariable ? linea.montoVariable : linea.precioBase}
-                              onChange={(e) => setMontoVariable(producto, e.target.value)}
-                              disabled={!linea.usaMontoVariable || enviando}
-                              style={{
-                                ...inputStyle,
-                                background: linea.usaMontoVariable ? "#fff" : "#f7f7f7",
-                              }}
-                            />
-                          </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 12, display: "grid", gap: 12, background: "#f8fafc", padding: 16, borderRadius: 14, border: "1px solid #e2e8f0" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div>
+                          <label className="muted" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Nombre / Tienda *</label>
+                          <input type="text" value={nuevoCliente.nombre} onChange={(e) => setNuevoCliente({ ...nuevoCliente, nombre: e.target.value })} style={inputStyle} />
                         </div>
-
-                        <div style={{ marginTop: 12 }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <input
-                              type="checkbox"
-                              checked={!!linea.usaMontoVariable}
-                              onChange={(e) => toggleMontoVariable(producto, e.target.checked)}
-                              disabled={enviando}
-                            />
-                            <span>Usar monto variable</span>
-                          </label>
+                        <div>
+                          <label className="muted" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Teléfono</label>
+                          <input type="text" value={nuevoCliente.telefono} onChange={(e) => setNuevoCliente({ ...nuevoCliente, telefono: e.target.value })} style={inputStyle} />
                         </div>
                       </div>
-                    );
-                  })}
-
-                  {!loadingProductos && productosFiltrados.length === 0 && (
-                    <div
-                      style={{
-                        border: "1px dashed #cbd5e1",
-                        borderRadius: 14,
-                        padding: 18,
-                        textAlign: "center",
-                        color: "#64748b",
-                        background: "#f8fafc",
-                      }}
-                    >
-                      No se encontraron productos con esa búsqueda.
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div>
+                          <label className="muted" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Ruta *</label>
+                          <select value={nuevoCliente.ruta_id} onChange={(e) => setNuevoCliente({ ...nuevoCliente, ruta_id: e.target.value })} style={inputStyle}>
+                            <option value="">Selecciona...</option>
+                            {rutas.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="muted" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Zona *</label>
+                          <select value={nuevoCliente.zona_id} onChange={(e) => setNuevoCliente({ ...nuevoCliente, zona_id: e.target.value })} style={inputStyle}>
+                            <option value="">Selecciona...</option>
+                            {zonas.map((z) => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <button type="button" onClick={handleCrearCliente} disabled={guardandoCliente} style={{ ...miniBtn, background: "#2563eb", color: "#fff", border: 0 }}>
+                        {guardandoCliente ? <InlineLoader /> : "Guardar y seleccionar cliente"}
+                      </button>
                     </div>
                   )}
                 </div>
               </div>
-            </div>
 
-            <div style={{ display: "grid", gap: 16, position: "sticky", top: 12 }}>
               <div className="card pad">
-                <h3 style={{ marginTop: 0 }}>Resumen del pedido</h3>
+                <h3 style={{ marginTop: 0, marginBottom: 12 }}>Selección de Productos</h3>
+                <div ref={searchBoxRef} style={{ position: "relative" }}>
+                  <input
+                    type="text"
+                    value={q}
+                    onChange={(e) => {
+                      setQ(e.target.value);
+                      setSearchFocus(true);
+                    }}
+                    onFocus={() => setSearchFocus(true)}
+                    placeholder="Buscar producto por nombre o SKU..."
+                    style={inputStyle}
+                    disabled={loadingProductos}
+                  />
 
-                <div style={{ display: "grid", gap: 10 }}>
-                  <div>
-                    <div className="muted" style={{ fontSize: 13 }}>
-                      Cliente
+                  {searchFocus && sugerencias.length > 0 && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "calc(100% + 8px)",
+                        left: 0,
+                        right: 0,
+                        background: "#fff",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 14,
+                        boxShadow: "0 18px 50px rgba(15, 23, 42, 0.12)",
+                        padding: 8,
+                        zIndex: 30,
+                        display: "grid",
+                        gap: 4,
+                      }}
+                    >
+                      {sugerencias.map((p) => {
+                        const l = ensureLinea(p);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              changeCantidad(p, num(l.cantidad) + 1);
+                              setSearchFocus(false);
+                              setQ("");
+                            }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 12,
+                              textAlign: "left",
+                              border: 0,
+                              background: "none",
+                              padding: 8,
+                              borderRadius: 10,
+                              cursor: "pointer",
+                              width: "100%",
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                          >
+                            <ProductoThumb src={p.imagen} size={40} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nombre}</div>
+                              <div style={{ fontSize: 11, color: "#64748b" }}>SKU: {p.sku || "—"}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div style={{ fontWeight: 600 }}>
-                      {clienteSeleccionado?.nombre || "No seleccionado"}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="muted" style={{ fontSize: 13 }}>
-                      Ruta / Zona
-                    </div>
-                    <div style={{ fontWeight: 600 }}>
-                      {(clienteSeleccionado?.ruta_nombre || "—") +
-                        " / " +
-                        (clienteSeleccionado?.zona_nombre || "—")}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="muted" style={{ fontSize: 13 }}>
-                      Productos agregados
-                    </div>
-                    <div style={{ fontWeight: 600 }}>{detalles.length}</div>
-                  </div>
-                </div>
-
-                <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
-
-                <div style={{ maxHeight: 260, overflow: "auto", display: "grid", gap: 10 }}>
-                  {detalles.length === 0 ? (
-                    <div className="muted">Aún no has agregado productos.</div>
-                  ) : (
-                    detalles.map((item) => (
-                      <div
-                        key={item.producto_id}
-                        style={{
-                          border: "1px solid #eee",
-                          borderRadius: 10,
-                          padding: 10,
-                          display: "grid",
-                          gridTemplateColumns: "54px 1fr",
-                          gap: 10,
-                          alignItems: "center",
-                        }}
-                      >
-                        <ProductoThumb
-                          src={item.producto_imagen}
-                          alt={item.producto_nombre}
-                          size={54}
-                        />
-
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 700 }}>{item.producto_nombre}</div>
-                          <div className="muted" style={{ fontSize: 13 }}>
-                            {item.cantidad} × {item.presentacion} × {money(item.precio_unitario)}
-                          </div>
-                          <div style={{ marginTop: 4, fontWeight: 700 }}>
-                            {money(item.subtotal)}
-                          </div>
-                        </div>
-                      </div>
-                    ))
                   )}
                 </div>
 
-                <hr style={{ margin: "14px 0", border: 0, borderTop: "1px solid #eee" }} />
+                {loadingProductos ? (
+                  <div style={{ textAlign: "center", padding: "30px 0" }}>
+                    <InlineLoader />
+                    <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>Sincronizando catálogo...</div>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 12, marginTop: 16, maxHeight: 600, overflowY: "auto", paddingRight: 4 }}>
+                    {productosFiltrados.length === 0 ? (
+                      <div className="muted" style={{ textAlign: "center", padding: 20, fontSize: 13 }}>No se encontraron productos disponibles.</div>
+                    ) : (
+                      productosFiltrados.map((p) => {
+                        const l = ensureLinea(p);
+                        return (
+                          <div
+                            key={p.id}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "84px 1fr auto",
+                              gap: 16,
+                              alignItems: "center",
+                              padding: 12,
+                              background: num(l.cantidad) > 0 ? "#eff6ff" : "#fff",
+                              border: num(l.cantidad) > 0 ? "1px solid #bfdbfe" : "1px solid #e2e8f0",
+                              borderRadius: 14,
+                            }}
+                          >
+                            <ProductoThumb src={p.imagen} size={84} />
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{p.nombre}</div>
+                              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>SKU: {p.sku || "—"}</div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                {p.presentaciones.map((pr) => (
+                                  <button
+                                    key={pr.tipo}
+                                    type="button"
+                                    onClick={() => changePresentacion(p, pr.tipo)}
+                                    style={{
+                                      border: l.presentacion === pr.tipo ? "1px solid #3b82f6" : "1px solid #cbd5e1",
+                                      background: l.presentacion === pr.tipo ? "#3b82f6" : "#fff",
+                                      color: l.presentacion === pr.tipo ? "#fff" : "#334155",
+                                      borderRadius: 8,
+                                      padding: "4px 8px",
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    {pr.label} · Ruta {money(pr.precioRuta ?? pr.precio)}
+                                  </button>
+                                ))}
+                              </div>
 
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    fontSize: 18,
-                    fontWeight: 800,
-                  }}
-                >
-                  <span>Total</span>
-                  <span>{money(totalPedido)}</span>
+                              {p.permite_monto_variable && (
+                                <div style={{ marginTop: 8, background: "#f8fafc", padding: 8, borderRadius: 8, border: "1px solid #edf2f7" }}>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={!!l.usaMontoVariable}
+                                      onChange={(e) => toggleMontoVariable(p, e.target.checked)}
+                                    />
+                                    Usar Precio Variable Especial
+                                  </label>
+
+                                  {l.usaMontoVariable && (
+                                    <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#1e3a8a" }}>Precio Solicitado (Q):</span>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        value={l.montoVariable || ""}
+                                        onChange={(e) => setMontoVariable(p, e.target.value)}
+                                        placeholder="0.00"
+                                        style={{
+                                          width: 90,
+                                          padding: "4px 8px",
+                                          border: "1px solid #93c5fd",
+                                          borderRadius: 6,
+                                          outline: "none",
+                                          fontSize: 12,
+                                          fontWeight: 700
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <button
+                                type="button"
+                                onClick={() => changeCantidad(p, num(l.cantidad) - 1)}
+                                disabled={num(l.cantidad) <= 0}
+                                style={{
+                                  border: "1px solid #cbd5e1",
+                                  background: "#fff",
+                                  borderRadius: 8,
+                                  width: 32,
+                                  height: 32,
+                                  cursor: "pointer",
+                                  fontWeight: 700
+                                }}
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                value={l.cantidad || ""}
+                                onChange={(e) => changeCantidad(p, e.target.value)}
+                                placeholder="0"
+                                style={{
+                                  width: 50,
+                                  textAlign: "center",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: 8,
+                                  padding: "6px 0",
+                                  outline: "none"
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => changeCantidad(p, num(l.cantidad) + 1)}
+                                style={{
+                                  border: "1px solid #cbd5e1",
+                                  background: "#fff",
+                                  borderRadius: 8,
+                                  width: 32,
+                                  height: 32,
+                                  cursor: "pointer",
+                                  fontWeight: 700
+                                }}
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ position: "sticky", top: 20, display: "grid", gap: 20 }}>
+              <div className="card pad" style={{ background: "linear-gradient(180deg, #fff 0%, #f8fafc 100%)" }}>
+                <h3 style={{ marginTop: 0, borderBottom: "1px solid #e2e8f0", paddingBottom: 10 }}>Resumen</h3>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+                  <span style={{ fontWeight: 700 }}>TOTAL</span>
+                  <span style={{ fontSize: 20, fontWeight: 900 }}>{money(totalPedido)}</span>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={enviando || (isVendedor && !userUbicacionId)}
-                  style={{
-                    ...submitBtn,
-                    cursor: enviando ? "not-allowed" : "pointer",
-                    opacity: enviando ? 0.85 : 1,
-                  }}
-                >
-                  {enviando ? <InlineLoader /> : "Enviar pedido al admin"}
+                <div style={{ marginBottom: 16 }}>
+                  <label className="muted" style={{ display: "block", marginBottom: 6, fontSize: 12 }}>Observaciones</label>
+                  <textarea rows={3} value={observaciones} onChange={(e) => setObservaciones(e.target.value)} style={{ ...inputStyle, resize: "none" }} />
+                </div>
+                <button type="submit" disabled={enviando || detalles.length === 0 || !clienteId} style={{ width: "100%", background: "#10b981", color: "#fff", border: 0, borderRadius: 10, padding: "12px", fontWeight: 700, cursor: "pointer" }}>
+                  {enviando ? <InlineLoader /> : "Enviar Pedido"}
                 </button>
               </div>
             </div>
+
           </div>
         </form>
       )}
 
       {vista === "mios" && (
-        <div className="card pad" style={{ marginTop: 16 }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
-              flexWrap: "wrap",
-              marginBottom: 12,
-            }}
-          >
-            <div>
-              <h3 style={{ margin: 0 }}>Mis pedidos</h3>
-              <div className="muted">Aquí puedes ver si el admin ya revisó tu pedido.</div>
-            </div>
-
-            <div style={{ minWidth: 220 }}>
-              <select
-                value={estadoFiltroPedidos}
-                onChange={(e) => setEstadoFiltroPedidos(e.target.value)}
-                style={inputStyle}
-                disabled={loadingMisPedidos}
-              >
-                <option value="">Todos los estados</option>
-                <option value="pendiente_revision">Pendiente revisión</option>
-                <option value="aprobado">Aprobado</option>
-                <option value="preparando">Preparando</option>
-                <option value="en_ruta">En ruta</option>
-                <option value="entregado">Entregado</option>
-              </select>
-            </div>
+        <div style={{ marginTop: 12 }}>
+          <div className="card pad" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center" }}>
+            <span className="muted" style={{ fontSize: 13, fontWeight: 700 }}>Filtrar Estado:</span>
+            <select
+              value={estadoFiltroPedidos}
+              onChange={(e) => setEstadoFiltroPedidos(e.target.value)}
+              style={{ ...inputStyle, width: "auto", padding: "6px 12px" }}
+            >
+              <option value="">Todos los pedidos</option>
+              <option value="pendiente_revision">Pendientes revisión</option>
+              <option value="aprobado">Aprobados</option>
+              <option value="preparando">En preparación</option>
+              <option value="en_ruta">En ruta de entrega</option>
+              <option value="entregado">Entregados</option>
+            </select>
           </div>
 
           {loadingMisPedidos ? (
-            <TableLoader />
+            <div style={{ textAlign: "center", padding: "50px 0" }}>
+              <TableLoader />
+              <div className="muted" style={{ marginTop: 12 }}>Buscando tus solicitudes de ruta...</div>
+            </div>
           ) : misPedidos.length === 0 ? (
-            <div className="muted">Aún no tienes pedidos registrados.</div>
+            <div className="card pad" style={{ textAlign: "center", padding: "40px 20px" }}>
+              <div style={{ fontSize: 40, marginBottom: 10 }}>📂</div>
+              <h4 style={{ margin: "0 0 4px 0" }}>No hay pedidos registrados</h4>
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>Tus pedidos levantados bajo el filtro actual aparecerán enlistados aquí.</p>
+            </div>
           ) : (
-            <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 14 }}>
               {misPedidos.map((pedido) => (
-                <div
-                  key={pedido.id}
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 12,
-                    padding: 14,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      flexWrap: "wrap",
-                    }}
-                  >
+                <div key={pedido.id} className="card pad" style={{ borderLeft: "4px solid #94a3b8" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
                     <div>
-                      <div style={{ fontWeight: 800 }}>Pedido #{pedido.id}</div>
-                      <div className="muted">Cliente: {pedido.cliente_nombre || "—"}</div>
-                      <div className="muted">Fecha: {pedido.creado_en || "—"}</div>
-                    </div>
-
-                    <div style={{ textAlign: "right" }}>
-                      <div style={estadoBadgeStyle(pedido.estado)}>
-                        {String(pedido.estado || "").replaceAll("_", " ")}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontWeight: 800, fontSize: 15 }}>{pedido.cliente_nombre}</span>
+                        <span style={estadoBadgeStyle(pedido.estado)}>{pedido.estado?.replace("_", " ")}</span>
                       </div>
-                      <div style={{ marginTop: 8, fontWeight: 800 }}>{money(pedido.total)}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        ID Pedido: #{pedido.id} | Fecha: {pedido.created_at ? new Date(pedido.created_at).toLocaleDateString() : "—"}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 16, fontWeight: 900, color: "#0f172a" }}>{money(pedido.total)}</div>
+                      <div className="muted" style={{ fontSize: 11 }}>{pedido.detalles?.length || 0} ítems vinculados</div>
                     </div>
                   </div>
 
-                  {pedido.detalles?.length ? (
-                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                      {pedido.detalles.map((d) => (
-                        <div
-                          key={d.id}
-                          style={{
-                            border: "1px solid #f1f5f9",
-                            background: "#fafafa",
-                            borderRadius: 10,
-                            padding: 10,
-                          }}
-                        >
-                          <div style={{ fontWeight: 700 }}>
-                            {d.producto_nombre || `Producto #${d.producto_id}`}
+                  <div style={{ background: "#f8fafc", borderRadius: 10, padding: 10, border: "1px solid #f1f5f9" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.5px" }}>Artículos Solicitados</div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {(pedido.detalles || []).map((det, idx) => {
+                        const cantidadSaneada = num(det.cantidad);
+                        const precioSaneado = num(det.precio_unitario);
+                        const subtotalCalculado = det.subtotal ? num(det.subtotal) : (cantidadSaneada * precioSaneado);
+
+                        return (
+                          <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, background: "#f8fafc", padding: "6px 10px", borderRadius: 8 }}>
+                            <div>
+                              <span>{det.producto_nombre || det.producto?.nombre || "Producto"}</span>
+                              <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>({cantidadSaneada} {det.presentacion || "unidad"})</span>
+                            </div>
+                            <div style={{ fontWeight: 600 }}>
+                              {money(subtotalCalculado)}
+                            </div>
                           </div>
-                          <div className="muted" style={{ fontSize: 13 }}>
-                            {d.cantidad} × {d.presentacion || "unidad"} ×{" "}
-                            {money(d.precio_unitario)}
-                          </div>
-                          <div style={{ marginTop: 4, fontWeight: 700 }}>{money(d.subtotal)}</div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
-                  ) : null}
+                  </div>
 
                   {pedido.observaciones ? (
-                    <div style={{ marginTop: 10 }}>
-                      <div className="muted" style={{ fontSize: 13 }}>
+                    <div style={{ marginTop: 10, fontSize: 12, color: "#475569", paddingLeft: 4 }}>
+                      <div className="muted" style={{ fontWeight: 700, marginBottom: 2 }}>
                         Observaciones
                       </div>
                       <div>{pedido.observaciones}</div>
@@ -1847,33 +1610,5 @@ const chipActive = {
   background: "#eff6ff",
   border: "1px solid #93c5fd",
   color: "#1d4ed8",
-  boxShadow: "0 4px 14px rgba(37, 99, 235, 0.12)",
-};
-
-const saveBtn = {
-  border: 0,
-  background: "#111827",
-  color: "#fff",
-  borderRadius: 10,
-  padding: "12px 14px",
-  cursor: "pointer",
-  fontWeight: 700,
-  minHeight: 44,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: "100%",
-};
-
-const submitBtn = {
-  width: "100%",
-  marginTop: 14,
-  border: 0,
-  borderRadius: 10,
-  padding: "12px 14px",
-  fontWeight: 700,
-  minHeight: 46,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
+  boxShadow: "0 4px 14px rgba(37, 99, 235, 0.1)",
 };

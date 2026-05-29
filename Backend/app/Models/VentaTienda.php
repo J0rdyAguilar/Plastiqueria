@@ -25,6 +25,9 @@ class VentaTienda extends Model
         'descuento',
         'total',
         'saldo_pendiente',
+        'monto_variable_estado',
+        'monto_variable_aprobado_por',
+        'monto_variable_aprobado_en',
     ];
 
     protected $casts = [
@@ -36,6 +39,8 @@ class VentaTienda extends Model
         'total'           => 'decimal:2',
         'saldo_pendiente' => 'decimal:2',
         'creado_en'       => 'datetime',
+        'monto_variable_aprobado_por' => 'integer',
+        'monto_variable_aprobado_en'  => 'datetime',
     ];
 
     public function detalles()

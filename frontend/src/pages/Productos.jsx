@@ -35,8 +35,80 @@ function makePrecioRow() {
     factor_base: 1,
     precio_costo: "",
     precio_venta: "",
+    precio_ruta: "",
     activo: true,
   };
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function wordsOf(value) {
+  return normalizeText(value)
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function getSearchScore(item, rawTerm, mode) {
+  const term = normalizeText(rawTerm);
+  if (!term) return 1;
+
+  const nombre = normalizeText(item.nombre);
+  const sku = normalizeText(item.sku);
+  const descripcion = normalizeText(item.descripcion);
+  const id = normalizeText(item.id);
+
+  const target =
+    mode === "nombre"
+      ? nombre
+      : mode === "sku"
+      ? sku
+      : mode === "descripcion"
+      ? descripcion
+      : mode === "id"
+      ? id
+      : normalizeText(`${nombre} ${sku} ${descripcion} ${id}`);
+
+  if (!target.includes(term)) return -1;
+
+  let score = 0;
+
+  if (id === term) score += 260;
+  if (sku === term) score += 220;
+  if (nombre === term) score += 200;
+  if (descripcion === term) score += 130;
+
+  if (id.startsWith(term)) score += 200;
+  if (sku.startsWith(term)) score += 140;
+  if (nombre.startsWith(term)) score += 120;
+  if (descripcion.startsWith(term)) score += 80;
+
+  const termWords = wordsOf(term);
+  const targetWords = wordsOf(target);
+
+  for (const word of termWords) {
+    if (targetWords.includes(word)) score += 20;
+    if (target.startsWith(word)) score += 10;
+    if (target.includes(word)) score += 6;
+  }
+
+  score += Math.max(0, 40 - target.indexOf(term));
+  score += Math.max(0, 25 - Math.abs(target.length - term.length));
+
+  return score;
+}
+
+function InlineLoader() {
+  return (
+    <div className="mini-loader-wrap" aria-label="Cargando">
+      <span className="mini-loader" />
+    </div>
+  );
 }
 
 export default function Productos() {
@@ -47,7 +119,6 @@ export default function Productos() {
   const [error, setError] = useState("");
 
   const [items, setItems] = useState([]);
-  const [meta, setMeta] = useState(null);
 
   const [openForm, setOpenForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -55,9 +126,15 @@ export default function Productos() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsRow, setDetailsRow] = useState(null);
 
-  const firstLoadRef = useRef(true);
+  const [searchMode, setSearchMode] = useState("todos");
+  const [searchFocus, setSearchFocus] = useState(false);
 
-  async function fetchData(page = 1, opts = {}) {
+  const [page, setPage] = useState(1);
+  const perPage = 10;
+
+  const searchBoxRef = useRef(null);
+
+  async function fetchData(opts = {}) {
     const { silent = false } = opts;
 
     if (!silent) setLoading(true);
@@ -65,15 +142,13 @@ export default function Productos() {
 
     try {
       const data = await productosApi.list({
-        q: q || undefined,
         activo: activo || undefined,
-        page,
-        per_page: 10,
+        page: 1,
+        per_page: 500,
       });
 
-      const rows = data?.data ?? data;
+      const rows = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
       setItems(rows || []);
-      setMeta(data?.meta ?? null);
     } catch (e) {
       setError(e?.response?.data?.message || e?.message || "Error cargando productos");
     } finally {
@@ -82,21 +157,17 @@ export default function Productos() {
   }
 
   useEffect(() => {
-    fetchData(1);
+    fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (firstLoadRef.current) {
-      firstLoadRef.current = false;
-      return;
-    }
-
     setTyping(true);
 
     const timer = setTimeout(async () => {
-      await fetchData(1, { silent: false });
+      await fetchData({ silent: false });
       setTyping(false);
+      setPage(1);
     }, 300);
 
     return () => {
@@ -104,7 +175,22 @@ export default function Productos() {
       setTyping(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, activo]);
+  }, [activo]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, searchMode, activo]);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (!searchBoxRef.current?.contains(e.target)) {
+        setSearchFocus(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   function onNew() {
     setEditing(null);
@@ -126,7 +212,7 @@ export default function Productos() {
 
     try {
       await productosApi.remove(row.id);
-      await fetchData(1);
+      await fetchData();
     } catch (e) {
       alert(e?.response?.data?.message || e?.message || "No se pudo eliminar");
     }
@@ -162,6 +248,52 @@ export default function Productos() {
     );
   }
 
+  const itemsBuscados = useMemo(() => {
+    const term = q.trim();
+
+    if (!term) {
+      return [...items].sort((a, b) =>
+        String(a?.nombre || "").localeCompare(String(b?.nombre || ""))
+      );
+    }
+
+    return items
+      .map((it) => ({
+        ...it,
+        __score: getSearchScore(it, term, searchMode),
+      }))
+      .filter((it) => it.__score >= 0)
+      .sort((a, b) => {
+        if (b.__score !== a.__score) return b.__score - a.__score;
+        return String(a?.nombre || "").localeCompare(String(b?.nombre || ""));
+      });
+  }, [items, q, searchMode]);
+
+  const sugerencias = useMemo(() => {
+    if (!q.trim()) return [];
+    return itemsBuscados.slice(0, 6);
+  }, [itemsBuscados, q]);
+
+  const meta = useMemo(() => {
+    const total = itemsBuscados.length;
+    const lastPage = Math.max(1, Math.ceil(total / perPage));
+    const currentPage = Math.min(page, lastPage);
+
+    return {
+      current_page: currentPage,
+      last_page: lastPage,
+      total,
+    };
+  }, [itemsBuscados, page]);
+
+  const itemsPaginados = useMemo(() => {
+    const start = (meta.current_page - 1) * perPage;
+    return itemsBuscados.slice(start, start + perPage);
+  }, [itemsBuscados, meta.current_page]);
+
+  const canPrev = meta.current_page > 1;
+  const canNext = meta.current_page < meta.last_page;
+
   const isBusy = loading || typing;
 
   return (
@@ -186,47 +318,20 @@ export default function Productos() {
         <div className="products-stats">
           <div className="stat-card">
             <span>Total visibles</span>
-            <strong>{items?.length || 0}</strong>
+            <strong>{loading ? <InlineLoader /> : itemsBuscados.length}</strong>
           </div>
           <div className="stat-card">
             <span>Página actual</span>
-            <strong>{meta?.current_page || 1}</strong>
+            <strong>{meta.current_page}</strong>
           </div>
           <div className="stat-card">
             <span>Total páginas</span>
-            <strong>{meta?.last_page || 1}</strong>
+            <strong>{meta.last_page}</strong>
           </div>
         </div>
 
         <div className="search-panel">
-          <div className="search-grid">
-            <div className="search-main">
-              <label>Buscador inteligente</label>
-              <div className="search-input-wrap">
-                <span className="search-icon">⌕</span>
-
-                <input
-                  className="input search-input"
-                  placeholder="Busca por nombre, SKU o descripción..."
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                />
-
-                {typing ? <span className="search-mini-loader" /> : null}
-
-                {!typing && q ? (
-                  <button
-                    type="button"
-                    className="clear-search"
-                    onClick={() => setQ("")}
-                    aria-label="Limpiar búsqueda"
-                  >
-                    ✕
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
+          <div className="search-grid search-grid-pro">
             <div className="search-filter">
               <label>Estado</label>
               <select
@@ -240,8 +345,141 @@ export default function Productos() {
               </select>
             </div>
 
+            <div className="search-main" ref={searchBoxRef}>
+              <label>Buscador inteligente</label>
+
+              <div className="search-input-wrap">
+                <span className="search-icon">⌕</span>
+
+                <input
+                  className="input search-input"
+                  placeholder="Nombre, SKU, descripción o ID..."
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  onFocus={() => setSearchFocus(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setSearchFocus(false);
+                    }
+
+                    if (e.key === "Enter" && sugerencias.length > 0) {
+                      e.preventDefault();
+                      setQ(sugerencias[0]?.nombre || "");
+                      setSearchFocus(false);
+                    }
+                  }}
+                />
+
+                {typing ? <span className="search-mini-loader" /> : null}
+
+                {!typing && q ? (
+                  <button
+                    type="button"
+                    className="clear-search"
+                    onClick={() => {
+                      setQ("");
+                      setSearchFocus(false);
+                    }}
+                    aria-label="Limpiar búsqueda"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </div>
+
+              {searchFocus && sugerencias.length > 0 ? (
+                <div className="search-suggestions">
+                  {sugerencias.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="search-suggestion-item"
+                      onClick={() => {
+                        setQ(item.nombre || "");
+                        setSearchFocus(false);
+                      }}
+                    >
+                      <div className="search-suggestion-top">
+                        <strong>{item.nombre || "-"}</strong>
+                        <span className={item.activo ? "status-pill status-active" : "status-pill status-inactive"}>
+                          {item.activo ? "Activo" : "Inactivo"}
+                        </span>
+                      </div>
+
+                      <div className="search-suggestion-meta">
+                        SKU: {item.sku || "-"} · ID: {item.id || "-"}
+                      </div>
+
+                      <div className="search-suggestion-meta">
+                        {item.descripcion || "Sin descripción"}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="search-mode-chips">
+                <button
+                  type="button"
+                  className={searchMode === "todos" ? "chip chip-active" : "chip"}
+                  onClick={() => setSearchMode("todos")}
+                >
+                  Todo
+                </button>
+                <button
+                  type="button"
+                  className={searchMode === "nombre" ? "chip chip-active" : "chip"}
+                  onClick={() => setSearchMode("nombre")}
+                >
+                  Nombre
+                </button>
+                <button
+                  type="button"
+                  className={searchMode === "sku" ? "chip chip-active" : "chip"}
+                  onClick={() => setSearchMode("sku")}
+                >
+                  SKU
+                </button>
+                <button
+                  type="button"
+                  className={searchMode === "descripcion" ? "chip chip-active" : "chip"}
+                  onClick={() => setSearchMode("descripcion")}
+                >
+                  Descripción
+                </button>
+                <button
+                  type="button"
+                  className={searchMode === "id" ? "chip chip-active" : "chip"}
+                  onClick={() => setSearchMode("id")}
+                >
+                  ID
+                </button>
+              </div>
+
+              <div className="search-results-info">
+                <span>
+                  {q.trim()
+                    ? `${itemsBuscados.length} resultado(s) para "${q}"`
+                    : `${itemsBuscados.length} producto(s) cargado(s)`}
+                </span>
+
+                {q.trim() ? (
+                  <button
+                    type="button"
+                    className="clear-text-btn"
+                    onClick={() => {
+                      setQ("");
+                      setSearchFocus(false);
+                    }}
+                  >
+                    Limpiar búsqueda
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
             <div className="search-actions">
-              <button className="btn btn-primary" onClick={() => fetchData(1)} disabled={isBusy}>
+              <button className="btn btn-primary" onClick={() => fetchData()} disabled={isBusy}>
                 {typing ? "Buscando..." : "Buscar"}
               </button>
 
@@ -250,6 +488,9 @@ export default function Productos() {
                 onClick={() => {
                   setQ("");
                   setActivo("");
+                  setSearchMode("todos");
+                  setSearchFocus(false);
+                  setPage(1);
                 }}
                 disabled={isBusy}
               >
@@ -292,8 +533,8 @@ export default function Productos() {
                     </div>
                   </td>
                 </tr>
-              ) : items?.length ? (
-                items.map((row) => (
+              ) : itemsPaginados?.length ? (
+                itemsPaginados.map((row) => (
                   <tr key={row.id}>
                     <td>
                       <div className="thumb thumb-lg">
@@ -352,24 +593,25 @@ export default function Productos() {
           </table>
         </div>
 
-        {meta?.last_page > 1 ? (
+        {meta.last_page > 1 ? (
           <div className="pager pro-pager">
             <button
               className="btn btn-soft"
-              disabled={isBusy || meta.current_page <= 1}
-              onClick={() => fetchData(meta.current_page - 1)}
+              disabled={isBusy || !canPrev}
+              onClick={() => setPage((p) => p - 1)}
             >
               ← Anterior
             </button>
 
             <div className="pager-info">
-              Página <strong>{meta.current_page}</strong> de <strong>{meta.last_page}</strong>
+              Página <strong>{meta.current_page}</strong> de <strong>{meta.last_page}</strong> · Total{" "}
+              <strong>{meta.total}</strong>
             </div>
 
             <button
               className="btn btn-soft"
-              disabled={isBusy || meta.current_page >= meta.last_page}
-              onClick={() => fetchData(meta.current_page + 1)}
+              disabled={isBusy || !canNext}
+              onClick={() => setPage((p) => p + 1)}
             >
               Siguiente →
             </button>
@@ -383,7 +625,7 @@ export default function Productos() {
           onClose={() => setOpenForm(false)}
           onSaved={async () => {
             setOpenForm(false);
-            await fetchData(meta?.current_page || 1);
+            await fetchData();
           }}
         />
       ) : null}
@@ -423,6 +665,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
         factor_base: p.factor_base ?? 1,
         precio_costo: p.precio_costo ?? "",
         precio_venta: p.precio_venta ?? p.precio ?? "",
+        precio_ruta: p.precio_ruta ?? p.precio_venta ?? p.precio ?? "",
         activo: p.activo ?? true,
       }));
     }
@@ -462,6 +705,10 @@ function ProductoModal({ initial, onClose, onSaved }) {
         factor_base: Number(p.factor_base || 0),
         precio_costo: Number(p.precio_costo || 0),
         precio_venta: Number(p.precio_venta || 0),
+        precio_ruta:
+          p.precio_ruta === "" || p.precio_ruta === null || p.precio_ruta === undefined
+            ? Number(p.precio_venta || 0)
+            : Number(p.precio_ruta || 0),
         activo: !!p.activo,
       }))
       .filter((p) => p.presentacion && p.factor_base > 0);
@@ -494,6 +741,12 @@ function ProductoModal({ initial, onClose, onSaved }) {
     const sinCosto = preciosLimpios.some((p) => p.precio_costo < 0);
     if (sinCosto) {
       setErr("El precio costo no puede ser negativo.");
+      return;
+    }
+
+    const sinRuta = preciosLimpios.some((p) => p.precio_ruta < 0);
+    if (sinRuta) {
+      setErr("El precio ruta no puede ser negativo.");
       return;
     }
 
@@ -544,7 +797,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
           <div>
             <h2 className="modal-title">{isEdit ? "Editar producto" : "Nuevo producto"}</h2>
             <p className="muted small">
-              Llena los datos básicos, agrega presentaciones con precio costo y precio venta, y sube una imagen si lo deseas.
+              Llena los datos básicos, agrega presentaciones con precio costo, precio venta y precio ruta, y sube una imagen si lo deseas.
             </p>
           </div>
           <button className="iconbtn" onClick={onClose} aria-label="Cerrar">
@@ -607,7 +860,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
                   <div>
                     <h3 className="subttl">Presentaciones y precios</h3>
                     <p className="muted tiny">
-                      Aquí defines unidad, docena, paquete, etc. con su factor base, precio costo y precio venta.
+                      Aquí defines unidad, docena, paquete, etc. con su factor base, precio costo, precio venta y precio ruta.
                     </p>
                   </div>
 
@@ -629,6 +882,7 @@ function ProductoModal({ initial, onClose, onSaved }) {
                         <th>Factor base</th>
                         <th>Precio costo</th>
                         <th>Precio venta</th>
+                        <th>Precio ruta</th>
                         <th>Activo</th>
                         <th></th>
                       </tr>
@@ -692,6 +946,20 @@ function ProductoModal({ initial, onClose, onSaved }) {
                               onChange={(e) =>
                                 updatePrecioRow(index, "precio_venta", e.target.value)
                               }
+                            />
+                          </td>
+
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="input"
+                              value={row.precio_ruta}
+                              onChange={(e) =>
+                                updatePrecioRow(index, "precio_ruta", e.target.value)
+                              }
+                              placeholder={row.precio_venta || "0.00"}
                             />
                           </td>
 
@@ -799,9 +1067,7 @@ function ProductoDetallesModal({ row, onClose }) {
               <span className="sku-badge">{row?.sku || "Sin SKU"}</span>
             </div>
 
-            <p className="details-desc">
-              {row?.descripcion || "Sin descripción"}
-            </p>
+            <p className="details-desc">{row?.descripcion || "Sin descripción"}</p>
           </div>
         </div>
 
@@ -835,6 +1101,11 @@ function ProductoDetallesModal({ row, onClose }) {
                     <div className="detail-line">
                       <span>Venta</span>
                       <strong>{money(p.precio_venta ?? p.precio ?? 0)}</strong>
+                    </div>
+
+                    <div className="detail-line">
+                      <span>Ruta</span>
+                      <strong>{money(p.precio_ruta ?? p.precio_venta ?? p.precio ?? 0)}</strong>
                     </div>
 
                     <div className="detail-line">
@@ -899,7 +1170,7 @@ const styles = `
 
 .products-hero{
   position:relative;
-  overflow:hidden;
+  overflow:visible;
   border-radius:var(--radius-xl);
   padding:24px;
   background:
@@ -908,6 +1179,7 @@ const styles = `
     linear-gradient(180deg, #f8fbff 0%, #eef2ff 100%);
   border:1px solid rgba(99,102,241,.12);
   box-shadow:var(--shadow-md);
+  z-index:2;
 }
 
 .products-hero-top{
@@ -964,10 +1236,12 @@ const styles = `
 }
 
 .stat-card strong{
-  display:block;
+  display:flex;
+  align-items:center;
   margin-top:6px;
   font-size:24px;
   line-height:1;
+  min-height:28px;
 }
 
 .search-panel{
@@ -978,13 +1252,18 @@ const styles = `
   border:1px solid rgba(255,255,255,.92);
   box-shadow:var(--shadow-sm);
   backdrop-filter:blur(12px);
+  position:relative;
+  z-index:5;
 }
 
 .search-grid{
   display:grid;
-  grid-template-columns:minmax(320px,1.9fr) minmax(180px,.8fr) auto;
   gap:14px;
-  align-items:end;
+  align-items:start;
+}
+
+.search-grid-pro{
+  grid-template-columns:minmax(180px,.7fr) minmax(420px,1.8fr) auto;
 }
 
 .search-main,
@@ -1071,6 +1350,107 @@ const styles = `
   display:flex;
   gap:10px;
   flex-wrap:wrap;
+  align-items:end;
+}
+
+.search-suggestions{
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  right:0;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  box-shadow:0 18px 50px rgba(15, 23, 42, 0.12);
+  padding:8px;
+  z-index:40;
+  display:grid;
+  gap:8px;
+}
+
+.search-suggestion-item{
+  text-align:left;
+  border:1px solid #eef2f7;
+  background:#fff;
+  border-radius:14px;
+  padding:12px;
+  cursor:pointer;
+  display:grid;
+  gap:6px;
+  transition:.18s ease;
+}
+
+.search-suggestion-item:hover{
+  background:#fafcff;
+  border-color:#dbe4f0;
+}
+
+.search-suggestion-top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.search-suggestion-top strong{
+  color:#0f172a;
+  font-size:14px;
+}
+
+.search-suggestion-meta{
+  color:#64748b;
+  font-size:12px;
+  line-height:1.45;
+}
+
+.search-mode-chips{
+  margin-top:10px;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.chip{
+  border:1px solid #dbe4f0;
+  background:#fff;
+  color:#334155;
+  border-radius:999px;
+  padding:8px 12px;
+  cursor:pointer;
+  font-weight:700;
+  font-size:13px;
+  transition:.18s ease;
+}
+
+.chip:hover{
+  background:#f8fafc;
+}
+
+.chip-active{
+  background:#eff6ff;
+  border:1px solid #93c5fd;
+  color:#1d4ed8;
+  box-shadow:0 4px 14px rgba(37, 99, 235, 0.12);
+}
+
+.search-results-info{
+  margin-top:10px;
+  font-size:13px;
+  color:#64748b;
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.clear-text-btn{
+  border:0;
+  background:transparent;
+  color:#2563eb;
+  cursor:pointer;
+  font-weight:700;
 }
 
 .products-table-card{
@@ -1110,7 +1490,7 @@ const styles = `
 
 .pro-table{
   width:100%;
-  min-width:980px;
+  min-width:1100px;
   border-collapse:separate;
   border-spacing:0;
 }
@@ -1430,6 +1810,21 @@ const styles = `
   animation:spin .75s linear infinite;
 }
 
+.mini-loader-wrap{
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+}
+
+.mini-loader{
+  width:18px;
+  height:18px;
+  border-radius:999px;
+  border:2px solid rgba(79,70,229,.15);
+  border-top-color:#4f46e5;
+  animation:spin .7s linear infinite;
+}
+
 .modal-backdrop{
   position:fixed;
   inset:0;
@@ -1739,6 +2134,12 @@ const styles = `
   color:#0f172a;
 }
 
+.price-factor{
+  font-size:13px;
+  color:#64748b;
+  font-weight:800;
+}
+
 .detail-price-body{
   display:flex;
   flex-direction:column;
@@ -1779,7 +2180,7 @@ const styles = `
 }
 
 @media (max-width: 980px){
-  .search-grid{
+  .search-grid-pro{
     grid-template-columns:1fr;
   }
 

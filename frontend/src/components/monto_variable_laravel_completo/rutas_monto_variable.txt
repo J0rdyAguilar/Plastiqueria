@@ -1,0 +1,5 @@
+// Agrega estas rutas dentro del grupo auth:sanctum y antes de Route::apiResource('pedidos', PedidoController::class);
+
+Route::get('/pedidos/montos-variables/pendientes', [PedidoController::class, 'montosVariablesPendientes']);
+Route::post('/pedidos/{pedido}/aprobar-monto-variable', [PedidoController::class, 'aprobarMontoVariable']);
+Route::post('/pedidos/{pedido}/rechazar-monto-variable', [PedidoController::class, 'rechazarMontoVariable']);
