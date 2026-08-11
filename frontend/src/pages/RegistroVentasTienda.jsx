@@ -62,7 +62,11 @@ function isVentaRechazada(venta) {
 function isVentaPendiente(venta) {
   const estado = normalizeEstado(venta?.estado);
   const montoVariable = normalizeEstado(venta?.monto_variable_estado);
-  return estado === "pendiente_revision" || montoVariable === "pendiente";
+  return (
+    estado === "pendiente_revision" ||
+    estado === "pendiente_cobro" ||
+    montoVariable === "pendiente"
+  );
 }
 
 function prettyEstado(value) {
@@ -71,6 +75,7 @@ function prettyEstado(value) {
     completada: "Completada",
     confirmada: "Confirmada",
     pendiente_revision: "Pendiente revisión",
+    pendiente_cobro: "Pendiente de cobro",
     rechazada: "Rechazada",
     rechazado: "Rechazada",
     cancelada: "Cancelada",
@@ -126,7 +131,10 @@ export default function RegistroVentasTienda() {
   }, [filters]);
 
   const ventasValidas = useMemo(() => {
-    return rows.filter((item) => !isVentaRechazada(item));
+    // Un pedido enviado por vendedor todavía no es una venta finalizada.
+    return rows.filter(
+      (item) => !isVentaRechazada(item) && !isVentaPendiente(item)
+    );
   }, [rows]);
 
   const totalDia = useMemo(() => {
@@ -256,6 +264,7 @@ export default function RegistroVentasTienda() {
                 <option value="completada">Completada</option>
                 <option value="confirmada">Confirmada</option>
                 <option value="pendiente_revision">Pendiente revisión</option>
+                <option value="pendiente_cobro">Pendiente de cobro</option>
                 <option value="rechazada">Rechazada</option>
               </select>
             </div>

@@ -24,6 +24,7 @@ import { api } from "../lib/api";
 import { getSession } from "../lib/auth";
 import { useNavigate } from "react-router-dom";
 import { notify } from "../lib/notify";
+import { imprimirTicketVenta } from "../lib/ticketVentaTienda";
 
 function formatBackendError(err) {
   const data = err?.data || err?.response?.data;
@@ -367,22 +368,64 @@ export default function Caja() {
       return;
     }
 
+    // Se abre desde el clic del cajero para evitar que el navegador bloquee
+    // la ventana de impresión después de esperar la respuesta del servidor.
+    const ticketWindow = window.open("", "_blank", "width=420,height=760");
+
     try {
       setCobrandoPedido(true);
 
-      await api.ventasTiendaCajaCobrar(pedidoCobroSeleccionado.id, {
-        metodo_pago: metodoCobro,
-        referencia_pago: referenciaCobro.trim() || null,
-        numero_cuotas:
-          metodoCobro === "cuotas" ? Number(numeroCuotas || 1) : null,
-        frecuencia_pago: metodoCobro === "cuotas" ? frecuenciaPago : null,
-        fecha_primer_pago:
-          metodoCobro === "cuotas" && fechaPrimerPago
-            ? fechaPrimerPago
-            : null,
-      });
+      const respuestaCobro = await api.ventasTiendaCajaCobrar(
+        pedidoCobroSeleccionado.id,
+        {
+          metodo_pago: metodoCobro,
+          referencia_pago: referenciaCobro.trim() || null,
+          numero_cuotas:
+            metodoCobro === "cuotas" ? Number(numeroCuotas || 1) : null,
+          frecuencia_pago: metodoCobro === "cuotas" ? frecuenciaPago : null,
+          fecha_primer_pago:
+            metodoCobro === "cuotas" && fechaPrimerPago
+              ? fechaPrimerPago
+              : null,
+        }
+      );
 
-      notify.success("Pedido cobrado correctamente.");
+      // El backend devuelve la venta ya finalizada. El ticket se genera desde
+      // esa misma venta para no crear un segundo flujo ni datos duplicados.
+      const ventaFinalizada =
+        respuestaCobro?.data || respuestaCobro?.venta || respuestaCobro || {};
+
+      try {
+        imprimirTicketVenta({
+          venta: ventaFinalizada,
+          items:
+            ventaFinalizada?.detalles || pedidoCobroSeleccionado?.detalles || [],
+          total: Number(
+            ventaFinalizada?.total ?? pedidoCobroSeleccionado?.total ?? 0
+          ),
+          metodoPago: ventaFinalizada?.metodo_pago || metodoCobro,
+          nombreComprador:
+            ventaFinalizada?.cliente_nombre ||
+            pedidoCobroSeleccionado?.cliente_nombre ||
+            "",
+          clienteNombre:
+            ventaFinalizada?.cliente_nombre ||
+            pedidoCobroSeleccionado?.cliente_nombre ||
+            "",
+          saldoPendiente: Number(ventaFinalizada?.saldo_pendiente ?? 0),
+          printWindow: ticketWindow,
+        });
+      } catch (printError) {
+        console.error("La venta fue cobrada, pero no se pudo imprimir el ticket:", printError);
+        if (ticketWindow && !ticketWindow.closed) {
+          ticketWindow.close();
+        }
+        notify.error(
+          "La venta sí fue cobrada y finalizada, pero no se pudo abrir el ticket de impresión."
+        );
+      }
+
+      notify.success("Pedido cobrado y venta finalizada correctamente.");
       setPedidoCobroId("");
       setMetodoCobro("efectivo");
       setReferenciaCobro("");
@@ -391,6 +434,9 @@ export default function Caja() {
       setFechaPrimerPago("");
       await load(false);
     } catch (err) {
+      if (ticketWindow && !ticketWindow.closed) {
+        ticketWindow.close();
+      }
       notify.error(err, "No se pudo cobrar el pedido.");
     } finally {
       setCobrandoPedido(false);
@@ -1230,6 +1276,70 @@ export default function Caja() {
                       <div>
                         <strong>Total:</strong> {money(pedidoCobroSeleccionado.total)}
                       </div>
+                      <div>
+                        <strong>Vendedor:</strong>{" "}
+                        {pedidoCobroSeleccionado.usuario_nombre || "—"}
+                      </div>
+                      <div>
+                        <strong>Fecha:</strong>{" "}
+                        {formatDate(pedidoCobroSeleccionado.creado_en)}
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        padding: 12,
+                        borderRadius: 14,
+                        border: "1px solid #e2e8f0",
+                        background: "#ffffff",
+                      }}
+                    >
+                      <strong style={{ color: "#0f172a", fontSize: 14 }}>
+                        Productos del pedido
+                      </strong>
+
+                      {(pedidoCobroSeleccionado.detalles || []).length === 0 ? (
+                        <div style={{ color: "#64748b", fontSize: 13 }}>
+                          No hay detalle de productos disponible.
+                        </div>
+                      ) : (
+                        (pedidoCobroSeleccionado.detalles || []).map((detalle) => (
+                          <div
+                            key={detalle.id || `${detalle.producto_id}-${detalle.producto_precio_id}`}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "minmax(0, 1fr) auto",
+                              gap: 10,
+                              paddingBottom: 8,
+                              borderBottom: "1px dashed #e2e8f0",
+                            }}
+                          >
+                            <div style={{ minWidth: 0 }}>
+                              <div
+                                style={{
+                                  color: "#0f172a",
+                                  fontSize: 13,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {detalle.producto_nombre || detalle.nombre || "Producto"}
+                              </div>
+                              <div style={{ color: "#64748b", fontSize: 12 }}>
+                                {detalle.presentacion || "Sin presentación"} · {Number(detalle.cantidad || 0)} x {money(detalle.precio_unitario)}
+                              </div>
+                            </div>
+                            <strong style={{ color: "#0f172a", fontSize: 13 }}>
+                              {money(
+                                detalle.subtotal ??
+                                  Number(detalle.cantidad || 0) *
+                                    Number(detalle.precio_unitario || 0)
+                              )}
+                            </strong>
+                          </div>
+                        ))
+                      )}
                     </div>
 
                     <div>
@@ -1304,7 +1414,7 @@ export default function Caja() {
                       }}
                     >
                       <ReceiptText size={17} />
-                      {cobrandoPedido ? "Procesando cobro…" : "Cobrar pedido"}
+                      {cobrandoPedido ? "Procesando cobro…" : "Cobrar y finalizar venta"}
                     </button>
                   </>
                 ) : (
