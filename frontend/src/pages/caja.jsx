@@ -129,6 +129,14 @@ export default function Caja() {
   const [actualRaw, setActualRaw] = useState(null);
   const [historial, setHistorial] = useState([]);
   const [ubicacionesCatalogo, setUbicacionesCatalogo] = useState([]);
+  const [pedidosPendientes, setPedidosPendientes] = useState([]);
+  const [pedidoCobroId, setPedidoCobroId] = useState("");
+  const [metodoCobro, setMetodoCobro] = useState("efectivo");
+  const [referenciaCobro, setReferenciaCobro] = useState("");
+  const [numeroCuotas, setNumeroCuotas] = useState(1);
+  const [frecuenciaPago, setFrecuenciaPago] = useState("mensual");
+  const [fechaPrimerPago, setFechaPrimerPago] = useState("");
+  const [cobrandoPedido, setCobrandoPedido] = useState(false);
 
   const [notasAbrir, setNotasAbrir] = useState("Apertura");
   const [efectivoInicial, setEfectivoInicial] = useState(100);
@@ -161,6 +169,14 @@ export default function Caja() {
   }, [actualRaw]);
 
   const vistaTodasSucursales = isSuperAdmin && !hasUbicacion;
+
+  const pedidoCobroSeleccionado = useMemo(
+    () =>
+      pedidosPendientes.find(
+        (pedido) => String(pedido?.id) === String(pedidoCobroId)
+      ) || null,
+    [pedidosPendientes, pedidoCobroId]
+  );
 
   async function fetchUbicacionesCatalogo() {
     if (!isSuperAdmin) return [];
@@ -281,6 +297,7 @@ export default function Caja() {
     if (!isSuperAdmin && !ubicacionId) {
       setActualRaw(null);
       setHistorial([]);
+      setPedidosPendientes([]);
       setLoading(false);
       return;
     }
@@ -295,9 +312,10 @@ export default function Caja() {
         mes: mesFiltro,
       };
 
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         api.cajaActual(paramsActual),
         api.cajaHistorial(paramsHistorial),
+        api.ventasTiendaCajaPendientes(paramsActual),
       ]);
 
       const dataActual = r1?.data ?? null;
@@ -305,6 +323,15 @@ export default function Caja() {
 
       const raw = extractRows(r2);
       setHistorial(raw);
+      const pedidos = extractRows(r3);
+      setPedidosPendientes(pedidos);
+
+      if (
+        pedidoCobroId &&
+        !pedidos.some((pedido) => String(pedido?.id) === String(pedidoCobroId))
+      ) {
+        setPedidoCobroId("");
+      }
 
       const cajaAbierta =
         Array.isArray(dataActual) ? dataActual.length > 0 : !!dataActual;
@@ -326,6 +353,47 @@ export default function Caja() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function cobrarPedidoPendiente() {
+    if (!pedidoCobroSeleccionado) {
+      notify.error("Selecciona un pedido pendiente de cobro.");
+      return;
+    }
+
+    if (metodoCobro === "cuotas" && Number(numeroCuotas || 0) < 1) {
+      notify.error("Indica el número de cuotas.");
+      return;
+    }
+
+    try {
+      setCobrandoPedido(true);
+
+      await api.ventasTiendaCajaCobrar(pedidoCobroSeleccionado.id, {
+        metodo_pago: metodoCobro,
+        referencia_pago: referenciaCobro.trim() || null,
+        numero_cuotas:
+          metodoCobro === "cuotas" ? Number(numeroCuotas || 1) : null,
+        frecuencia_pago: metodoCobro === "cuotas" ? frecuenciaPago : null,
+        fecha_primer_pago:
+          metodoCobro === "cuotas" && fechaPrimerPago
+            ? fechaPrimerPago
+            : null,
+      });
+
+      notify.success("Pedido cobrado correctamente.");
+      setPedidoCobroId("");
+      setMetodoCobro("efectivo");
+      setReferenciaCobro("");
+      setNumeroCuotas(1);
+      setFrecuenciaPago("mensual");
+      setFechaPrimerPago("");
+      await load(false);
+    } catch (err) {
+      notify.error(err, "No se pudo cobrar el pedido.");
+    } finally {
+      setCobrandoPedido(false);
     }
   }
 
@@ -1030,6 +1098,221 @@ export default function Caja() {
             subtitle={vistaTodasSucursales ? "Total esperado" : "Caja contable"}
             accent="blue"
           />
+        </div>
+
+        <div
+          style={{
+            background: "rgba(255,255,255,0.82)",
+            borderRadius: 28,
+            padding: 24,
+            border: "1px solid rgba(148,163,184,0.18)",
+            boxShadow: "0 18px 45px rgba(15,23,42,0.08)",
+            display: "grid",
+            gap: 18,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 24,
+                  fontWeight: 800,
+                  color: "#0f172a",
+                }}
+              >
+                Pedidos pendientes de cobro
+              </h2>
+              <p style={{ margin: "6px 0 0", color: "#64748b", fontSize: 14 }}>
+                Pedidos enviados por los vendedores de tienda para ser cobrados en Caja.
+              </p>
+            </div>
+
+            <span style={badgeStyle(pedidosPendientes.length ? "blue" : "gray")}>
+              {pedidosPendientes.length} pendiente(s)
+            </span>
+          </div>
+
+          {loading ? (
+            <div style={panelEmptyStyle}>Cargando pedidos pendientes…</div>
+          ) : pedidosPendientes.length === 0 ? (
+            <div style={panelEmptyStyle}>No hay pedidos pendientes de cobro.</div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1.15fr) minmax(320px, 0.85fr)",
+                gap: 18,
+                alignItems: "start",
+              }}
+            >
+              <div style={{ display: "grid", gap: 10 }}>
+                {pedidosPendientes.map((pedido) => {
+                  const seleccionado =
+                    String(pedidoCobroId) === String(pedido?.id);
+
+                  return (
+                    <button
+                      key={pedido.id}
+                      type="button"
+                      onClick={() => setPedidoCobroId(String(pedido.id))}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        borderRadius: 18,
+                        padding: 16,
+                        border: seleccionado
+                          ? "1px solid #3b82f6"
+                          : "1px solid #e2e8f0",
+                        background: seleccionado ? "#eff6ff" : "#f8fafc",
+                        cursor: "pointer",
+                        display: "grid",
+                        gap: 8,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          alignItems: "center",
+                        }}
+                      >
+                        <strong style={{ color: "#0f172a", fontSize: 16 }}>
+                          {pedido?.cliente_nombre || "Cliente sin nombre"}
+                        </strong>
+                        <strong style={{ color: "#0f172a", fontSize: 16 }}>
+                          {money(pedido?.total)}
+                        </strong>
+                      </div>
+
+                      <div style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
+                        Pedido #{pedido?.id} · Vendedor: {pedido?.usuario_nombre || "—"}
+                        {pedido?.ubicacion_nombre
+                          ? ` · ${pedido.ubicacion_nombre}`
+                          : ""}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div
+                style={{
+                  borderRadius: 20,
+                  border: "1px solid #e2e8f0",
+                  padding: 18,
+                  background: "#f8fafc",
+                  display: "grid",
+                  gap: 14,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <BadgeDollarSign size={20} />
+                  <strong style={{ color: "#0f172a" }}>Registrar cobro</strong>
+                </div>
+
+                {pedidoCobroSeleccionado ? (
+                  <>
+                    <div style={{ color: "#475569", fontSize: 14, lineHeight: 1.7 }}>
+                      <div>
+                        <strong>Cliente:</strong>{" "}
+                        {pedidoCobroSeleccionado.cliente_nombre || "—"}
+                      </div>
+                      <div>
+                        <strong>Total:</strong> {money(pedidoCobroSeleccionado.total)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={labelStyle}>Método de pago</label>
+                      <select
+                        value={metodoCobro}
+                        onChange={(e) => setMetodoCobro(e.target.value)}
+                        style={selectStyle}
+                      >
+                        <option value="efectivo">Efectivo</option>
+                        <option value="tarjeta">Tarjeta</option>
+                        <option value="cuotas">Crédito</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={labelStyle}>Referencia</label>
+                      <input
+                        value={referenciaCobro}
+                        onChange={(e) => setReferenciaCobro(e.target.value)}
+                        placeholder="Opcional"
+                        style={inputStyle}
+                      />
+                    </div>
+
+                    {metodoCobro === "cuotas" ? (
+                      <div style={{ display: "grid", gap: 12 }}>
+                        <div>
+                          <label style={labelStyle}>Número de cuotas</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="24"
+                            value={numeroCuotas}
+                            onChange={(e) => setNumeroCuotas(e.target.value)}
+                            style={inputStyle}
+                          />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Frecuencia</label>
+                          <select
+                            value={frecuenciaPago}
+                            onChange={(e) => setFrecuenciaPago(e.target.value)}
+                            style={selectStyle}
+                          >
+                            <option value="semanal">Semanal</option>
+                            <option value="quincenal">Quincenal</option>
+                            <option value="mensual">Mensual</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Primer pago</label>
+                          <input
+                            type="date"
+                            value={fechaPrimerPago}
+                            onChange={(e) => setFechaPrimerPago(e.target.value)}
+                            style={inputStyle}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={cobrarPedidoPendiente}
+                      disabled={cobrandoPedido}
+                      style={{
+                        ...primaryButtonStyle,
+                        width: "100%",
+                        opacity: cobrandoPedido ? 0.65 : 1,
+                        cursor: cobrandoPedido ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <ReceiptText size={17} />
+                      {cobrandoPedido ? "Procesando cobro…" : "Cobrar pedido"}
+                    </button>
+                  </>
+                ) : (
+                  <div style={panelEmptyStyle}>Selecciona un pedido para cobrarlo.</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {vistaTodasSucursales ? (

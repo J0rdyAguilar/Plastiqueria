@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getSession } from "../lib/auth";
 import { ruteroApi } from "../lib/rutero";
+import { usuariosApi } from "../lib/usuarios";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -28,9 +29,25 @@ function estadoClase(estado) {
   }
 }
 
+function normalizeRole(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+}
+
+function extractRows(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.data)) return payload.data.data;
+  return [];
+}
+
 export default function HistorialRutero() {
   const session = getSession();
   const me = session?.user || {};
+  const role = normalizeRole(me?.rol || me?.role || "");
+  const isSuperAdmin = role === "super_admin" || role === "superadmin";
 
   const [loading, setLoading] = useState(true);
   const [pedidos, setPedidos] = useState([]);
@@ -38,16 +55,35 @@ export default function HistorialRutero() {
   const [q, setQ] = useState("");
   const [estado, setEstado] = useState("");
   const [error, setError] = useState("");
+  const [ruteros, setRuteros] = useState([]);
+  const [ruteroId, setRuteroId] = useState("");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
+  const [resumen, setResumen] = useState({
+    total_entregas_cobradas: 0,
+    total_dinero_recibido: 0,
+    entregas_pendientes_cobro: 0,
+  });
 
   async function cargarHistorial() {
     try {
       setError("");
       setLoading(true);
 
-      const res = await ruteroApi.misEntregas({ estado });
+      const res = await ruteroApi.misEntregas({
+        estado,
+        ruteroId: isSuperAdmin ? ruteroId : "",
+        fechaDesde,
+        fechaHasta,
+      });
       const lista = Array.isArray(res?.data) ? res.data : [];
 
       setPedidos(lista);
+      setResumen({
+        total_entregas_cobradas: Number(res?.resumen?.total_entregas_cobradas || 0),
+        total_dinero_recibido: Number(res?.resumen?.total_dinero_recibido || 0),
+        entregas_pendientes_cobro: Number(res?.resumen?.entregas_pendientes_cobro || 0),
+      });
 
       if (lista.length > 0) {
         setSelectedId((prev) => {
@@ -66,7 +102,16 @@ export default function HistorialRutero() {
 
   useEffect(() => {
     cargarHistorial();
-  }, [estado]);
+  }, [estado, ruteroId, fechaDesde, fechaHasta]);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+
+    usuariosApi
+      .list({ rol: "rutero", per_page: 100 })
+      .then((res) => setRuteros(extractRows(res)))
+      .catch(() => setRuteros([]));
+  }, [isSuperAdmin]);
 
   const pedidosFiltrados = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -808,9 +853,13 @@ export default function HistorialRutero() {
         <div className="rutero-hero">
           <div className="rutero-hero__left">
             <div className="rutero-chip">Historial rutero</div>
-            <h1 className="rutero-title">Historial de entregas</h1>
+            <h1 className="rutero-title">
+              {isSuperAdmin ? "Control de entregas de ruteros" : "Historial de entregas"}
+            </h1>
             <p className="rutero-subtitle">
-              Consulta tus pedidos entregados y revisa el detalle completo de cada entrega.
+              {isSuperAdmin
+                ? "Revisa el dinero recibido, entregas cobradas y pendientes de los ruteros."
+                : "Consulta tus entregas, el dinero recibido y el detalle necesario para cuadrar cobros."}
             </p>
 
             <div className="rutero-userbar">
@@ -829,6 +878,37 @@ export default function HistorialRutero() {
           </div>
 
           <div className="rutero-hero__right">
+            {isSuperAdmin ? (
+              <select
+                className="rt-select"
+                value={ruteroId}
+                onChange={(e) => setRuteroId(e.target.value)}
+              >
+                <option value="">Todos los ruteros</option>
+                {ruteros.map((rutero) => (
+                  <option key={rutero.id} value={rutero.id}>
+                    {rutero.nombre || rutero.usuario || `Rutero #${rutero.id}`}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+
+            <input
+              className="rt-select"
+              type="date"
+              value={fechaDesde}
+              onChange={(e) => setFechaDesde(e.target.value)}
+              title="Fecha desde"
+            />
+
+            <input
+              className="rt-select"
+              type="date"
+              value={fechaHasta}
+              onChange={(e) => setFechaHasta(e.target.value)}
+              title="Fecha hasta"
+            />
+
             <select
               className="rt-select"
               value={estado}
@@ -847,11 +927,26 @@ export default function HistorialRutero() {
 
         {error ? <div className="rt-alert">{error}</div> : null}
 
+        <div className="rt-info-grid">
+          <div className="rt-info-box">
+            <span>Total de entregas cobradas</span>
+            <strong>{resumen.total_entregas_cobradas}</strong>
+          </div>
+          <div className="rt-info-box">
+            <span>Total de dinero recibido</span>
+            <strong>{money(resumen.total_dinero_recibido)}</strong>
+          </div>
+          <div className="rt-info-box">
+            <span>Entregas pendientes de cobro</span>
+            <strong>{resumen.entregas_pendientes_cobro}</strong>
+          </div>
+        </div>
+
         <div className="rutero-grid">
           <section className="rt-card--panel">
             <div className="rt-card-head rt-card-head--between">
               <div>
-                <h2>Mis entregas</h2>
+                <h2>{isSuperAdmin ? "Entregas de ruteros" : "Mis entregas"}</h2>
                 <p className="rt-card-subtext">
                   Busca por cliente, código, ruta o zona.
                 </p>
@@ -926,6 +1021,20 @@ export default function HistorialRutero() {
                             <span>Fecha entrega</span>
                             <strong>{fmtDate(pedido?.entregado_en || pedido?.creado_en)}</strong>
                           </div>
+                          <div>
+                            <span>Cobro</span>
+                            <strong>
+                              {pedido?.cobro?.registrado
+                                ? `${money(pedido.cobro.monto)} · ${pedido.cobro.metodo_pago || "registrado"}`
+                                : "Pendiente"}
+                            </strong>
+                          </div>
+                          {isSuperAdmin ? (
+                            <div>
+                              <span>Rutero</span>
+                              <strong>{pedido?.rutero_nombre || "—"}</strong>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
 
@@ -987,6 +1096,34 @@ export default function HistorialRutero() {
                   <div className="rt-info-box">
                     <span>Sucursal</span>
                     <strong>{pedidoSeleccionado?.ubicacion_nombre || pedidoSeleccionado?.ubicacion_id || "—"}</strong>
+                  </div>
+
+                  <div className="rt-info-box">
+                    <span>Rutero</span>
+                    <strong>{pedidoSeleccionado?.rutero_nombre || me?.nombre || me?.usuario || "—"}</strong>
+                  </div>
+
+                  <div className="rt-info-box">
+                    <span>Estado del cobro</span>
+                    <strong>
+                      {pedidoSeleccionado?.cobro?.registrado
+                        ? "Cobrado"
+                        : "Pendiente de cobro"}
+                    </strong>
+                  </div>
+
+                  <div className="rt-info-box">
+                    <span>Dinero recibido</span>
+                    <strong>
+                      {pedidoSeleccionado?.cobro?.registrado
+                        ? money(pedidoSeleccionado.cobro.monto)
+                        : money(0)}
+                    </strong>
+                  </div>
+
+                  <div className="rt-info-box">
+                    <span>Método de pago</span>
+                    <strong>{pedidoSeleccionado?.cobro?.metodo_pago || "—"}</strong>
                   </div>
 
                   <div className="rt-info-box rt-info-box--full">

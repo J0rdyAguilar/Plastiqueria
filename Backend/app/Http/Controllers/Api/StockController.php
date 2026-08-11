@@ -41,7 +41,8 @@ class StockController extends Controller
 
         $q = trim((string) $request->query('q', ''));
         $ubicacionId = $request->query('ubicacion_id');
-        $perPage = max(1, min(200, (int) $request->query('per_page', 20)));
+        $maxPerPage = $role === 'super_admin' ? 1000 : 200;
+        $perPage = max(1, min($maxPerPage, (int) $request->query('per_page', 20)));
 
         $query = Stock::query()->with([
             'producto:id,sku,nombre',
@@ -89,6 +90,7 @@ class StockController extends Controller
                     'id' => (int) $s->id,
                     'ubicacion_id' => (int) $s->ubicacion_id,
                     'ubicacion_nombre' => $s->ubicacion?->nombre,
+                    'ubicacion_tipo' => $s->ubicacion?->tipo,
 
                     'producto_id' => (string) $s->producto_id,
                     'producto_precio_id' => (int) $s->producto_precio_id,

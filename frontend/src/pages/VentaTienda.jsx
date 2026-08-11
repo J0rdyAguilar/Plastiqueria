@@ -369,6 +369,7 @@ export default function VentaTienda() {
   const sessionUser = session?.user || session || {};
   const role = normalizeRole(sessionUser?.rol || sessionUser?.role || "");
   const isSuperAdmin = role === "super_admin";
+  const isVendedorTienda = role === "vendedor_tienda";
 
   const [inventario, setInventario] = useState([]);
   const [items, setItems] = useState([]);
@@ -799,17 +800,22 @@ export default function VentaTienda() {
       return;
     }
 
-    if (!nombreComprador.trim() && metodoPago !== "cuotas") {
+    if (isVendedorTienda && !clienteId) {
+      alert("Selecciona el cliente del pedido.");
+      return;
+    }
+
+    if (!isVendedorTienda && !nombreComprador.trim() && metodoPago !== "cuotas") {
       alert("Ingresa el nombre del comprador.");
       return;
     }
 
-    if (!metodoPago) {
+    if (!isVendedorTienda && !metodoPago) {
       alert("Selecciona un método de pago.");
       return;
     }
 
-    if (metodoPago === "cuotas" && !clienteId) {
+    if (!isVendedorTienda && metodoPago === "cuotas" && !clienteId) {
       alert("Selecciona un cliente para crédito.");
       return;
     }
@@ -823,13 +829,15 @@ export default function VentaTienda() {
       setLoadingVenta(true);
 
       const payload = {
-        metodo_pago: metodoPago,
-        nombre_comprador:
-          metodoPago === "cuotas"
+        metodo_pago: isVendedorTienda ? null : metodoPago,
+        nombre_comprador: isVendedorTienda
+          ? clienteSeleccionado?.nombre || ""
+          : metodoPago === "cuotas"
             ? clienteSeleccionado?.nombre || nombreComprador.trim() || ""
             : nombreComprador.trim(),
-        cliente_id: metodoPago === "cuotas" ? Number(clienteId) : null,
-        referencia_pago: referenciaPago.trim() || null,
+        cliente_id:
+          isVendedorTienda || metodoPago === "cuotas" ? Number(clienteId) : null,
+        referencia_pago: isVendedorTienda ? null : referenciaPago.trim() || null,
         ubicacion_id: ubicacionId ? Number(ubicacionId) : null,
         items: items.map((item) => ({
           producto_id: Number(item.producto_id),
@@ -844,27 +852,31 @@ export default function VentaTienda() {
       const resp = await ventasTienda.crear(payload);
       const ventaCreada = resp?.data || resp?.venta || resp || null;
 
-      imprimirTicketVenta({
-        venta: ventaCreada,
-        items,
-        total,
-        metodoPago,
-        nombreComprador:
-          metodoPago === "cuotas"
-            ? clienteSeleccionado?.nombre || nombreComprador.trim()
-            : nombreComprador.trim(),
-        clienteNombre: clienteSeleccionado?.nombre || "",
-        saldoPendiente:
-          metodoPago === "cuotas"
-            ? Number(ventaCreada?.saldo_pendiente ?? total)
-            : 0,
-      });
+      if (isVendedorTienda) {
+        alert("Pedido registrado y enviado a Caja para cobro.");
+      } else {
+        imprimirTicketVenta({
+          venta: ventaCreada,
+          items,
+          total,
+          metodoPago,
+          nombreComprador:
+            metodoPago === "cuotas"
+              ? clienteSeleccionado?.nombre || nombreComprador.trim()
+              : nombreComprador.trim(),
+          clienteNombre: clienteSeleccionado?.nombre || "",
+          saldoPendiente:
+            metodoPago === "cuotas"
+              ? Number(ventaCreada?.saldo_pendiente ?? total)
+              : 0,
+        });
 
-      alert(
-        metodoPago === "cuotas"
-          ? "Venta a crédito realizada correctamente."
-          : "Venta realizada correctamente."
-      );
+        alert(
+          metodoPago === "cuotas"
+            ? "Venta a crédito realizada correctamente."
+            : "Venta realizada correctamente."
+        );
+      }
 
       setItems([]);
       setExpandedItems({});
@@ -896,13 +908,19 @@ export default function VentaTienda() {
             <div>
               <div className="venta-chip-top">
                 <Store size={16} />
-                Venta conectada al inventario
+                {isVendedorTienda
+                  ? "Pedido conectado al inventario"
+                  : "Venta conectada al inventario"}
               </div>
 
-              <h1 className="venta-hero-title">Ventas tienda</h1>
+              <h1 className="venta-hero-title">
+                {isVendedorTienda ? "Pedidos tienda" : "Ventas tienda"}
+              </h1>
 
               <p className="venta-hero-text">
-                Registra ventas por sucursal, indicando comprador, cliente y método de pago.
+                {isVendedorTienda
+                  ? "Crea el pedido para el cliente y envíalo a Caja para realizar el cobro."
+                  : "Registra ventas por sucursal, indicando comprador, cliente y método de pago."}
               </p>
             </div>
 
@@ -1273,7 +1291,7 @@ export default function VentaTienda() {
               </div>
             </div>
 
-            <div style={cardBlockStyle}>
+            {!isVendedorTienda ? <div style={cardBlockStyle}>
               <label style={labelStyle}>
                 {metodoPago === "cuotas" ? "Nombre de referencia" : "Nombre del comprador"}
               </label>
@@ -1294,9 +1312,9 @@ export default function VentaTienda() {
                   }}
                 />
               </div>
-            </div>
+            </div> : null}
 
-            <div style={cardBlockStyle}>
+            {!isVendedorTienda ? <div style={cardBlockStyle}>
               <label style={labelStyle}>Método de pago</label>
               <div style={payGridStyle}>
                 <button
@@ -1335,24 +1353,28 @@ export default function VentaTienda() {
                   Crédito
                 </button>
               </div>
-            </div>
+            </div> : null}
 
-            {metodoPago === "cuotas" && (
+            {(isVendedorTienda || metodoPago === "cuotas") && (
               <>
                 <div style={cardBlockStyle}>
                   <div style={cardBlockHeaderStyle}>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>Cliente</label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      {isVendedorTienda ? "Cliente del pedido" : "Cliente"}
+                    </label>
 
-                    <button
-                      type="button"
-                      onClick={() => setMostrarNuevoCliente((v) => !v)}
-                      style={miniButtonStyle}
-                    >
-                      {mostrarNuevoCliente ? "Cancelar" : "Nuevo cliente"}
-                    </button>
+                    {!isVendedorTienda ? (
+                      <button
+                        type="button"
+                        onClick={() => setMostrarNuevoCliente((v) => !v)}
+                        style={miniButtonStyle}
+                      >
+                        {mostrarNuevoCliente ? "Cancelar" : "Nuevo cliente"}
+                      </button>
+                    ) : null}
                   </div>
 
-                  {!mostrarNuevoCliente ? (
+                  {isVendedorTienda || !mostrarNuevoCliente ? (
                     <>
                       <div style={{ position: "relative" }}>
                         <Users size={18} style={leadingIconStyle} />
@@ -1475,37 +1497,45 @@ export default function VentaTienda() {
                   )}
                 </div>
 
-                <div style={cardBlockStyle}>
-                  <label style={labelStyle}>Referencia de crédito</label>
-                  <input
-                    type="text"
-                    value={referenciaPago}
-                    onChange={(e) => setReferenciaPago(e.target.value)}
-                    placeholder="Ej. Crédito tienda, libreta, acuerdo verbal..."
-                    style={inputStyle}
-                  />
-                </div>
+                {!isVendedorTienda ? (
+                  <div style={cardBlockStyle}>
+                    <label style={labelStyle}>Referencia de crédito</label>
+                    <input
+                      type="text"
+                      value={referenciaPago}
+                      onChange={(e) => setReferenciaPago(e.target.value)}
+                      placeholder="Ej. Crédito tienda, libreta, acuerdo verbal..."
+                      style={inputStyle}
+                    />
+                  </div>
+                ) : null}
               </>
             )}
 
             <div style={totalCardStyle}>
-              <div style={totalCardLabelStyle}>Total a cobrar</div>
+              <div style={totalCardLabelStyle}>
+                {isVendedorTienda ? "Total del pedido" : "Total a cobrar"}
+              </div>
               <div style={totalCardValueStyle}>{money(total + subtotalPreview)}</div>
               <div style={totalCardMetaStyle}>
                 {items.length} {items.length === 1 ? "producto" : "productos"} agregados
               </div>
-              <div style={totalCardLineStyle}>
-                Método: {getMetodoPagoLabel(metodoPago)}
-              </div>
-              <div style={totalCardLineStyle}>
-                Comprador: {nombreComprador.trim() || "Sin ingresar"}
-              </div>
+              {!isVendedorTienda ? (
+                <div style={totalCardLineStyle}>
+                  Método: {getMetodoPagoLabel(metodoPago)}
+                </div>
+              ) : null}
+              {!isVendedorTienda ? (
+                <div style={totalCardLineStyle}>
+                  Comprador: {nombreComprador.trim() || "Sin ingresar"}
+                </div>
+              ) : null}
               {isSuperAdmin ? (
                 <div style={totalCardLineStyle}>
                   Sucursal: {ubicacionId ? `Tienda ${ubicacionId}` : "Todas las tiendas"}
                 </div>
               ) : null}
-              {metodoPago === "cuotas" ? (
+              {isVendedorTienda || metodoPago === "cuotas" ? (
                 <div style={totalCardLineStyle}>
                   Cliente: {clienteSeleccionado?.nombre || "No seleccionado"}
                 </div>
@@ -1530,7 +1560,9 @@ export default function VentaTienda() {
               ) : (
                 <>
                   <CheckCircle2 size={18} />
-                  {metodoPago === "cuotas"
+                  {isVendedorTienda
+                    ? "Enviar pedido a caja"
+                    : metodoPago === "cuotas"
                     ? "Guardar venta a crédito"
                     : "Finalizar venta"}
                 </>

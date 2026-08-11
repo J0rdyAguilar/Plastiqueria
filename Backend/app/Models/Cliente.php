@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Cliente extends Model
 {
@@ -48,5 +49,10 @@ class Cliente extends Model
     {
         return $this->belongsToMany(Vendedor::class, 'vendedor_clientes', 'cliente_id', 'vendedor_id')
             ->withPivot(['id', 'asignado_en', 'activo']);
+    }
+
+    public function cuotas(): HasMany
+    {
+        return $this->hasMany(Cuota::class, 'cliente_id');
     }
 }

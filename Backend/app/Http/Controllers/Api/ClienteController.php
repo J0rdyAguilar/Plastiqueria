@@ -74,6 +74,48 @@ class ClienteController extends Controller
         return $primera ? (int) $primera->id : null;
     }
 
+    private function resumenCredito(Cliente $cliente): array
+    {
+        $cuotas = $cliente->relationLoaded('cuotas')
+            ? $cliente->cuotas
+            : $cliente->cuotas()->get();
+
+        $pendientes = $cuotas->filter(function ($cuota) {
+            return (float) ($cuota->saldo_pendiente ?? 0) > 0
+                && strtolower((string) ($cuota->estado ?? '')) !== 'pagado';
+        });
+
+        $saldoPendiente = round((float) $pendientes->sum('saldo_pendiente'), 2);
+        $totalCredito = round((float) $pendientes->sum('total_credito'), 2);
+        $totalAbonado = round((float) $pendientes->sum('total_abonado'), 2);
+
+        $proximo = $pendientes
+            ->filter(fn ($cuota) => !empty($cuota->proximo_vencimiento))
+            ->sortBy('proximo_vencimiento')
+            ->first();
+
+        return [
+            'tiene_credito' => $saldoPendiente > 0,
+            'saldo_pendiente' => $saldoPendiente,
+            'total_credito_activo' => $totalCredito,
+            'total_abonado' => $totalAbonado,
+            'creditos_pendientes' => $pendientes->count(),
+            'proximo_vencimiento' => optional($proximo?->proximo_vencimiento)->format('Y-m-d H:i:s'),
+            'detalle' => $pendientes->map(function ($cuota) {
+                return [
+                    'id' => (int) $cuota->id,
+                    'origen_tipo' => $cuota->origen_tipo,
+                    'origen_id' => $cuota->origen_id ? (int) $cuota->origen_id : null,
+                    'total_credito' => (float) ($cuota->total_credito ?? 0),
+                    'total_abonado' => (float) ($cuota->total_abonado ?? 0),
+                    'saldo_pendiente' => (float) ($cuota->saldo_pendiente ?? 0),
+                    'estado' => $cuota->estado,
+                    'proximo_vencimiento' => optional($cuota->proximo_vencimiento)->format('Y-m-d H:i:s'),
+                ];
+            })->values(),
+        ];
+    }
+
     public function index(Request $request)
     {
         $user = $request->user();
@@ -82,6 +124,7 @@ class ClienteController extends Controller
         $q = trim((string) $request->query('q', ''));
         $activo = $request->query('activo');
         $vendedorId = $request->query('vendedor_id');
+        $zonaId = $request->query('zona_id');
 
         $query = Cliente::query()
             ->with([
@@ -110,6 +153,10 @@ class ClienteController extends Controller
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
+        if (!empty($zonaId)) {
+            $query->where('zona_id', (int) $zonaId);
+        }
+
         if ($q !== '') {
             $query->where(function ($sub) use ($q) {
                 $sub->where('nombre', 'like', "%{$q}%")
@@ -134,17 +181,22 @@ class ClienteController extends Controller
         $user = $request->user();
         $role = $this->roleOf($user);
 
-        if (!in_array($role, ['admin', 'super_admin', 'vendedor', 'vendedor_tienda'], true)) {
+        if (!in_array($role, ['admin', 'super_admin', 'vendedor', 'vendedor_tienda', 'rutero'], true)) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
         $cliente->load([
             'ruta:id,nombre',
             'zona:id,nombre',
+            'cuotas',
         ]);
 
+        $data = $cliente->toArray();
+        unset($data['cuotas']);
+        $data['credito'] = $this->resumenCredito($cliente);
+
         return response()->json([
-            'data' => $cliente,
+            'data' => $data,
         ]);
     }
 

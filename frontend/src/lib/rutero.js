@@ -23,9 +23,17 @@ export const ruteroApi = {
     return data;
   },
 
-  misEntregas: async ({ estado = "" } = {}) => {
+  misEntregas: async ({
+    estado = "",
+    ruteroId = "",
+    fechaDesde = "",
+    fechaHasta = "",
+  } = {}) => {
     const params = {};
     if (estado) params.estado = estado;
+    if (ruteroId) params.rutero_id = ruteroId;
+    if (fechaDesde) params.fecha_desde = fechaDesde;
+    if (fechaHasta) params.fecha_hasta = fechaHasta;
 
     const { data } = await httpV1.get("/pedidos/mis-entregas", { params });
     return data;

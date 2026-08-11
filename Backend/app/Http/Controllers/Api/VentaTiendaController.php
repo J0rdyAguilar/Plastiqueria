@@ -10,11 +10,11 @@ use App\Models\MovimientoStock;
 use App\Models\ProductoPrecio;
 use App\Models\Caja;
 use App\Models\MovimientoCaja;
+use App\Models\Cuota;
 use App\Models\Ubicacion;
 use App\Services\RegistrarCuotaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
 
 class VentaTiendaController extends Controller
 {
@@ -70,6 +70,54 @@ class VentaTiendaController extends Controller
         }
 
         return round($cantidad * $factor, 4);
+    }
+
+    private function esPedidoCaja(VentaTienda $venta): bool
+    {
+        $venta->loadMissing('usuario:id,usuario,nombre,rol');
+
+        return $venta->usuario
+            && $this->roleOf($venta->usuario) === 'vendedor-tienda';
+    }
+
+    private function registroCobro(VentaTienda $venta): array
+    {
+        if ($venta->estado !== 'completada' || !$this->esPedidoCaja($venta)) {
+            return [
+                'usuario_id' => null,
+                'usuario_nombre' => null,
+                'creado_en' => null,
+            ];
+        }
+
+        $movimiento = MovimientoCaja::query()
+            ->with('usuario:id,usuario,nombre')
+            ->where('referencia_tipo', 'venta_tienda')
+            ->where('referencia_id', (int) $venta->id)
+            ->where('tipo', 'ingreso')
+            ->latest('id')
+            ->first();
+
+        if ($movimiento) {
+            return [
+                'usuario_id' => (int) $movimiento->usuario_id,
+                'usuario_nombre' => $movimiento->usuario?->nombre ?? $movimiento->usuario?->usuario,
+                'creado_en' => optional($movimiento->creado_en)->format('Y-m-d H:i:s'),
+            ];
+        }
+
+        $cuota = Cuota::query()
+            ->with('creador:id,usuario,nombre')
+            ->where('origen_tipo', 'venta_tienda')
+            ->where('origen_id', (int) $venta->id)
+            ->latest('id')
+            ->first();
+
+        return [
+            'usuario_id' => $cuota?->creado_por ? (int) $cuota->creado_por : null,
+            'usuario_nombre' => $cuota?->creador?->nombre ?? $cuota?->creador?->usuario,
+            'creado_en' => optional($cuota?->creado_en)->format('Y-m-d H:i:s'),
+        ];
     }
 
     private function buildVentaResponse($venta, $movimientosByVenta = null, $preciosById = null): array
@@ -132,16 +180,26 @@ class VentaTiendaController extends Controller
             ];
         })->values();
 
+        $esPedidoCaja = $this->esPedidoCaja($venta);
+        $cobro = $this->registroCobro($venta);
+
         return [
             'id' => (int) $venta->id,
             'ubicacion_id' => (int) $venta->ubicacion_id,
             'ubicacion_nombre' => $venta->ubicacion?->nombre,
             'usuario_id' => (int) $venta->usuario_id,
             'usuario_nombre' => $venta->usuario?->nombre ?? $venta->usuario?->usuario,
+            'tipo_flujo' => $esPedidoCaja ? 'pedido_caja' : 'venta_directa',
+            'cobrado_por' => $cobro['usuario_id'],
+            'cobrador_nombre' => $cobro['usuario_nombre'],
+            'cobrado_en' => $cobro['creado_en'],
             'cliente_id' => $venta->cliente_id ? (int) $venta->cliente_id : null,
             'cliente_nombre' => $venta->cliente?->nombre,
             'estado' => $venta->estado,
-            'metodo_pago' => $venta->metodo_pago,
+            'metodo_pago' =>
+                ($esPedidoCaja && $venta->estado !== 'completada')
+                    ? null
+                    : $venta->metodo_pago,
             'referencia_pago' => $venta->referencia_pago,
             'subtotal' => (float) ($venta->subtotal ?? 0),
             'descuento' => (float) ($venta->descuento ?? 0),
@@ -180,7 +238,7 @@ class VentaTiendaController extends Controller
         $query = VentaTienda::query()
             ->with([
                 'ubicacion:id,nombre',
-                'usuario:id,usuario,nombre',
+                'usuario:id,usuario,nombre,rol',
                 'cliente:id,nombre',
                 'detalles.producto:id,nombre',
             ])
@@ -293,7 +351,7 @@ class VentaTiendaController extends Controller
         $ventasQuery = VentaTienda::query()
             ->with([
                 'ubicacion:id,nombre',
-                'usuario:id,usuario,nombre',
+                'usuario:id,usuario,nombre,rol',
                 'cliente:id,nombre',
                 'detalles.producto:id,nombre',
             ])
@@ -404,7 +462,7 @@ class VentaTiendaController extends Controller
 
         $venta->load([
             'ubicacion:id,nombre',
-            'usuario:id,usuario,nombre',
+            'usuario:id,usuario,nombre,rol',
             'cliente:id,nombre',
             'detalles.producto:id,nombre',
         ]);
@@ -535,18 +593,10 @@ class VentaTiendaController extends Controller
         }
 
         if ($esCuotas && $cuotasData !== null) {
-            app(RegistrarCuotaService::class)->registrarVentaTienda([
-                'venta_id' => (int) $venta->id,
-                'cliente_id' => (int) $venta->cliente_id,
-                'ubicacion_id' => (int) $venta->ubicacion_id,
-                'rutero_id' => null,
-                'usuario_id' => (int) $user->id,
-                'total' => (float) $venta->total,
+            app(RegistrarCuotaService::class)->crearDesdeVentaTienda($venta, $user, [
                 'numero_cuotas' => (int) $cuotasData['numero_cuotas'],
                 'frecuencia_pago' => $cuotasData['frecuencia_pago'] ?? 'mensual',
-                'fecha_primer_pago' => !empty($cuotasData['fecha_primer_pago'])
-                    ? Carbon::parse($cuotasData['fecha_primer_pago'])
-                    : now()->addMonth(),
+                'fecha_primer_pago' => $cuotasData['fecha_primer_pago'] ?? null,
                 'observaciones' => $venta->referencia_pago,
             ]);
         }
@@ -567,7 +617,7 @@ class VentaTiendaController extends Controller
         $data = $request->validate([
             'ubicacion_id' => ['nullable', 'integer', 'exists:ubicaciones,id'],
             'cliente_id' => ['nullable', 'integer', 'exists:clientes,id'],
-            'metodo_pago' => ['required', 'string', 'in:efectivo,tarjeta,cuotas'],
+            'metodo_pago' => ['nullable', 'string', 'in:efectivo,tarjeta,cuotas'],
             'referencia_pago' => ['nullable', 'string', 'max:255'],
             'nombre_comprador' => ['nullable', 'string', 'max:150'],
 
@@ -584,12 +634,26 @@ class VentaTiendaController extends Controller
             'items.*.es_monto_variable' => ['nullable', 'in:0,1,true,false'],
         ]);
 
+        $esPedidoCaja = $role === 'vendedor-tienda';
+
+        if ($esPedidoCaja && empty($data['cliente_id'])) {
+            return response()->json([
+                'message' => 'Selecciona un cliente existente para enviar el pedido a caja.'
+            ], 422);
+        }
+
+        if (!$esPedidoCaja && empty($data['metodo_pago'])) {
+            return response()->json([
+                'message' => 'Debes seleccionar un método de pago.'
+            ], 422);
+        }
+
         $tieneMontoVariable = collect($data['items'])->contains(function ($item) {
             return !empty($item['es_monto_variable'])
                 && !in_array($item['es_monto_variable'], ['0', 0, false], true);
         });
 
-        if (($data['metodo_pago'] ?? '') === 'cuotas') {
+        if (!$esPedidoCaja && ($data['metodo_pago'] ?? '') === 'cuotas') {
             if (empty($data['cliente_id'])) {
                 return response()->json([
                     'message' => 'Para ventas con cuotas debes seleccionar un cliente.'
@@ -624,7 +688,7 @@ class VentaTiendaController extends Controller
         }
 
         try {
-            return DB::transaction(function () use ($data, $user, $ventaUbicacionId, $tieneMontoVariable) {
+            return DB::transaction(function () use ($data, $user, $ventaUbicacionId, $tieneMontoVariable, $esPedidoCaja) {
                 $subtotal = 0;
                 $itemsPreparados = [];
 
@@ -675,15 +739,19 @@ class VentaTiendaController extends Controller
                     ];
                 }
 
-                $esCuotas = ($data['metodo_pago'] ?? 'efectivo') === 'cuotas';
+                $esCuotas = !$esPedidoCaja && (($data['metodo_pago'] ?? 'efectivo') === 'cuotas');
                 $total = round((float) $subtotal, 2);
 
                 $venta = VentaTienda::create([
                     'ubicacion_id' => $ventaUbicacionId,
                     'usuario_id' => (int) $user->id,
                     'cliente_id' => !empty($data['cliente_id']) ? (int) $data['cliente_id'] : null,
-                    'estado' => $tieneMontoVariable ? 'pendiente_revision' : 'completada',
-                    'metodo_pago' => $data['metodo_pago'],
+                    'estado' => $tieneMontoVariable
+                        ? 'pendiente_revision'
+                        : ($esPedidoCaja ? 'pendiente_cobro' : 'completada'),
+                    // El vendedor de tienda no elige ni registra dinero.
+                    // Se usa un valor técnico válido hasta que Caja registre el método real.
+                    'metodo_pago' => $esPedidoCaja ? 'efectivo' : $data['metodo_pago'],
                     'referencia_pago' => $data['referencia_pago'] ?? null,
                     'subtotal' => $total,
                     'descuento' => 0,
@@ -697,7 +765,7 @@ class VentaTiendaController extends Controller
 
                 $this->crearDetallesVenta($venta, $itemsPreparados);
 
-                if (!$tieneMontoVariable) {
+                if (!$tieneMontoVariable && !$esPedidoCaja) {
                     $this->procesarVentaCompletada($venta, $user, $esCuotas ? [
                         'numero_cuotas' => (int) $data['numero_cuotas'],
                         'frecuencia_pago' => $data['frecuencia_pago'] ?? 'mensual',
@@ -707,22 +775,166 @@ class VentaTiendaController extends Controller
 
                 $venta->load([
                     'ubicacion:id,nombre',
-                    'usuario:id,usuario,nombre',
+                    'usuario:id,usuario,nombre,rol',
                     'cliente:id,nombre',
                     'detalles.producto:id,nombre',
                 ]);
 
                 return response()->json([
-                    'message' => $tieneMontoVariable
-                        ? 'Venta enviada a aprobación del Super Admin. No se descontó stock ni se registró movimiento de caja.'
-                        : ($esCuotas ? 'Venta a crédito registrada correctamente.' : 'Venta registrada correctamente.'),
+                    'message' => $esPedidoCaja
+                        ? ($tieneMontoVariable
+                            ? 'Pedido enviado a aprobación del Super Admin. Después de aprobarse quedará pendiente de cobro en Caja.'
+                            : 'Pedido registrado y enviado a Caja. El vendedor no registró ningún cobro.')
+                        : ($tieneMontoVariable
+                            ? 'Venta enviada a aprobación del Super Admin. No se descontó stock ni se registró movimiento de caja.'
+                            : ($esCuotas ? 'Venta a crédito registrada correctamente.' : 'Venta registrada correctamente.')),
                     'requiere_aprobacion' => $tieneMontoVariable,
+                    'requiere_cobro' => $esPedidoCaja,
                     'data' => $this->buildVentaResponse($venta),
                 ], 201);
             });
         } catch (\Throwable $e) {
             return response()->json([
                 'message' => $e->getMessage() ?: 'No se pudo registrar la venta.'
+            ], 422);
+        }
+    }
+
+    public function pendientesCobro(Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+
+        if (!in_array($role, ['caja', 'admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        $query = VentaTienda::query()
+            ->with([
+                'ubicacion:id,nombre',
+                'usuario:id,usuario,nombre,rol',
+                'cliente:id,nombre,propietario,telefono',
+                'detalles.producto:id,nombre',
+            ])
+            ->whereHas('usuario', function ($q) {
+                $q->whereIn('rol', ['vendedor-tienda', 'vendedor_tienda', 'vendedor tienda']);
+            })
+            ->where('estado', 'pendiente_cobro')
+            ->orderBy('creado_en')
+            ->orderBy('id');
+
+        if ($role === 'super_admin') {
+            $ubicacionId = $request->query('ubicacion_id');
+            if (!empty($ubicacionId)) {
+                $query->where('ubicacion_id', (int) $ubicacionId);
+            }
+        } else {
+            if (!$userUbicacionId) {
+                return response()->json([
+                    'message' => 'El usuario no tiene sucursal asignada.'
+                ], 403);
+            }
+
+            $query->where('ubicacion_id', $userUbicacionId);
+        }
+
+        return response()->json([
+            'data' => $query->get()
+                ->map(fn ($venta) => $this->buildVentaResponse($venta))
+                ->values(),
+        ]);
+    }
+
+    public function cobrar(VentaTienda $venta, Request $request)
+    {
+        $user = $request->user();
+        $role = $this->roleOf($user);
+        $userUbicacionId = $this->userUbicacionId($user);
+
+        if (!in_array($role, ['caja', 'admin', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if ($role !== 'super_admin') {
+            if (!$userUbicacionId || (int) $venta->ubicacion_id !== (int) $userUbicacionId) {
+                return response()->json([
+                    'message' => 'No puedes cobrar pedidos de otra sucursal.'
+                ], 403);
+            }
+        }
+
+        if (!$this->esPedidoCaja($venta) || $venta->estado !== 'pendiente_cobro') {
+            return response()->json([
+                'message' => 'Este pedido no está pendiente de cobro.'
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'metodo_pago' => ['required', 'string', 'in:efectivo,tarjeta,cuotas'],
+            'referencia_pago' => ['nullable', 'string', 'max:255'],
+            'numero_cuotas' => ['nullable', 'integer', 'min:1', 'max:24'],
+            'frecuencia_pago' => ['nullable', 'string', 'in:semanal,quincenal,mensual'],
+            'fecha_primer_pago' => ['nullable', 'date'],
+        ]);
+
+        $esCuotas = $data['metodo_pago'] === 'cuotas';
+
+        if ($esCuotas && empty($venta->cliente_id)) {
+            return response()->json([
+                'message' => 'El pedido necesita un cliente para registrarse a crédito.'
+            ], 422);
+        }
+
+        if ($esCuotas && empty($data['numero_cuotas'])) {
+            return response()->json([
+                'message' => 'Indica el número de cuotas para registrar el crédito.'
+            ], 422);
+        }
+
+        try {
+            return DB::transaction(function () use ($venta, $data, $user, $esCuotas) {
+                $venta = VentaTienda::query()
+                    ->with('usuario:id,usuario,nombre,rol')
+                    ->where('id', (int) $venta->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                if (!$this->esPedidoCaja($venta) || $venta->estado !== 'pendiente_cobro') {
+                    return response()->json([
+                        'message' => 'Este pedido ya fue cobrado o cambió de estado.'
+                    ], 422);
+                }
+
+                $venta->metodo_pago = $data['metodo_pago'];
+                $venta->referencia_pago = $data['referencia_pago'] ?? null;
+                $venta->estado = 'completada';
+                $venta->saldo_pendiente = $esCuotas ? (float) $venta->total : 0;
+                $venta->save();
+
+                $this->procesarVentaCompletada($venta, $user, $esCuotas ? [
+                    'numero_cuotas' => (int) $data['numero_cuotas'],
+                    'frecuencia_pago' => $data['frecuencia_pago'] ?? 'mensual',
+                    'fecha_primer_pago' => $data['fecha_primer_pago'] ?? null,
+                ] : null);
+
+                $venta->load([
+                    'ubicacion:id,nombre',
+                    'usuario:id,usuario,nombre,rol',
+                    'cliente:id,nombre',
+                    'detalles.producto:id,nombre',
+                ]);
+
+                return response()->json([
+                    'message' => $esCuotas
+                        ? 'Pedido registrado a crédito correctamente por Caja.'
+                        : 'Pedido cobrado correctamente por Caja.',
+                    'data' => $this->buildVentaResponse($venta),
+                ]);
+            });
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => $e->getMessage() ?: 'No se pudo cobrar el pedido.'
             ], 422);
         }
     }
@@ -739,7 +951,7 @@ class VentaTiendaController extends Controller
         $ventas = VentaTienda::query()
             ->with([
                 'ubicacion:id,nombre',
-                'usuario:id,usuario,nombre',
+                'usuario:id,usuario,nombre,rol',
                 'cliente:id,nombre',
                 'detalles.producto:id,nombre',
             ])
@@ -795,23 +1007,30 @@ class VentaTiendaController extends Controller
                     ], 422);
                 }
 
-                $venta->estado = 'completada';
+                $venta->loadMissing('usuario:id,usuario,nombre,rol');
+                $esPedidoCaja = $this->esPedidoCaja($venta);
+
+                $venta->estado = $esPedidoCaja ? 'pendiente_cobro' : 'completada';
                 $venta->monto_variable_estado = 'aprobado';
                 $venta->monto_variable_aprobado_por = (int) $user->id;
                 $venta->monto_variable_aprobado_en = now();
                 $venta->save();
 
-                $this->procesarVentaCompletada($venta, $user, null);
+                if (!$esPedidoCaja) {
+                    $this->procesarVentaCompletada($venta, $user, null);
+                }
 
                 $venta->load([
                     'ubicacion:id,nombre',
-                    'usuario:id,usuario,nombre',
+                    'usuario:id,usuario,nombre,rol',
                     'cliente:id,nombre',
                     'detalles.producto:id,nombre',
                 ]);
 
                 return response()->json([
-                    'message' => 'Monto variable aprobado. La venta fue completada, se descontó stock y se registró caja.',
+                    'message' => $esPedidoCaja
+                        ? 'Monto variable aprobado. El pedido quedó pendiente de cobro en Caja; todavía no se registró dinero.'
+                        : 'Monto variable aprobado. La venta fue completada, se descontó stock y se registró caja.',
                     'data' => $this->buildVentaResponse($venta),
                 ]);
             });
@@ -851,7 +1070,7 @@ class VentaTiendaController extends Controller
 
         $venta->load([
             'ubicacion:id,nombre',
-            'usuario:id,usuario,nombre',
+            'usuario:id,usuario,nombre,rol',
             'cliente:id,nombre',
             'detalles.producto:id,nombre',
         ]);

@@ -183,9 +183,12 @@ export default function Clientes() {
   const [filters, setFilters] = useState({
     q: "",
     activo: "",
+    zona_id: "",
     page: 1,
     per_page: 20,
   });
+
+  const [zonas, setZonas] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -221,10 +224,24 @@ export default function Clientes() {
     }
   }
 
+  async function loadZonas() {
+    try {
+      const resp = await requestApi("/zonas?per_page=500", { method: "GET" });
+      setZonas(normalizeRows(resp));
+    } catch (error) {
+      console.error("ERROR ZONAS:", error);
+      setZonas([]);
+    }
+  }
+
   useEffect(() => {
     loadClientes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.page, filters.per_page, filters.activo]);
+  }, [filters.page, filters.per_page, filters.activo, filters.zona_id]);
+
+  useEffect(() => {
+    loadZonas();
+  }, []);
 
   const metrics = useMemo(() => {
     const activos = clientes.filter((c) => !!c.activo).length;
@@ -252,6 +269,7 @@ export default function Clientes() {
     const next = {
       q: "",
       activo: "",
+      zona_id: "",
       page: 1,
       per_page: 20,
     };
@@ -460,6 +478,28 @@ export default function Clientes() {
               </select>
             </div>
 
+            <div>
+              <label style={labelStyle}>Carpeta / ubicación</label>
+              <select
+                value={filters.zona_id}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    zona_id: e.target.value,
+                    page: 1,
+                  }))
+                }
+                style={inputStyle}
+              >
+                <option value="">Todas las ubicaciones</option>
+                {zonas.map((zona) => (
+                  <option key={zona.id} value={zona.id}>
+                    {zona.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button type="submit" style={primaryButtonStyle}>
               <Search size={18} />
               Buscar
@@ -615,7 +655,7 @@ export default function Clientes() {
                   {editing ? "Editar cliente" : "Nuevo cliente"}
                 </h2>
                 <p style={modalTextStyle}>
-                  Los campos de ruta y zona pueden quedar vacíos si quieres usar los valores por defecto.
+                  Puedes asignar el cliente a una ubicación para organizarlo y filtrarlo sin duplicar registros.
                 </p>
               </div>
 
@@ -679,14 +719,19 @@ export default function Clientes() {
               </div>
 
               <div>
-                <label style={labelStyle}>Zona ID</label>
-                <input
-                  type="number"
+                <label style={labelStyle}>Ubicación / carpeta</label>
+                <select
                   value={form.zona_id}
                   onChange={(e) => updateForm("zona_id", e.target.value)}
                   style={inputStyle}
-                  placeholder="Opcional"
-                />
+                >
+                  <option value="">Sin ubicación asignada</option>
+                  {zonas.map((zona) => (
+                    <option key={zona.id} value={zona.id}>
+                      {zona.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div style={{ gridColumn: "1 / -1" }}>
@@ -943,7 +988,7 @@ const filterCardStyle = {
 
 const filtersGridStyle = {
   display: "grid",
-  gridTemplateColumns: "1.2fr 0.45fr auto auto",
+  gridTemplateColumns: "1.2fr 0.45fr 0.7fr auto auto",
   gap: 14,
   alignItems: "end",
 };

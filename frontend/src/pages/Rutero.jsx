@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getSession } from "../lib/auth";
 import { ruteroApi } from "../lib/rutero";
+import { clientesApi } from "../lib/clientes";
 
 function money(n) {
   return `Q ${Number(n || 0).toFixed(2)}`;
@@ -93,6 +94,8 @@ export default function Rutero() {
   const [nombrePagador, setNombrePagador] = useState("");
   const [referenciaPago, setReferenciaPago] = useState("");
   const [observacionEntrega, setObservacionEntrega] = useState("");
+  const [creditoCliente, setCreditoCliente] = useState(null);
+  const [loadingCredito, setLoadingCredito] = useState(false);
 
   const [toast, setToast] = useState({
     open: false,
@@ -198,6 +201,40 @@ export default function Rutero() {
     setReferenciaPago("");
     setObservacionEntrega("");
   }, [pedidoSeleccionado?.id]);
+
+
+  useEffect(() => {
+    let active = true;
+
+    async function cargarCreditoCliente() {
+      const clienteId = Number(pedidoSeleccionado?.cliente_id || 0);
+
+      if (!clienteId) {
+        setCreditoCliente(null);
+        return;
+      }
+
+      try {
+        setLoadingCredito(true);
+        const res = await clientesApi.show(clienteId);
+        const cliente = res?.data || res || null;
+        if (active) {
+          setCreditoCliente(cliente?.credito || null);
+        }
+      } catch (e) {
+        console.error("No se pudo cargar el crédito del cliente:", e);
+        if (active) setCreditoCliente(null);
+      } finally {
+        if (active) setLoadingCredito(false);
+      }
+    }
+
+    cargarCreditoCliente();
+
+    return () => {
+      active = false;
+    };
+  }, [pedidoSeleccionado?.cliente_id]);
 
   function handleEntregado() {
     if (!pedidoSeleccionado || saving) return;
@@ -1444,6 +1481,49 @@ export default function Rutero() {
                     <span>Fecha del pedido</span>
                     <strong>{fmtDate(pedidoSeleccionado?.creado_en)}</strong>
                   </div>
+                </div>
+
+                <div className="rt-box rt-box--soft">
+                  <div className="rt-box__head">
+                    <label>Crédito del cliente</label>
+                    <span>
+                      {loadingCredito
+                        ? "Consultando..."
+                        : creditoCliente?.tiene_credito
+                        ? "Con crédito pendiente"
+                        : "Sin crédito pendiente"}
+                    </span>
+                  </div>
+
+                  <div className="rt-info-grid" style={{ marginTop: 12 }}>
+                    <div className="rt-info-box">
+                      <span>¿Tiene crédito?</span>
+                      <strong>
+                        {loadingCredito
+                          ? "—"
+                          : creditoCliente?.tiene_credito
+                          ? "Sí"
+                          : "No"}
+                      </strong>
+                    </div>
+                    <div className="rt-info-box">
+                      <span>Monto pendiente</span>
+                      <strong>
+                        {loadingCredito
+                          ? "—"
+                          : money(creditoCliente?.saldo_pendiente || 0)}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {!loadingCredito && creditoCliente?.tiene_credito ? (
+                    <div className="rt-note" style={{ marginTop: 12 }}>
+                      Créditos pendientes: {creditoCliente?.creditos_pendientes || 0}
+                      {creditoCliente?.proximo_vencimiento
+                        ? ` · Próximo vencimiento: ${fmtDate(creditoCliente.proximo_vencimiento)}`
+                        : ""}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="rt-box rt-box--soft">

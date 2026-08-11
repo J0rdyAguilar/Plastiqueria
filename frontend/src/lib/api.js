@@ -179,6 +179,17 @@ export const api = {
 
   ventasTiendaCreate: (payload) =>
     request("/ventas-tienda", { method: "POST", body: payload }),
+
+  ventasTiendaCajaPendientes: (params = {}) => {
+    const qs = buildQuery(params);
+    return request(`/ventas-tienda-caja/pendientes${qs ? `?${qs}` : ""}`);
+  },
+
+  ventasTiendaCajaCobrar: (id, payload) =>
+    request(`/ventas-tienda-caja/${id}/cobrar`, {
+      method: "POST",
+      body: payload,
+    }),
 };
 
 export default api;

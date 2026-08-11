@@ -1016,34 +1016,131 @@ public function asignarRutero(Request $request, Pedido $pedido)
     public function misEntregas(Request $request)
     {
         $user = $request->user();
+        $role = $this->roleOf($user);
 
-        $query = Pedido::with([
-            'cliente:id,nombre,ruta_id,zona_id',
-            'vendedor:id,codigo,usuario_id',
-            'vendedor.usuario:id,usuario,nombre',
-            'rutero:id,usuario,nombre,rol,ubicacion_id',
-            'ruta:id,nombre',
-            'zona:id,nombre',
-            'ubicacion:id,nombre,tipo',
-            'detalles.producto:id,nombre,sku',
-        ])->where('rutero_id', $user->id)
-          ->orderByDesc('creado_en');
-
-        $estado = $this->normalizeEstado($request->query('estado', ''));
-        if ($estado !== '') {
-            $query->where('estado', $estado);
+        if (!in_array($role, ['rutero', 'super_admin'], true)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
         }
 
-        $page = $query->paginate(50);
+        $ruteroId = $role === 'rutero'
+            ? (int) $user->id
+            : (int) $request->query('rutero_id', 0);
+
+        $estado = $this->normalizeEstado($request->query('estado', ''));
+        $fechaDesde = trim((string) $request->query('fecha_desde', ''));
+        $fechaHasta = trim((string) $request->query('fecha_hasta', ''));
+        $perPage = max(1, min(100, (int) $request->query('per_page', 50)));
+
+        $scope = Pedido::query()
+            ->whereNotNull('rutero_id');
+
+        if ($ruteroId > 0) {
+            $scope->where('rutero_id', $ruteroId);
+        }
+
+        if ($estado !== '') {
+            $scope->where('estado', $estado);
+        }
+
+        if ($fechaDesde !== '') {
+            $scope->whereDate(DB::raw('COALESCE(entregado_en, creado_en)'), '>=', $fechaDesde);
+        }
+
+        if ($fechaHasta !== '') {
+            $scope->whereDate(DB::raw('COALESCE(entregado_en, creado_en)'), '<=', $fechaHasta);
+        }
+
+        $query = (clone $scope)
+            ->with([
+                'cliente:id,nombre,ruta_id,zona_id',
+                'vendedor:id,codigo,usuario_id',
+                'vendedor.usuario:id,usuario,nombre',
+                'rutero:id,usuario,nombre,rol,ubicacion_id',
+                'ruta:id,nombre',
+                'zona:id,nombre',
+                'ubicacion:id,nombre,tipo',
+                'detalles.producto:id,nombre,sku',
+            ])
+            ->orderByDesc('creado_en');
+
+        $page = $query->paginate($perPage);
+        $pedidoIdsPagina = collect($page->items())->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $movimientosPagina = empty($pedidoIdsPagina)
+            ? collect()
+            : MovimientoCaja::query()
+                ->where('tipo', 'ingreso')
+                ->where('referencia_tipo', 'pedido')
+                ->whereIn('referencia_id', $pedidoIdsPagina)
+                ->orderByDesc('creado_en')
+                ->get()
+                ->unique('referencia_id')
+                ->keyBy('referencia_id');
+
+        $movimientosResumen = MovimientoCaja::query()
+            ->where('tipo', 'ingreso')
+            ->where('referencia_tipo', 'pedido')
+            ->whereIn('referencia_id', (clone $scope)->select('id'));
+
+        if ($ruteroId > 0) {
+            $movimientosResumen->where('usuario_id', $ruteroId);
+        }
+
+        if ($fechaDesde !== '') {
+            $movimientosResumen->whereDate('creado_en', '>=', $fechaDesde);
+        }
+
+        if ($fechaHasta !== '') {
+            $movimientosResumen->whereDate('creado_en', '<=', $fechaHasta);
+        }
+
+        $totalDineroRecibido = round((float) (clone $movimientosResumen)->sum('monto'), 2);
+        $totalEntregasCobradas = (int) (clone $movimientosResumen)->distinct()->count('referencia_id');
+
+        $pendientesCobro = (clone $scope)
+            ->where('estado', 'entregado')
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('movimientos_caja as mc')
+                    ->whereColumn('mc.referencia_id', 'pedidos.id')
+                    ->where('mc.referencia_tipo', 'pedido')
+                    ->where('mc.tipo', 'ingreso');
+            })
+            ->count();
+
+        $data = collect($page->items())->map(function ($pedido) use ($movimientosPagina) {
+            $row = $this->pedidoResponse($pedido);
+            $mov = $movimientosPagina->get((int) $pedido->id);
+
+            $row['cobro'] = $mov ? [
+                'registrado' => true,
+                'monto' => (float) ($mov->monto ?? 0),
+                'metodo_pago' => $mov->metodo_pago,
+                'recibido_por' => $mov->usuario_id ? (int) $mov->usuario_id : null,
+                'creado_en' => optional($mov->creado_en)->format('Y-m-d H:i:s'),
+            ] : [
+                'registrado' => false,
+                'monto' => 0,
+                'metodo_pago' => null,
+                'recibido_por' => null,
+                'creado_en' => null,
+            ];
+
+            return $row;
+        })->values();
 
         return response()->json([
             'current_page' => $page->currentPage(),
             'last_page' => $page->lastPage(),
             'per_page' => $page->perPage(),
             'total' => $page->total(),
-            'data' => collect($page->items())
-                ->map(fn($p) => $this->pedidoResponse($p))
-                ->values(),
+            'resumen' => [
+                'rutero_id' => $ruteroId > 0 ? $ruteroId : null,
+                'total_entregas_cobradas' => $totalEntregasCobradas,
+                'total_dinero_recibido' => $totalDineroRecibido,
+                'entregas_pendientes_cobro' => (int) $pendientesCobro,
+            ],
+            'data' => $data,
         ]);
     }
 

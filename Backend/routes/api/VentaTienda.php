@@ -17,3 +17,12 @@ Route::prefix('v1')
 
         Route::get('/ventas-tienda/{venta}', [VentaTiendaController::class, 'show']);
     });
+
+// Flujo puntual Vendedor de tienda -> Caja.
+// El vendedor no tiene acceso a estas acciones de cobro.
+Route::prefix('v1')
+    ->middleware(['auth:sanctum', 'role:caja,admin,super_admin'])
+    ->group(function () {
+        Route::get('/ventas-tienda-caja/pendientes', [VentaTiendaController::class, 'pendientesCobro']);
+        Route::post('/ventas-tienda-caja/{venta}/cobrar', [VentaTiendaController::class, 'cobrar']);
+    });

@@ -170,6 +170,7 @@ export default function Stock() {
   const [mostrarPanelAlertas, setMostrarPanelAlertas] = useState(false);
 
   const searchBoxRef = useRef(null);
+  const canConsult = isSuperAdmin || !!ubicacionId;
 
   async function loadUbicaciones() {
     try {
@@ -181,12 +182,7 @@ export default function Stock() {
 
       if (isSuperAdmin) {
         setUbicaciones(arr);
-
-        if (arr.length > 0) {
-          setUbicacionId((prev) => prev || String(arr[0].id));
-        } else {
-          setUbicacionId("");
-        }
+        setUbicacionId((prev) => prev || "");
         return;
       }
 
@@ -210,7 +206,7 @@ export default function Stock() {
   }
 
   async function load(forcedUbicacionId = ubicacionId) {
-    if (!forcedUbicacionId) {
+    if (!forcedUbicacionId && !isSuperAdmin) {
       setItems([]);
       return;
     }
@@ -219,12 +215,17 @@ export default function Stock() {
     setError("");
 
     try {
-      const res = await stockApi.list({
+      const params = {
         q: "",
-        ubicacion_id: forcedUbicacionId,
         page: 1,
-        per_page: 500,
-      });
+        per_page: isSuperAdmin ? 1000 : 500,
+      };
+
+      if (forcedUbicacionId) {
+        params.ubicacion_id = forcedUbicacionId;
+      }
+
+      const res = await stockApi.list(params);
 
       const arr = Array.isArray(res?.data)
         ? res.data
@@ -248,7 +249,7 @@ export default function Stock() {
   }, []);
 
   useEffect(() => {
-    if (ubicacionId) {
+    if (ubicacionId || isSuperAdmin) {
       setPage(1);
       load(ubicacionId);
     }
@@ -635,6 +636,7 @@ export default function Stock() {
                 }}
                 disabled={loading || loadingUbicaciones || ubicaciones.length === 0}
               >
+                <option value="">Todas las tiendas y bodega</option>
                 {ubicaciones.length === 0 ? (
                   <option value="">No hay sucursales disponibles</option>
                 ) : (
@@ -683,7 +685,7 @@ export default function Stock() {
                   }
                 }}
                 placeholder="Nombre, SKU, ID o presentación..."
-                disabled={loadingUbicaciones || !ubicacionId}
+                disabled={loadingUbicaciones || !canConsult}
                 style={{
                   width: "100%",
                   border: "1px solid #d1d5db",
@@ -877,6 +879,8 @@ export default function Stock() {
               <span>
                 {q.trim()
                   ? `${itemsBuscados.length} resultado(s) para "${q}"`
+                  : isSuperAdmin && !ubicacionId
+                  ? `${itemsBuscados.length} producto(s) en todas las tiendas y bodega`
                   : `${itemsBuscados.length} producto(s) en la sucursal`}
               </span>
 
@@ -904,7 +908,7 @@ export default function Stock() {
               <button
                 className="btn"
                 onClick={() => load(ubicacionId)}
-                disabled={loading || loadingUbicaciones || !ubicacionId}
+                disabled={loading || loadingUbicaciones || !canConsult}
               >
                 {loading ? <InlineLoader /> : "Buscar"}
               </button>
@@ -919,7 +923,7 @@ export default function Stock() {
                   setPage(1);
                   load(ubicacionId);
                 }}
-                disabled={loading || loadingUbicaciones || !ubicacionId}
+                disabled={loading || loadingUbicaciones || !canConsult}
               >
                 Limpiar
               </button>
@@ -958,6 +962,7 @@ export default function Stock() {
               <tr style={{ background: "#f8fafc" }}>
                 <th style={thStyle}>SKU</th>
                 <th style={thStyle}>Producto</th>
+                {isSuperAdmin ? <th style={thStyle}>Ubicación</th> : null}
                 <th style={thStyle}>Presentación</th>
                 <th style={thStyle}>Factor base</th>
                 <th style={thStyle}>Cantidad</th>
@@ -970,13 +975,13 @@ export default function Stock() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="8" style={{ padding: 0 }}>
+                  <td colSpan={isSuperAdmin ? 9 : 8} style={{ padding: 0 }}>
                     <TableLoader />
                   </td>
                 </tr>
               ) : itemsPaginados.length === 0 ? (
                 <tr>
-                  <td colSpan="8" style={{ padding: 18 }} className="muted">
+                  <td colSpan={isSuperAdmin ? 9 : 8} style={{ padding: 18 }} className="muted">
                     {soloAlertas
                       ? "No hay productos con alerta de stock."
                       : "No hay productos para mostrar."}
@@ -990,6 +995,12 @@ export default function Stock() {
                     <tr key={it.id} style={{ borderTop: "1px solid #eef2f7" }}>
                       <td style={tdStyle}>{it.producto_sku || "-"}</td>
                       <td style={tdStyleBold}>{it.producto_nombre || "-"}</td>
+                      {isSuperAdmin ? (
+                        <td style={tdStyle}>
+                          {it.ubicacion_nombre || "-"}
+                          {it.ubicacion_tipo ? ` (${it.ubicacion_tipo})` : ""}
+                        </td>
+                      ) : null}
                       <td style={tdStyle}>{it.presentacion || "-"}</td>
                       <td style={tdStyle}>{formatNumber(it.factor_base)}</td>
                       <td style={tdStyleBold}>{formatNumber(it.cantidad)}</td>

@@ -317,26 +317,112 @@ async function requestApiOptional(path, options = {}) {
   }
 }
 
+function tieneBanderaMontoVariable(valor) {
+  return valor === true || valor === 1 || valor === "1" || valor === "true";
+}
+
+function estaPendienteMontoVariable(item) {
+  const estadoMonto = String(
+    item?.monto_variable_estado ||
+      item?.estado_monto_variable ||
+      item?.monto_variable_status ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const estado = String(item?.estado || "")
+    .trim()
+    .toLowerCase();
+
+  const aprobado = tieneBanderaMontoVariable(
+    item?.monto_variable_aprobado ||
+      item?.aprobado_monto_variable ||
+      item?.monto_variable_approved
+  );
+
+  const rechazado = tieneBanderaMontoVariable(
+    item?.monto_variable_rechazado ||
+      item?.rechazado_monto_variable ||
+      item?.monto_variable_rejected
+  );
+
+  if (aprobado || rechazado) return false;
+
+  if (
+    [
+      "aprobado",
+      "aprobada",
+      "rechazado",
+      "rechazada",
+      "monto_aprobado",
+      "monto_rechazado",
+      "aprobado_monto_variable",
+      "rechazado_monto_variable",
+    ].includes(estadoMonto)
+  ) {
+    return false;
+  }
+
+  if (
+    [
+      "pendiente",
+      "pendiente_revision",
+      "pendiente_aprobacion",
+      "en_revision",
+      "revision",
+    ].includes(estadoMonto)
+  ) {
+    return true;
+  }
+
+  if (["pendiente_revision", "pendiente_aprobacion"].includes(estado)) {
+    return true;
+  }
+
+  return false;
+}
+
 function filtrarPedidosMontoVariablePendiente(pedidos) {
   return extractArray(pedidos).filter((pedido) => {
-    const estadoMonto = String(pedido?.monto_variable_estado || "").toLowerCase();
-    const estado = String(pedido?.estado || "").toLowerCase();
     const detalles = Array.isArray(pedido?.detalles) ? pedido.detalles : [];
 
     const tieneDetalleMontoVariable = detalles.some((detalle) => {
       return (
-        detalle?.es_monto_variable === true ||
-        detalle?.es_monto_variable === 1 ||
-        detalle?.es_monto_variable === "1"
+        tieneBanderaMontoVariable(detalle?.es_monto_variable) ||
+        tieneBanderaMontoVariable(detalle?.monto_variable)
       );
     });
 
     return (
-      estadoMonto === "pendiente" ||
-      pedido?.tiene_monto_variable === true ||
-      pedido?.tiene_monto_variable === 1 ||
-      pedido?.tiene_monto_variable === "1" ||
-      (estado === "pendiente_revision" && tieneDetalleMontoVariable)
+      estaPendienteMontoVariable(pedido) ||
+      (tieneDetalleMontoVariable &&
+        estaPendienteMontoVariable({
+          estado: pedido?.estado,
+          monto_variable_estado: pedido?.monto_variable_estado || "pendiente",
+        }))
+    );
+  });
+}
+
+function filtrarVentasTiendaMontoVariablePendiente(ventas) {
+  return extractArray(ventas).filter((venta) => {
+    const detalles = Array.isArray(venta?.detalles) ? venta.detalles : [];
+
+    const tieneDetalleMontoVariable = detalles.some((detalle) => {
+      return (
+        tieneBanderaMontoVariable(detalle?.es_monto_variable) ||
+        tieneBanderaMontoVariable(detalle?.monto_variable)
+      );
+    });
+
+    return (
+      estaPendienteMontoVariable(venta) ||
+      (tieneDetalleMontoVariable &&
+        estaPendienteMontoVariable({
+          estado: venta?.estado,
+          monto_variable_estado: venta?.monto_variable_estado || "pendiente",
+        }))
     );
   });
 }
@@ -346,12 +432,11 @@ async function cargarPedidosMontoVariablePendientes() {
     method: "GET",
   });
 
-  const pedidosDirectos = extractArray(directo);
+  const pedidosDirectos = filtrarPedidosMontoVariablePendiente(directo);
   if (pedidosDirectos.length > 0) {
     return pedidosDirectos;
   }
 
-  // Respaldo por si la ruta específica no devuelve datos, pero el index sí.
   const respaldo = await requestApiOptional(
     "/pedidos?estado=pendiente_revision&per_page=100",
     { method: "GET" }
@@ -365,7 +450,17 @@ async function cargarVentasTiendaMontoVariablePendientes() {
     method: "GET",
   });
 
-  return extractArray(directo);
+  const ventasDirectas = filtrarVentasTiendaMontoVariablePendiente(directo);
+  if (ventasDirectas.length > 0) {
+    return ventasDirectas;
+  }
+
+  const respaldo = await requestApiOptional(
+    "/ventas-tienda?estado=pendiente_revision&per_page=100",
+    { method: "GET" }
+  );
+
+  return filtrarVentasTiendaMontoVariablePendiente(respaldo);
 }
 
 export default function Layout({ children }) {
@@ -376,6 +471,7 @@ export default function Layout({ children }) {
   const [notiOpen, setNotiOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [expandedNoti, setExpandedNoti] = useState({});
+  const [processingNoti, setProcessingNoti] = useState({});
 
   const logged = isLoggedIn();
   const me = getSession()?.user;
@@ -471,62 +567,95 @@ export default function Layout({ children }) {
     setNotifications((prev) => prev.map((n) => ({ ...n, leido: true })));
   }
 
-  async function handleAprobarMonto(noti) {
+  function getAccionEndpointCandidates(noti, accion) {
+    const id = noti?.entidadId;
+    const base =
+      noti?.entidad === "venta_tienda"
+        ? `/ventas-tienda/${id}`
+        : `/pedidos/${id}`;
+
+    return [
+      `${base}/${accion}-monto-variable`,
+      `${base}/${accion}-monto`,
+      `${base}/${accion}`,
+    ];
+  }
+
+  async function ejecutarAccionMontoVariable(noti, accion) {
     const entidadNombre = noti.entidad === "venta_tienda" ? "Venta tienda" : "Pedido";
+    const verbo = accion === "aprobar" ? "aprobar" : "rechazar";
+    const verboPasado = accion === "aprobar" ? "aprobado" : "rechazado";
 
     if (
       !window.confirm(
-        `¿Aprobar el monto variable para ${entidadNombre} #${noti.entidadId}?`
+        `¿${verbo.charAt(0).toUpperCase() + verbo.slice(1)} el monto variable para ${entidadNombre} #${noti.entidadId}?`
       )
     ) {
       return;
     }
 
+    setProcessingNoti((prev) => ({ ...prev, [noti.id]: true }));
+
+    const endpoints = getAccionEndpointCandidates(noti, accion);
+    const methods = ["POST", "PATCH", "PUT"];
+    let ultimoError = null;
+
     try {
-      const endpoint =
-        noti.entidad === "venta_tienda"
-          ? `/ventas-tienda/${noti.entidadId}/aprobar-monto-variable`
-          : `/pedidos/${noti.entidadId}/aprobar-monto-variable`;
+      for (const endpoint of endpoints) {
+        for (const method of methods) {
+          try {
+            await requestApi(endpoint, { method });
 
-      await requestApi(endpoint, { method: "POST" });
+            setNotifications((prev) => prev.filter((n) => n.id !== noti.id));
+            setExpandedNoti((prev) => {
+              const copy = { ...prev };
+              delete copy[noti.id];
+              return copy;
+            });
 
-      setNotifications((prev) => prev.filter((n) => n.id !== noti.id));
+            notify.success(
+              `Monto variable de ${entidadNombre} #${noti.entidadId} ${verboPasado}.`
+            );
 
-      notify.success(`Monto variable de ${entidadNombre} #${noti.entidadId} aprobado.`);
-      await cargarMontosVariablesPendientes();
+            window.setTimeout(() => {
+              cargarMontosVariablesPendientes();
+            }, 800);
+
+            return;
+          } catch (error) {
+            ultimoError = error;
+
+            if (error?.status === 404 || error?.status === 405) {
+              continue;
+            }
+
+            throw error;
+          }
+        }
+      }
+
+      throw ultimoError || new Error("No se encontró una ruta válida para procesar la notificación.");
     } catch (error) {
-      console.error("Error aprobando monto variable:", error);
-      notify.error(error?.message || "No se pudo aprobar el monto variable.");
+      console.error(`Error al ${verbo} monto variable:`, error);
+      notify.error(
+        error?.message ||
+          `No se pudo ${verbo} el monto variable de ${entidadNombre} #${noti.entidadId}.`
+      );
+    } finally {
+      setProcessingNoti((prev) => {
+        const copy = { ...prev };
+        delete copy[noti.id];
+        return copy;
+      });
     }
   }
 
+  async function handleAprobarMonto(noti) {
+    await ejecutarAccionMontoVariable(noti, "aprobar");
+  }
+
   async function handleRechazarMonto(noti) {
-    const entidadNombre = noti.entidad === "venta_tienda" ? "Venta tienda" : "Pedido";
-
-    if (
-      !window.confirm(
-        `¿Rechazar el monto variable para ${entidadNombre} #${noti.entidadId}?`
-      )
-    ) {
-      return;
-    }
-
-    try {
-      const endpoint =
-        noti.entidad === "venta_tienda"
-          ? `/ventas-tienda/${noti.entidadId}/rechazar-monto-variable`
-          : `/pedidos/${noti.entidadId}/rechazar-monto-variable`;
-
-      await requestApi(endpoint, { method: "POST" });
-
-      setNotifications((prev) => prev.filter((n) => n.id !== noti.id));
-
-      notify.success(`Monto variable de ${entidadNombre} #${noti.entidadId} rechazado.`);
-      await cargarMontosVariablesPendientes();
-    } catch (error) {
-      console.error("Error rechazando monto variable:", error);
-      notify.error(error?.message || "No se pudo rechazar el monto variable.");
-    }
+    await ejecutarAccionMontoVariable(noti, "rechazar");
   }
 
   const adminLinks = [
@@ -564,6 +693,13 @@ export default function Layout({ children }) {
       icon: <UserCog size={18} />,
       show: isSuperAdmin,
       active: loc.pathname.startsWith("/vendedores"),
+    },
+    {
+      to: "/rutero/historial",
+      label: "Cobros ruteros",
+      icon: <ReceiptText size={18} />,
+      show: isSuperAdmin,
+      active: loc.pathname === "/rutero/historial",
     },
     {
       to: "/zonas",
@@ -912,6 +1048,11 @@ export default function Layout({ children }) {
         .lux-btn-reject:hover {
           background: #dc2626;
         }
+        .lux-btn-approve:disabled,
+        .lux-btn-reject:disabled {
+          opacity: 0.65;
+          cursor: not-allowed;
+        }
         .lux-noti-empty {
           padding: 30px 16px;
           text-align: center;
@@ -1054,6 +1195,7 @@ export default function Layout({ children }) {
                               const detalles = Array.isArray(noti.detalles)
                                 ? noti.detalles
                                 : [];
+                              const isProcessing = !!processingNoti[noti.id];
 
                               return (
                                 <div
@@ -1150,16 +1292,18 @@ export default function Layout({ children }) {
                                       <button
                                         type="button"
                                         className="lux-btn-approve"
+                                        disabled={isProcessing}
                                         onClick={() => handleAprobarMonto(noti)}
                                       >
-                                        Aprobar
+                                        {isProcessing ? "Procesando..." : "Aprobar"}
                                       </button>
                                       <button
                                         type="button"
                                         className="lux-btn-reject"
+                                        disabled={isProcessing}
                                         onClick={() => handleRechazarMonto(noti)}
                                       >
-                                        Rechazar
+                                        {isProcessing ? "Procesando..." : "Rechazar"}
                                       </button>
                                     </div>
                                   )}
