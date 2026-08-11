@@ -10,7 +10,7 @@ import Clientes from "./pages/Clientes";
 import Vendedores from "./pages/Vendedores";
 import Zonas from "./pages/Zonas";
 import Rutas from "./pages/Rutas";
-import Caja from "./pages/Caja";
+import Caja from "./pages/caja";
 import Productos from "./pages/Productos";
 import Stock from "./pages/Stock";
 import MovimientosStock from "./pages/MovimientosStock";
