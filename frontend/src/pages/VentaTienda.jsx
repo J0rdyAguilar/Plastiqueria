@@ -615,8 +615,8 @@ export default function VentaTienda() {
       return;
     }
 
-    if (isVendedorTienda && !clienteId) {
-      alert("Selecciona el cliente del pedido.");
+    if (isVendedorTienda && !clienteId && !nombreComprador.trim()) {
+      alert("Ingresa el nombre del cliente o selecciona un cliente registrado.");
       return;
     }
 
@@ -646,12 +646,14 @@ export default function VentaTienda() {
       const payload = {
         metodo_pago: isVendedorTienda ? null : metodoPago,
         nombre_comprador: isVendedorTienda
-          ? clienteSeleccionado?.nombre || ""
+          ? clienteSeleccionado?.nombre || nombreComprador.trim() || ""
           : metodoPago === "cuotas"
             ? clienteSeleccionado?.nombre || nombreComprador.trim() || ""
             : nombreComprador.trim(),
         cliente_id:
-          isVendedorTienda || metodoPago === "cuotas" ? Number(clienteId) : null,
+          (isVendedorTienda || metodoPago === "cuotas") && clienteId
+            ? Number(clienteId)
+            : null,
         referencia_pago: isVendedorTienda ? null : referenciaPago.trim() || null,
         ubicacion_id: ubicacionId ? Number(ubicacionId) : null,
         items: items.map((item) => ({
@@ -1106,9 +1108,13 @@ export default function VentaTienda() {
               </div>
             </div>
 
-            {!isVendedorTienda ? <div style={cardBlockStyle}>
+            <div style={cardBlockStyle}>
               <label style={labelStyle}>
-                {metodoPago === "cuotas" ? "Nombre de referencia" : "Nombre del comprador"}
+                {isVendedorTienda
+                  ? "Nombre del cliente"
+                  : metodoPago === "cuotas"
+                  ? "Nombre de referencia"
+                  : "Nombre del comprador"}
               </label>
               <div style={{ position: "relative" }}>
                 <UserRound size={18} style={leadingIconStyle} />
@@ -1117,7 +1123,9 @@ export default function VentaTienda() {
                   value={nombreComprador}
                   onChange={(e) => setNombreComprador(e.target.value)}
                   placeholder={
-                    metodoPago === "cuotas"
+                    isVendedorTienda
+                      ? "Ej. Juan Pérez"
+                      : metodoPago === "cuotas"
                       ? "Ej. nombre visible en ticket"
                       : "Ej. Juan Pérez"
                   }
@@ -1127,7 +1135,20 @@ export default function VentaTienda() {
                   }}
                 />
               </div>
-            </div> : null}
+
+              {isVendedorTienda ? (
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: "#64748b",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Puede ser cualquier nombre. No es necesario que exista como cliente registrado.
+                </div>
+              ) : null}
+            </div>
 
             {!isVendedorTienda ? <div style={cardBlockStyle}>
               <label style={labelStyle}>Método de pago</label>
@@ -1175,7 +1196,7 @@ export default function VentaTienda() {
                 <div style={cardBlockStyle}>
                   <div style={cardBlockHeaderStyle}>
                     <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      {isVendedorTienda ? "Cliente del pedido" : "Cliente"}
+                      {isVendedorTienda ? "Cliente registrado (opcional)" : "Cliente"}
                     </label>
 
                     {!isVendedorTienda ? (
@@ -1205,7 +1226,11 @@ export default function VentaTienda() {
                           disabled={loadingClientes}
                         >
                           <option value="">
-                            {loadingClientes ? "Cargando clientes..." : "Selecciona cliente"}
+                            {loadingClientes
+                              ? "Cargando clientes..."
+                              : isVendedorTienda
+                              ? "Opcional: selecciona cliente registrado"
+                              : "Selecciona cliente"}
                           </option>
                           {clientes.map((cliente) => (
                             <option key={cliente.id} value={cliente.id}>
@@ -1352,7 +1377,7 @@ export default function VentaTienda() {
               ) : null}
               {isVendedorTienda || metodoPago === "cuotas" ? (
                 <div style={totalCardLineStyle}>
-                  Cliente: {clienteSeleccionado?.nombre || "No seleccionado"}
+                  Cliente: {clienteSeleccionado?.nombre || nombreComprador.trim() || "No ingresado"}
                 </div>
               ) : null}
             </div>
